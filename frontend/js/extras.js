@@ -274,14 +274,21 @@ window.AuroraExtras = (ui) => {
     if (!p.info.contacts.length) { toast(`No abuse contact is published for ${ip}`, "bad"); return; }
     const from = el("select", { class: "em-select" }, p.accounts.map((a) => el("option", { value: a, text: a })));
     if (p.from) from.value = p.from;
-    const to = el("select", { class: "em-select" }, p.info.contacts.map((a) => el("option", { value: a, text: a })));
+    // Editable: pre-filled with the parsed abuse contact, but the registry often lists a person —
+    // the real desk is usually abuse@<domain>, offered in the dropdown. The user can type any address.
+    const suggestions = p.info.suggestions && p.info.suggestions.length ? p.info.suggestions : p.info.contacts;
+    const toList = el("datalist", { id: "abuse-to-list" }, suggestions.map((a) => el("option", { value: a })));
+    const to = el("input", { type: "email", class: "em-select", value: p.info.contacts[0] || "", list: "abuse-to-list", autocomplete: "off", spellcheck: "false" });
+    const toWrap = el("div", { style: "display:contents" }, [to, toList]);
     const note = el("textarea", { rows: 2, placeholder: "Optional note added to the report" });
     const preview = el("pre", { class: "mx-pre", style: "max-height:280px", text: p.body });
     const c = p.counts || { logins: p.events, attacks: 0 };
     const send = el("button", { class: "btn btn-primary", text: p.reported ? "Send again" : "Send report", onclick: async () => {
+      const dest = to.value.trim();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(dest)) { to.focus(); return toast("Enter the abuse contact's email address", "bad"); }
       send.disabled = true;
       try {
-        const r = await API.abuseReport({ ip, sender: from.value, to: to.value, note: note.value.trim(), force: !!p.reported });
+        const r = await API.abuseReport({ ip, sender: from.value, to: dest, note: note.value.trim(), force: !!p.reported });
         toast(`Reported ${ip} to ${r.to.join(", ")}`, "good"); closeModal(); if (done) setTimeout(() => ipCard(ip), 150);
       } catch (err) { toast(err.message, "bad"); send.disabled = false; }
     } });
@@ -293,7 +300,7 @@ window.AuroraExtras = (ui) => {
       ]),
       !p.events ? el("div", { class: "mx-note" }, [icon("warning", 16), el("span", { text: "No failed logins or WAF attacks from this address in the last 7 days — abuse desks usually ignore reports without evidence." })]) : null,
       p.reported ? el("div", { class: "mx-note" }, [icon("check", 16), el("span", { text: `Already reported to ${p.reported.to.join(", ")} on ${new Date(p.reported.ts * 1000).toLocaleString()} from ${p.reported.from}. Sending again repeats it.` })]) : null,
-      p.accounts.length ? el("div", { class: "mx-grid2" }, [field("Send from", from, "Remembered for next time; replies come here."), field("To (abuse contact)", to, "Published by the network's registry.")])
+      p.accounts.length ? el("div", { class: "mx-grid2" }, [field("Send from", from, "Remembered for next time; replies come here."), field("To (abuse contact)", toWrap, "Pre-filled from the registry — edit it or pick abuse@… if the desk differs.")])
         : el("p", { class: "empty", text: "Create an email account first (Email → Email Accounts)." }),
       field("Note", note),
       el("div", { class: "mx-sub" }, "The message"), preview,

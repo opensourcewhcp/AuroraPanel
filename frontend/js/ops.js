@@ -66,7 +66,8 @@ window.AuroraOps = (ui) => {
           pill(e.ok ? "ok" : `failed ${e.status || ""}`, e.ok ? "good" : "bad"),
         ]));
       }
-      list.append(el("div", { class: "op-acts" }, rows), d.total > 1500 ? el("p", { class: "muted mx-p", style: "padding:0 16px 14px", text: `Showing 1,500 of ${num(d.total)} — narrow the search or export.` }) : null);
+      list.append(el("div", { class: "op-acts" }, rows));
+      if (d.total > 1500) list.append(el("p", { class: "muted mx-p", style: "padding:0 16px 14px", text: `Showing 1,500 of ${num(d.total)} — narrow the search or export.` }));
     }
     function detail(e) {
       openModal("Activity", el("div", {}, [
@@ -1052,11 +1053,25 @@ window.AuroraOps = (ui) => {
         el("div", { class: "mx-grid2" }, [field("Panel password", el("div", { class: "op-pwrow" }, [pw, btn("Generate", () => { pw.value = genPw(); }, "btn-ghost")]), "Give it to the customer privately."), field("Contact email", mail)]),
         field("Plan", plan), planInfo, log,
       ]), [el("button", { class: "btn btn-primary", text: "Create", onclick: async (ev) => {
-        ev.target.disabled = true;
+        const b = ev.currentTarget;
+        b.disabled = true; b.textContent = "Creating…";
+        let r;
         try {
-          const r = await API.hostingCreate({ user: user.value.trim(), domain: dom.value.trim(), plan: plan.value, password: pw.value, email: mail.value.trim() });
-          log.innerHTML = ""; log.append(jobPanel(r.job, { onDone: () => load() }));
-        } catch (e) { toast(e.message, "bad"); ev.target.disabled = false; }
+          r = await API.hostingCreate({ user: user.value.trim(), domain: dom.value.trim(), plan: plan.value, password: pw.value, email: mail.value.trim() });
+        } catch (e) { toast(e.message, "bad"); b.disabled = false; b.textContent = "Create"; return; }
+        // Follow the job: its log here, then close and show the new account (or keep the log if it failed).
+        const out = el("pre", { class: "log", text: "Starting…" });
+        log.replaceChildren(out);
+        const name = user.value.trim();
+        const t = setInterval(async () => {
+          let j;
+          try { j = await API.job(r.job); } catch (e) { return; }
+          out.textContent = j.output || "Working…"; out.scrollTop = out.scrollHeight;
+          if (j.status === "running") return;
+          clearInterval(t);
+          if (j.status === "done") { toast(`Account ${name} is ready`, "good"); closeModal(); load(); }
+          else { toast(`Creating ${name} failed — see the log`, "bad"); b.textContent = "Failed"; load(); }
+        }, 1200);
       } })]);
     }
     function addDomain(a) {

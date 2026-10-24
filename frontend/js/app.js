@@ -4032,18 +4032,31 @@
     async function enroll2fa() {
       try {
         const d = await API.twofaEnroll();
-        const content = el("div", {}, [
-          el("p", { class: "muted", text: "1. Add this secret to your authenticator app (manual entry):" }),
-          el("div", { class: "card", style: "margin:8px 0;font-family:monospace;font-size:16px;letter-spacing:2px;text-align:center", text: d.secret }),
-          el("p", { class: "muted", style: "word-break:break-all", html: `Or use this otpauth URI:<br><code>${esc(d.otpauth_uri)}</code>` }),
-          el("p", { class: "muted", text: "2. Enter the current 6-digit code to confirm:" }),
-          el("input", { id: "sec-code", type: "text", inputmode: "numeric", placeholder: "123456", style: "max-width:160px" }),
+        const code = el("input", { id: "sec-code", type: "text", inputmode: "numeric", autocomplete: "one-time-code", maxlength: 6, placeholder: "123456", class: "tf-code" });
+        const enable = async () => {
+          try { await API.twofaEnable(code.value.trim()); toast("2FA enabled", "good"); closeModal(); load(); }
+          catch (e) { toast(e.message, "bad"); }
+        };
+        code.addEventListener("keydown", (e) => { if (e.key === "Enter") enable(); });
+        code.addEventListener("input", () => { code.value = code.value.replace(/\D/g, "").slice(0, 6); if (code.value.length === 6) enable(); });
+        const manual = el("details", { class: "tf-manual" }, [el("summary", { text: "Can't scan? Enter the key by hand" }),
+          el("p", { class: "muted", text: `Account: ${d.issuer || "AuroraPanel"} · type: time-based` }),
+          el("div", { class: "tf-secret", text: d.secret.replace(/(.{4})/g, "$1 ").trim() }),
+          el("p", { class: "muted mx-small", style: "word-break:break-all", text: d.otpauth_uri })]);
+        const content = el("div", { class: "tf-enroll" }, [
+          el("div", { class: "tf-row" }, [
+            d.qr ? el("img", { class: "tf-qr", src: d.qr, alt: "QR code for your authenticator app", width: 196, height: 196 }) : null,
+            el("div", { class: "tf-steps" }, [
+              el("p", {}, [el("b", { text: "1. Scan the code" }), el("br"), el("span", { class: "muted", text: "In Microsoft Authenticator: + → Other account (Google, Facebook, etc.) → scan. Google Authenticator, Authy and 1Password work the same way." })]),
+              el("p", {}, [el("b", { text: "2. Type the 6-digit code it shows" })]),
+              code,
+            ]),
+          ]),
+          manual,
         ]);
-        openModal("Enable 2FA", content, [
-          el("button", { class: "btn btn-primary", text: "Confirm & enable", onclick: async () => {
-            try { await API.twofaEnable($("#sec-code").value.trim()); toast("2FA enabled", "good"); closeModal(); load(); }
-            catch (e) { toast(e.message, "bad"); } } }),
-        ]);
+        if (!d.qr) manual.open = true;
+        openModal("Turn on two-factor sign-in", content, [el("button", { class: "btn btn-primary", text: "Confirm & enable", onclick: enable })]);
+        setTimeout(() => code.focus(), 50);
       } catch (err) { toast(err.message, "bad"); }
     }
     async function disable2fa() {
@@ -6115,7 +6128,7 @@
       if (p.from) from.value = p.from;
       openModal(`Report ${ip}`, el("div", { class: "em-form" }, [
         kv([["Network", `${p.info.network || "—"}${p.info.country ? ` (${p.info.country})` : ""}`], ["Abuse contact", p.info.contacts.join(", ")],
-          ["Evidence", `${p.events} failed login${p.events === 1 ? "" : "s"} in the last 7 days`]]),
+          ["Evidence", p.summary || `${p.events} event${p.events === 1 ? "" : "s"} in the last 7 days`]]),
         p.reported ? el("div", { class: "dm-note" }, [icon("info", 15), el("span", { text: `Reported to ${p.reported.to.join(", ")} on ${new Date(p.reported.ts * 1000).toLocaleString()} from ${p.reported.from} (${p.reported.events} failed logins). Sending again repeats the report.` })]) : null,
         p.accounts.length ? field("Send from", from, "Remembered for next time.")
           : el("p", { class: "empty", text: "Create an email account first (Email → Email Accounts)." }),

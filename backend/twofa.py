@@ -57,10 +57,23 @@ def begin_enroll(username: str) -> dict:
     cfg["totp_secret"] = secret
     cfg["totp_enabled"] = False
     config.save_config(cfg)
-    label = f"AuroraPanel:{username}"
-    uri = (f"otpauth://totp/{label}?secret={secret}&issuer=AuroraPanel"
+    # The app shows "AuroraPanel <server>" — several panels stay apart in one authenticator.
+    import socket
+    from urllib.parse import quote
+    issuer = f"AuroraPanel {socket.gethostname().split('.')[0]}"
+    uri = (f"otpauth://totp/{quote(issuer)}:{quote(username)}?secret={secret}&issuer={quote(issuer)}"
            f"&algorithm=SHA1&digits={_DIGITS}&period={_PERIOD}")
-    return {"secret": secret, "otpauth_uri": uri}
+    return {"secret": secret, "otpauth_uri": uri, "issuer": issuer, "qr": qr_data_uri(uri)}
+
+
+def qr_data_uri(text: str) -> str:
+    """The otpauth link as a QR code (an SVG data: URI) to scan with Microsoft / Google Authenticator,
+    Authy, 1Password… Made here, so the secret never goes to an outside QR service."""
+    try:
+        import segno
+        return segno.make(text, error="m").svg_data_uri(scale=6, border=3, dark="#000", light="#fff")
+    except Exception:
+        return ""
 
 
 def confirm_enable(code: str) -> bool:

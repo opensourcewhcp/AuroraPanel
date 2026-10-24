@@ -103,3 +103,11 @@ def test_login_throttle(client, app_module):
         assert client.post("/api/login", json={"username": ADMIN, "password": "wrong-pass"}).status_code == 401
     r = client.post("/api/login", json={"username": ADMIN, "password": PASSWORD})
     assert r.status_code == 429  # even the right password waits once the limit is hit
+
+
+def test_2fa_enrol_has_a_qr_code_named_after_the_server():
+    config.set_credentials(ADMIN, PASSWORD)
+    from backend import twofa
+    d = twofa.begin_enroll(ADMIN)
+    assert d["qr"].startswith("data:image/svg+xml") and d["issuer"].startswith("AuroraPanel ")
+    assert d["otpauth_uri"].startswith("otpauth://totp/AuroraPanel%20") and f"secret={d['secret']}" in d["otpauth_uri"]

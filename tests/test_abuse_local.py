@@ -47,3 +47,45 @@ def test_report_body_includes_web_attacks():
     body = abuse._body("192.0.2.9", {}, ev, "mail.example.com", "203.0.113.7", "")
     assert "1 unauthorized login attempt and 1 web attack" in body
     assert "web firewall: SQL injection" in body and "failed login as user 'root'" in body
+
+
+def test_port_scan_is_evidence(monkeypatch):
+    # The Network Monitor's "Sources" (firewall-logged connection attempts) count, not only failed logins.
+    from backend import netmon
+    ip = "85.217.140.39"
+    scan = [{"ts": 1000 + i, "src": ip, "proto": "tcp", "port": 1000 + i} for i in range(12)]
+    monkeypatch.setattr(netmon, "auth_events", lambda s: [])
+    monkeypatch.setattr(netmon, "connections", lambda s: scan + [{"ts": 5, "src": "9.9.9.9", "proto": "tcp", "port": 22}])
+    monkeypatch.setattr(netmon, "blocked", lambda s: [{"ts": 2000, "src": ip, "proto": "tcp", "port": 22, "blocked": True}])
+    ev = abuse.evidence(ip)
+    c = abuse._counts(ev)
+    assert c == {"logins": 0, "attacks": 0, "probes": 13, "ports": 13}
+    assert "13 connection attempts to 13 different ports (a port scan)" in abuse._what(c)
+    body = abuse._body(ip, {"network": "NET"}, ev, "host", "1.2.3.4", "")
+    assert "firewall: connection attempt to port 1011/tcp from 85.217.140.39" in body
+    assert "dropped (banned)" in body and "9.9.9.9" not in body
+
+
+def test_abuse_suggestions_prefer_role_address():
+    # A registry that lists a person: keep it as the parsed default, but offer abuse@<domain> too,
+    # and let a role address sort first when the registry does publish one.
+    import json as _j
+    from backend import abuse
+
+    def fake_rdap(url, timeout=0):
+        class R:
+            def read(s):
+                return _j.dumps({"name": "NET-1", "country": "US", "entities": [
+                    {"roles": ["administrative"], "vcardArray": ["vcard", [["email", {}, "text", "andrew.clarke@hostus.us"]]]}]}).encode()
+        return R()
+    import urllib.request
+    abuse._cache.clear()
+    import pytest as _p
+    monkeypatch = _p.MonkeyPatch()
+    monkeypatch.setattr(urllib.request, "urlopen", fake_rdap)
+    try:
+        out = abuse.lookup("160.119.66.206")
+    finally:
+        monkeypatch.undo()
+    assert out["contacts"] == ["andrew.clarke@hostus.us"]            # parsed default unchanged
+    assert "abuse@hostus.us" in out["suggestions"]                   # role address offered

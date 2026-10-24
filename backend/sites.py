@@ -329,8 +329,12 @@ _MAINT = ('"<!doctype html><title>Maintenance</title><body style=\'font-family:s
 
 def _content(s: dict, scheme: str) -> list[str]:
     name, root, esc = s["server_name"], s["docroot"], re.escape(s["server_name"])
+    # Isolated sites (hosting accounts) share Apache (www-data), which is in every account's group.
+    # SymLinksIfOwnerMatch stops a customer symlinking to another account's files or /etc/shadow:
+    # Apache follows a symlink only when the link and its target have the same owner.
+    sym = "+SymLinksIfOwnerMatch" if s.get("php_pool") else "+FollowSymLinks"
     L = [f"    <Directory {root}>",
-         f"        Options {'+' if s['indexes'] else '-'}Indexes +FollowSymLinks",
+         f"        Options {'+' if s['indexes'] else '-'}Indexes {sym}",
          f"        AllowOverride {'All' if s['allow_override'] else 'None'}",
          "        Require all granted",
          "    </Directory>"]

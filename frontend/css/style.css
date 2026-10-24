@@ -2415,3 +2415,13 @@ label.op-rule { justify-content: flex-start; cursor: pointer; }
   border: 0; border-radius: 8px; background: transparent; color: var(--text-faint); cursor: pointer; }
 .pw-eye:hover { color: var(--text); background: rgba(255,255,255,0.06); }
 .pw-eye[aria-pressed="true"] { color: var(--accent); }
+
+/* Two-factor enrolment: QR code to scan, manual key as fallback */
+.tf-row { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
+.tf-qr { width: 196px; height: 196px; border-radius: 14px; background: #fff; padding: 4px; flex: none; image-rendering: pixelated; }
+.tf-steps { flex: 1 1 240px; display: grid; gap: 10px; }
+.tf-steps p { margin: 0; line-height: 1.5; }
+.tf-code { max-width: 180px; font-size: 22px; letter-spacing: .3em; text-align: center; font-family: ui-monospace, monospace; }
+.tf-manual { margin-top: 16px; }
+.tf-manual summary { cursor: pointer; color: var(--text-dim); font-size: 13px; }
+.tf-secret { margin: 8px 0; padding: 12px; border-radius: 12px; border: 1px solid var(--stroke-strong); font-family: ui-monospace, monospace; font-size: 16px; letter-spacing: .12em; text-align: center; user-select: all; }

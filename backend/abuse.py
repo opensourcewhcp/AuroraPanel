@@ -91,17 +91,34 @@ def lookup(ip: str) -> dict:
                 if "@" in w and "abuse" in w.lower():
                     found["abuse"].append(w.strip("<>.;:()").lower())
     contacts = list(dict.fromkeys(found["abuse"] or found["other"]))
+    # Prefer a role address (abuse@…) over a named person, so the pre-filled default is the one
+    # abuse desks actually read. RFC 2142 requires abuse@<domain>, so offer it as a suggestion too.
+    contacts.sort(key=lambda a: (not a.startswith("abuse@"), a))
+    suggestions = list(contacts)
+    for dom in dict.fromkeys(a.split("@", 1)[1] for a in contacts if "@" in a):
+        role = f"abuse@{dom}"
+        if role not in suggestions:
+            suggestions.append(role)
     out = {"ip": ip, "network": data.get("name") or "", "country": data.get("country") or "",
            "range": f"{data.get('startAddress', '')} – {data.get('endAddress', '')}".strip(" –"),
-           "contacts": contacts, "abuse_role": bool(found["abuse"]), "source": data.get("port43") or "RDAP"}
+           "contacts": contacts, "suggestions": suggestions, "abuse_role": bool(found["abuse"]), "source": data.get("port43") or "RDAP"}
     _cache[ip] = (time.time(), out)
     return out
 
 
 def evidence(ip: str, days: int = 7) -> list[dict]:
-    """Failed logins (SSH, mail, panel, FTP) and web attacks the WAF caught, newest first."""
+    """Failed logins (SSH, mail, panel, FTP), web attacks the WAF caught, and connection attempts
+    the firewall logged (port scans — the Network Monitor's "Sources"), newest first."""
     from . import netmon
     ev = [e for e in netmon.auth_events(days * 86400) if e.get("ip") == ip and e.get("outcome") != "ok"]
+    try:
+        for c in netmon.connections(days * 86400) + netmon.blocked(days * 86400):
+            if c.get("src") == ip:
+                port = f"{c['port']}/{c.get('proto') or 'tcp'}" if c.get("port") else (c.get("proto") or "?")
+                ev.append({"ts": c["ts"], "source": "firewall", "kind": "probe", "port": port,
+                           "detail": f"connection attempt to port {port}" + (" — dropped (banned)" if c.get("blocked") else "")})
+    except Exception:
+        pass
     try:
         from . import waf
         for w in waf.events(hours=days * 24, limit=500, ip=ip):
@@ -116,11 +133,17 @@ def evidence(ip: str, days: int = 7) -> list[dict]:
 
 def _counts(ev: list[dict]) -> dict:
     attacks = sum(1 for e in ev if e.get("kind") == "attack")
-    return {"logins": len(ev) - attacks, "attacks": attacks}
+    probes = [e for e in ev if e.get("kind") == "probe"]
+    return {"logins": len(ev) - attacks - len(probes), "attacks": attacks, "probes": len(probes),
+            "ports": len({e["port"] for e in probes})}
 
 
 def _what(c: dict) -> str:
     parts = []
+    if c.get("probes"):
+        ports = c.get("ports", 0)
+        parts.append(f"{c['probes']} connection attempt{'s' if c['probes'] != 1 else ''} to {ports} different port{'s' if ports != 1 else ''}"
+                     + (" (a port scan)" if ports >= 5 else ""))
     if c["logins"]:
         parts.append(f"{c['logins']} unauthorized login attempt{'s' if c['logins'] != 1 else ''}")
     if c["attacks"]:
@@ -142,7 +165,7 @@ def _body(ip: str, info: dict, ev: list[dict], host: str, server_ip: str, note: 
         "Log excerpt (UTC):",
     ]
     for e in ev[:60]:
-        if e.get("kind") == "attack":
+        if e.get("kind") in ("attack", "probe"):
             lines.append(f"  {fmt(e['ts'])}  {e['source']}: {e['detail']} from {ip}")
             continue
         who = f" as user '{e['user']}'" if e.get("user") else ""
@@ -167,6 +190,7 @@ def preview(ip: str) -> dict:
     rep = c["reported"].get(ip)
     return {"ip": ip, "info": info, "events": len(ev), "counts": _counts(ev), "from": c["from"] if c["from"] in accounts else "",
             "accounts": accounts, "mail_ready": mail.installed() and mail.configured(), "reported": rep,
+            "summary": (_what(_counts(ev)) + " in the last 7 days") if ev else "Nothing logged from this address in the last 7 days",
             "body": _body(ip, info, ev, mail.hostname(), mail._public_ip(), "")}
 
 
