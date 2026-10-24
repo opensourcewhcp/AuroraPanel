@@ -32,11 +32,30 @@ def load_config() -> dict:
     return {}
 
 
+def _write_private(path: Path, text: str) -> None:
+    """Write a file only its owner (root) can read: the config holds the session
+    signing secret, 2FA secret and API token hashes — readable by a website's PHP
+    user, it would let anyone on the server forge an admin login."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.unlink(missing_ok=True)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    os.replace(tmp, path)
+
+
 def save_config(cfg: dict) -> None:
-    tmp = CONFIG_PATH.with_suffix(".tmp")
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(cfg, fh, indent=2)
-    os.replace(tmp, CONFIG_PATH)
+    _write_private(CONFIG_PATH, json.dumps(cfg, indent=2))
+
+
+def lock_down() -> None:
+    """Make an existing config root-only (installs before 1.1.2 left it world-readable)."""
+    for p in (CONFIG_PATH, initial_password_path()):
+        try:
+            if p.exists() and p.stat().st_mode & 0o077:
+                os.chmod(p, 0o600)
+        except OSError:
+            pass
 
 
 def is_initialized() -> bool:
@@ -44,7 +63,7 @@ def is_initialized() -> bool:
     return bool(cfg.get("password_hash"))
 
 
-def set_credentials(username: str, password: str) -> None:
+def set_credentials(username: str, password: str, must_change: bool = False) -> None:
     """Create/overwrite the admin credentials + a fresh session secret."""
     salt = secrets.token_hex(16)
     cfg = load_config()
@@ -53,7 +72,51 @@ def set_credentials(username: str, password: str) -> None:
     cfg["password_hash"] = _hash_password(password, salt)
     # Rotate the signing secret whenever credentials change -> invalidates old sessions.
     cfg["session_secret"] = secrets.token_hex(32)
+    if must_change:
+        cfg["must_change_password"] = True
+    else:
+        cfg.pop("must_change_password", None)
     save_config(cfg)
+
+
+# --------------------------------------------------------------------------- #
+# First sign-in: a random password, made on the server, that must be replaced.
+# There is no "create your account" page — whoever reached a fresh panel first
+# (anyone on the internet, for a VPS) would have owned the server.
+# --------------------------------------------------------------------------- #
+# No look-alikes (0/O, 1/l/I), so it can be typed from the installer's output.
+_PW_ALPHABET = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def initial_password_path() -> Path:
+    return CONFIG_PATH.with_name("aurora_initial_password")
+
+
+def random_password() -> str:
+    """Four groups of five (about 115 bits), e.g. "k7Qm2-Xp9aR-..."."""
+    return "-".join("".join(secrets.choice(_PW_ALPHABET) for _ in range(5)) for _ in range(4))
+
+
+def issue_temporary_password(username: str | None = None) -> tuple[str, str]:
+    """Give the owner a new random password that has to be changed at sign-in, and
+    save it root-only next to the config so the installer (or `sudo cat`) can show it.
+    Also the way back in after a lost password (install.sh --reset-password)."""
+    username = username or load_config().get("username") or "admin"
+    password = random_password()
+    set_credentials(username, password, must_change=True)
+    _write_private(initial_password_path(), f"username: {username}\npassword: {password}\n")
+    return username, password
+
+
+def ensure_initial_credentials() -> tuple[str, str] | None:
+    """On a panel nobody has signed in to yet, create "admin" with a random password."""
+    if is_initialized():
+        return None
+    return issue_temporary_password("admin")
+
+
+def must_change_password() -> bool:
+    return bool(load_config().get("must_change_password"))
 
 
 def verify_credentials(username: str, password: str) -> bool:
@@ -85,7 +148,9 @@ def change_password(new_password: str) -> None:
     cfg["salt"] = salt
     cfg["password_hash"] = _hash_password(new_password, salt)
     cfg["session_secret"] = secrets.token_hex(32)
+    cfg.pop("must_change_password", None)
     save_config(cfg)
+    initial_password_path().unlink(missing_ok=True)
 
 
 def rotate_session_secret() -> None:

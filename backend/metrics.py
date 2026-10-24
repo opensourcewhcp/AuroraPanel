@@ -446,8 +446,13 @@ def _journal_errors(cat: str, since: float, prio: str = "warning") -> list[dict]
     return out
 
 
-def errors(sid: str = "", hours: int = 24, sources: str = "web,mail,database,dns,php_fpm,panel,system") -> dict:
+def errors(sid: str = "", hours: int = 24, sources: str = "web,mail,database,dns,php_fpm,panel,system",
+           start: float = 0, end: float = 0) -> dict:
+    """Errors of the last `hours`, or only those in [start, end) when a bar of the
+    timeline was clicked (still within the period, so the logs read stay bounded)."""
     since = time.time() - max(1, min(hours, 24 * 31)) * 3600
+    if start:
+        since = max(since, start)
     want = set(sources.split(","))
     from . import authz
     if authz.scope() is not None:  # a website manager: their own sites' web errors only
@@ -467,6 +472,8 @@ def errors(sid: str = "", hours: int = 24, sources: str = "web,mail,database,dns
     for cat in ("mail", "database", "dns", "php_fpm", "panel", "system"):
         if cat in want:
             items += _journal_errors(cat, since, "err" if cat == "system" else "warning")
+    if end:
+        items = [e for e in items if e["ts"] < end]
     items.sort(key=lambda e: -e["ts"])
     groups: dict[tuple, dict] = {}
     for e in items:
@@ -487,9 +494,13 @@ def errors(sid: str = "", hours: int = 24, sources: str = "web,mail,database,dns
     counts = Counter(e["cat"] for e in items)
     levels = Counter(e["level"] for e in items)
     hist = Counter(int(e["ts"] // 3600) * 3600 for e in items)
+    # Per hour and category, so the timeline shows what happened, not just how much.
+    hist_cat: dict[int, Counter] = {}
+    for e in items:
+        hist_cat.setdefault(int(e["ts"] // 3600) * 3600, Counter())[e["cat"]] += 1
     return {"items": items[:3000], "groups": glist[:1000], "total": len(items), "counts": dict(counts), "levels": dict(levels),
             "categories": {k: {"label": v[0], "hint": v[1]} for k, v in CATEGORIES.items()},
-            "hourly": sorted(hist.items()), "hours": hours}
+            "hourly": sorted(hist.items()), "hourly_cats": sorted((h, dict(c)) for h, c in hist_cat.items()), "hours": hours}
 
 
 # --------------------------------------------------------------------------- #

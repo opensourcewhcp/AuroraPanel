@@ -228,7 +228,7 @@
     packages: "packages", network: "network", firewall: "firewall", users: "users",
     mysql: "database", mysqlwiz: "wizard", pgsql: "database", pgwiz: "wizard",
     vhosts: "globe", redirects: "redirect", zones: "zone", dyndns: "refresh", ddnshosts: "refresh",
-    activity: "t_activity", isolation: "t_isolate", dockerapps: "t_docker", servers: "t_servers", mysites: "globe", panelusers: "t_usergear", wptoolkit: "t_wptool", migrate: "t_migrate", alerts: "t_bell", schedbackups: "t_cloudup", updates: "t_update", autossl: "t_autossl",
+    activity: "t_activity", isolation: "t_isolate", dockerapps: "t_docker", servers: "t_servers", mysites: "globe", panelusers: "t_usergear", hostaccounts: "users", hostplans: "packages", hostresellers: "t_usergear", wptoolkit: "t_wptool", migrate: "t_migrate", alerts: "t_bell", schedbackups: "t_cloudup", updates: "t_update", autossl: "t_autossl",
     visitors: "visitors", errors: "errors", bandwidth: "gauge", rawaccess: "rawlog", analytics: "chart", resources: "dashboard",
     ssh: "key", ipblocker: "ban", ssl: "lock", panelhttps: "lock", tokens: "token", hotlink: "link",
     leech: "trap", modsec: "shield", security: "phone", fixperms: "home", virus: "virus",
@@ -285,7 +285,7 @@
   //  Shell chrome: icon rail (sections) + pill tabs (tools in a section)
   // ======================================================================
   const GROUP_ICONS = {
-    System: "processes", Network: "network", Applications: "apps", Databases: "database", Domains: "globe", Email: "mail", Security: "shield",
+    System: "processes", Hosting: "server", Network: "network", Applications: "apps", Databases: "database", Domains: "globe", Email: "mail", Security: "shield",
     Metrics: "metrics", Files: "folder", Advanced: "terminal", Software: "packages", Preferences: "gear",
   };
   let NAV_GROUPS = [];
@@ -293,7 +293,14 @@
     document.body.dataset.role = state.role;
     const lbl = $("#user-label");
     if (lbl && state.role !== "admin" && !document.getElementById("role-pill")) {
-      lbl.after(el("span", { id: "role-pill", class: `pill ${state.role === "viewer" ? "warn" : "dim"}`, text: state.role === "viewer" ? "read-only" : "website manager" }));
+      lbl.after(el("span", { id: "role-pill", class: `pill ${state.role === "viewer" ? "warn" : "dim"}`, text: state.role === "viewer" ? "read-only" : state.role === "reseller" ? "reseller" : state.account ? "hosting account" : "website manager" }));
+    }
+    if (state.role === "reseller") {
+      // A reseller sees only their hosting accounts.
+      const nav = $("#nav");
+      nav.querySelectorAll(".nav-item").forEach((n) => { if (n.dataset.view !== "hostaccounts") n.remove(); });
+      [...nav.querySelectorAll(".nav-group")].forEach((g) => { let n = g.nextElementSibling; if (!n || n.classList.contains("nav-group")) g.remove(); });
+      return;
     }
     if (state.role !== "site") return;
     const nav = $("#nav");
@@ -331,6 +338,61 @@
     const pref = NAV_GROUPS.find((g) => g.name === "Preferences");
     const sb = $("#rail-settings");
     if (sb && pref) { sb.textContent = ""; sb.appendChild(icon("gear", 19)); sb.onclick = () => { state.group = pref.name; navigate(pref.items[0].view); }; }
+    dockRail();
+  }
+
+  // macOS Dock-style magnification: the icon under the pointer grows, its neighbours a little
+  // less, and a name label floats beside it. Distances are measured against where the icons sat
+  // before growing, so the effect doesn't chase its own movement. Desktop pointers only.
+  function dockRail() {
+    const rail = $(".rail");
+    if (!rail || rail.dataset.dock) return;
+    rail.dataset.dock = "1";
+    const MAX = 0.5, RANGE = 120;  // +50% at the pointer, fading out over 120px
+    const label = el("div", { class: "rail-label", hidden: "" });
+    document.body.append(label);
+    let base = null, frame = 0;
+    const off = () => !window.matchMedia("(hover: hover) and (min-width: 761px)").matches || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const btns = () => [...rail.querySelectorAll(".rail-btn")];
+    const reset = () => {
+      base = null; label.hidden = true; rail.classList.remove("docking");
+      btns().forEach((b) => { b.style.removeProperty("--dock"); });
+    };
+    rail.addEventListener("mousemove", (e) => {
+      if (off()) return;
+      if (!base) {
+        base = btns().map((b) => {
+          // Our label replaces the browser's slow tooltip (kept for screen readers).
+          if (b.title) { b.setAttribute("aria-label", b.title); b.dataset.name = b.title; b.removeAttribute("title"); }
+          const r = b.getBoundingClientRect();
+          return { b, y: r.top + r.height / 2, right: r.right, half: r.width / 2, name: b.dataset.name || b.dataset.rail || "" };
+        });
+        rail.classList.add("docking");
+      }
+      const y = e.clientY;
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        let best = null;
+        base.forEach((it) => {
+          const d = Math.abs(y - it.y);
+          // Cosine falloff: smooth at the peak and at the edge, like the Dock.
+          const s = d >= RANGE ? 0 : MAX * (0.5 + 0.5 * Math.cos((Math.PI * d) / RANGE));
+          it.b.style.setProperty("--dock", s.toFixed(3));
+          if (!best || d < best.d) best = { d, it, s };
+        });
+        if (best && best.d < 30 && best.it.name) {
+          label.textContent = best.it.name;
+          label.style.top = `${best.it.y}px`;
+          // Clear of the grown icon: its right edge moves by the scale and the lean (see .rail-btn).
+          const edge = best.it.right + best.it.half * best.s + 14 * best.s;
+          label.style.left = `${Math.max(edge, rail.getBoundingClientRect().right) + 12}px`;
+          label.hidden = false;
+        } else label.hidden = true;
+      });
+    });
+    rail.addEventListener("mouseleave", () => { cancelAnimationFrame(frame); reset(); });
+    window.addEventListener("scroll", () => { if (base) reset(); }, { passive: true });
+    window.addEventListener("resize", reset);
   }
   function renderChrome(view) {
     const g = groupOf(view);
@@ -466,7 +528,7 @@
   // ======================================================================
   //  Auth flow
   // ======================================================================
-  const state = { view: "dashboard", needsSetup: false, refreshHandler: null, sysUser: null, sysHome: null };
+  const state = { view: "dashboard", firstLogin: false, refreshHandler: null, sysUser: null, sysHome: null };
   // The Pi's regular login (whoever installed the panel) — used for defaults/placeholders.
   const sysUser = () => state.sysUser || "pi";
   const sysHome = () => state.sysHome || `/home/${sysUser()}`;
@@ -477,32 +539,75 @@
       const s = await API.status();
       IS_PI = s.pi !== false;
       if (!IS_PI) document.querySelectorAll("[data-pi]").forEach((n) => { n.textContent = host(n.textContent); });
-      state.needsSetup = !s.initialized;
-      if (!s.initialized) return showAuth(true);
-      // Already have creds — check for a live session.
+      state.firstLogin = !!s.first_login;
+      // Check for a live session.
       try {
         const me = await API.me();
-        return enterApp(me.username, me);
+        return me.must_change_password ? showPasswordChange(me.username, null) : enterApp(me.username, me);
       } catch (e) {
-        return showAuth(false);
+        return showAuth();
       }
     } catch (e) {
-      showAuth(false);
+      showAuth();
       toast("Cannot reach the server", "bad");
     }
   }
 
-  function showAuth(setupMode) {
+  function showAuth() {
     $("#app-shell").hidden = true;
     $("#auth-screen").hidden = false;
-    $("#auth-subtitle").textContent = setupMode
-      ? "First run — create your admin account"
-      : IS_PI ? "Sign in to your Raspberry Pi" : "Sign in to your server";
-    $("#auth-submit").textContent = setupMode ? "Create account" : "Sign in";
-    $("#auth-password").setAttribute("autocomplete", setupMode ? "new-password" : "current-password");
+    $("#pw-form").hidden = true;
+    $("#auth-form").hidden = false;
+    $("#auth-subtitle").textContent = IS_PI ? "Sign in to your Raspberry Pi" : "Sign in to your server";
+    // The installer made "admin" with a random password: say where it is.
+    $("#auth-hint").hidden = !state.firstLogin;
+    if (state.firstLogin && !$("#auth-username").value) $("#auth-username").value = "admin";
     $("#auth-error").hidden = true;
-    state.needsSetup = setupMode;
   }
+
+  // Signed in with the installer's password: nothing else opens until it's replaced.
+  function showPasswordChange(username, current) {
+    $("#app-shell").hidden = true;
+    $("#auth-screen").hidden = false;
+    $("#auth-form").hidden = true;
+    $("#auth-hint").hidden = true;
+    $("#pw-form").hidden = false;
+    $("#auth-subtitle").textContent = "Choose your own password to continue — the one from the installer works only once.";
+    $("#pw-form").querySelector('input[name="username"]').value = username;
+    $("#pw-current-wrap").hidden = !!current;
+    $("#pw-current").required = !current;
+    state.pwChange = { username, current };
+    $("#pw-error").hidden = true;
+    (current ? $("#pw-new") : $("#pw-current")).focus();
+  }
+
+  $("#pw-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const errEl = $("#pw-error");
+    errEl.hidden = true;
+    const { username, current } = state.pwChange || {};
+    const now = current || $("#pw-current").value;
+    const pw = $("#pw-new").value;
+    const fail = (msg) => { errEl.textContent = msg; errEl.hidden = false; };
+    if (pw !== $("#pw-repeat").value) return fail("The two new passwords are different.");
+    if (pw.length < 8) return fail("Use at least 8 characters.");
+    if (pw === now) return fail("Choose a password different from the installer's.");
+    try {
+      await API.passwordChange(now, pw);
+    } catch (err) {
+      return fail(err.message);
+    }
+    for (const id of ["#pw-current", "#pw-new", "#pw-repeat"]) $(id).value = "";
+    state.pwChange = null;
+    state.firstLogin = false;
+    enterApp(username);
+    toast("Password saved", "good");
+  });
+
+  $("#pw-logout").addEventListener("click", async () => {
+    try { await API.logout(); } catch (e) {}
+    location.reload();
+  });
 
   function ensureOtpField() {
     let wrap = $("#auth-otp-wrap");
@@ -527,14 +632,11 @@
     const errEl = $("#auth-error");
     errEl.hidden = true;
     try {
-      if (state.needsSetup) {
-        await API.setup(username, password);
-        await API.login(username, password);
-      } else {
-        await API.loginOtp(username, password, otp || null);
-      }
+      await API.loginOtp(username, password, otp || null);
       $("#auth-password").value = "";
-      enterApp(username);
+      const me = await API.me();
+      if (me.must_change_password) return showPasswordChange(me.username, password);
+      enterApp(me.username, me);
     } catch (err) {
       if (err.message === "otp_required") {
         ensureOtpField();
@@ -555,6 +657,7 @@
     $("#user-label").textContent = username;
     if (!me) { try { me = await API.me(); } catch (e) { me = {}; } }
     state.role = me.role || "admin";
+    state.account = me.account || "";
     state.sysUser = me.system_user; state.sysHome = me.home;
     state.meReady = Promise.resolve();
     applyRole();
@@ -608,7 +711,7 @@
     indexes: "Indexes", mime: "MIME Types", errorpages: "Error Pages", handlers: "Apache Handlers",
     virus: "Virus Scanner", dns: "Track DNS",
     ssh: "SSH Access", ipblocker: "IP Blocker & Trust", ssl: "SSL/TLS Certificates", tokens: "Manage API Tokens",
-    hotlink: "Hotlink Protection", redirects: "Redirects", modsec: "WAF Firewall", activity: "Activity Log", isolation: "Site Isolation", dockerapps: "Docker Apps", servers: "Servers", mysites: "My Websites", panelusers: "Panel Users", wptoolkit: "WordPress Toolkit", migrate: "Move from cPanel", alerts: "Alerts", schedbackups: "Scheduled Backups", updates: "Updates", autossl: "AutoSSL", ddnshosts: "Dynamic DNS", visitors: "Visitors", errors: "Errors", bandwidth: "Bandwidth", rawaccess: "Raw Access", analytics: "Analytics", resources: "Resource Usage", leech: "Fail2ban",
+    hotlink: "Hotlink Protection", redirects: "Redirects", modsec: "WAF Firewall", activity: "Activity Log", isolation: "Site Isolation", dockerapps: "Docker Apps", servers: "Servers", mysites: "My Websites", panelusers: "Panel Users", hostaccounts: "Hosting Accounts", hostplans: "Hosting Plans", hostresellers: "Resellers", wptoolkit: "WordPress Toolkit", migrate: "Move from cPanel", alerts: "Alerts", schedbackups: "Scheduled Backups", updates: "Updates", autossl: "AutoSSL", ddnshosts: "Dynamic DNS", visitors: "Visitors", errors: "Errors", bandwidth: "Bandwidth", rawaccess: "Raw Access", analytics: "Analytics", resources: "Resource Usage", leech: "Fail2ban",
     fixperms: "Fix Home Permissions", vhosts: "Domains", dyndns: "Dynamic DNS Updater", zones: "Zone Editor",
     mysql: "Manage Databases", mysqlwiz: "MariaDB Wizard", pgsql: "PostgreSQL Databases",
     pgwiz: "PostgreSQL Wizard",
@@ -653,6 +756,7 @@
   function navigate(view, opts = {}) {
     if (!TITLES[view] && view !== "dashboard") view = "dashboard";
     if (state.role === "site" && !SITE_VIEWS.has(view)) view = "mysites";
+    if (state.role === "reseller" && view !== "hostaccounts") view = "hostaccounts";
     const mode = opts.history || "push";
     state.viewArg = opts.arg !== undefined ? opts.arg : (mode === "push" ? null : argFromHash());
     const hash = `#/${view}${state.viewArg ? "/" + argToUrl(state.viewArg) : ""}`;
@@ -746,10 +850,10 @@
   //  bar) instead of failing. "soft" ones only show a banner above the page.
   // ======================================================================
   const VIEW_NEEDS = {
-    vhosts: ["web"], redirects: ["web"], hotlink: ["web"], indexes: ["web"], mime: ["web"], errorpages: ["web"],
-    handlers: ["web"], dirprivacy: ["web"], webdisk: ["web"], phpver: ["web"],
+    vhosts: ["apache"], redirects: ["apache"], hotlink: ["apache"], indexes: ["apache"], mime: ["apache"], errorpages: ["apache"],
+    handlers: ["apache"], dirprivacy: ["apache"], webdisk: ["apache"], phpver: ["web"], hostaccounts: ["web"],
     appstore: ["web", "mariadb"], app: ["web", "mariadb"], wordpress: ["web", "mariadb"],
-    modsec: ["web", "modsecurity"], dockerapps: ["docker"], autossl: { need: ["web"], soft: ["certbot"] }, visitors: ["web"], analytics: ["web"], rawaccess: ["web"], ddnshosts: { soft: ["bind9"] }, ssl: { need: ["web"], soft: ["certbot"] },
+    modsec: ["apache", "modsecurity"], dockerapps: ["docker"], autossl: { need: ["apache"], soft: ["certbot"] }, visitors: ["apache"], analytics: ["apache"], rawaccess: ["apache"], ddnshosts: { soft: ["bind9"] }, ssl: { need: ["apache"], soft: ["certbot"] },
     mysql: ["mariadb"], mysqlwiz: ["mariadb"], pgsql: ["postgresql"], pgwiz: ["postgresql"],
     ftpaccounts: ["ftp"], git: ["git"], cron: ["cron"], virus: ["clamav"], firewall: ["ufw"], leech: ["fail2ban"],
     zones: { soft: ["bind9"] },
@@ -884,6 +988,11 @@
   //  Dashboard
   // ======================================================================
   const TILE_GROUPS = [
+    { name: "Hosting", icon: "server", tiles: [
+      { label: "Hosting Accounts", icon: "users", view: "hostaccounts" },
+      { label: "Hosting Plans", icon: "packages", view: "hostplans" },
+      { label: "Resellers", icon: "t_usergear", view: "hostresellers" },
+    ]},
     { name: "Databases", icon: "database", tiles: [
       { label: "phpMyAdmin", icon: "database", ext: "/phpmyadmin" },
       { label: "Manage Databases", icon: "database", view: "mysql" },
@@ -4890,6 +4999,8 @@
         $("#nd-lbl", domainBox).firstChild.textContent = ipKind ? "IP address" : "Domain";
         name.placeholder = ipKind ? "e.g. 192.168.0.50 — another address of this Pi" : "example.com, or a local name like mysite.test";
         $("#nd-hint-ip", domainBox).hidden = !ipKind; $("#nd-hint-dom", domainBox).hidden = ipKind;
+        // Let's Encrypt only certifies names: an IP site keeps a self-signed (or uploaded) certificate.
+        $("#nd-ssl-hint", domainBox).textContent = ipKind ? "(an IP address can't get a Let's Encrypt certificate — use a domain name for that)" : "(switch to Let's Encrypt later)";
         ["#nd-www", "#nd-zone"].forEach((id) => { $(id, f).parentElement.hidden = ipKind; if (ipKind) $(id, f).checked = false; });
         if (!ipKind) $("#nd-www", f).checked = true;
         if (name.value.trim() && isIp(name.value.trim()) !== ipKind) { name.value = ""; name.dispatchEvent(new Event("input")); }
@@ -4915,7 +5026,7 @@
       <label class="cw-lbl" id="nd-lbl">Domain<input id="nd-name" type="text" placeholder="example.com" autocomplete="off" /></label>
       <label class="cw-lbl">Document root<input id="nd-root" type="text" placeholder="/var/www/example.com" /></label>
       <label class="dm-check"><input id="nd-www" type="checkbox" checked /> Also answer on <b id="nd-www-l">www.example.com</b></label>
-      <label class="dm-check"><input id="nd-ssl" type="checkbox" /> Create a self-signed certificate &amp; force HTTPS <span class="muted">(switch to Let's Encrypt later)</span></label>
+      <label class="dm-check"><input id="nd-ssl" type="checkbox" /> Create a self-signed certificate &amp; force HTTPS <span class="muted" id="nd-ssl-hint">(switch to Let's Encrypt later)</span></label>
       <label class="dm-check"><input id="nd-zone" type="checkbox" /> Create a DNS zone for it in the Zone Editor</label>
       <p class="muted" id="nd-hint-dom" style="font-size:12px;margin:4px 0 0">Local names like <code>mysite.test</code> work too — you'll get the hosts-file line to add on your computer.</p>
       <p class="muted" id="nd-hint-ip" hidden style="font-size:12px;margin:4px 0 0">The site answers on <code>http://&lt;ip&gt;/</code>. For this Pi's own address (<code>${esc(location.hostname)}</code>), which Apache's built-in site already uses, enter a folder such as <code>/var/www/html/mysite</code> and it's served at <code>http://${esc(location.hostname)}/mysite/</code> — or use <b>Local</b>.</p>`;
@@ -5087,7 +5198,7 @@
           return;
         }
         if (s.ssl === "letsencrypt") {
-          const email = el("input", { type: "email", placeholder: "you@example.com", value: (() => { try { return localStorage.getItem("aurora-le-email") || ""; } catch (e) { return ""; } })() });
+          const email = el("input", { type: "email", placeholder: "you@gmail.com — optional", value: (() => { try { return localStorage.getItem("aurora-le-email") || ""; } catch (e) { return ""; } })() });
           const withAliases = el("input", { type: "checkbox" }); withAliases.checked = true;
           const force = el("input", { type: "checkbox" });
           const log = el("pre", { class: "log", hidden: true });
@@ -5096,7 +5207,12 @@
               try { const r = await API.certbotInstall(); follow(r.job, "Installing certbot…", () => load()); } catch (e) { toast(e.message, "bad"); }
               return;
             }
-            if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.value.trim())) { email.focus(); return toast("Enter an email for Let's Encrypt expiry notices", "bad"); }
+            // Optional; but Let's Encrypt refuses addresses on a network-only domain (you@ns0.local).
+            const em = email.value.trim();
+            if (em && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) { email.focus(); return toast("That email address doesn't look right", "bad"); }
+            if (em && /@(.*\.(local|lan|home|internal|intranet|localdomain|localhost|test|example|invalid|home\.arpa)|[0-9.]+|[^.]+)$/i.test(em)) {
+              email.focus(); return toast("Let's Encrypt only accepts an email on a real internet domain — use your normal address, or leave it empty", "bad");
+            }
             // Picking "Let's Encrypt" (and its Force HTTPS / HSTS switches) is saved once the certificate
             // exists; any other unsaved edits are saved first, keeping the current certificate for now.
             const others = { ...s, ssl: d.settings.ssl, force_https: d.settings.force_https, hsts: d.settings.hsts };
@@ -5125,13 +5241,13 @@
               } catch (e) { clearInterval(jp.t); issue.disabled = false; }
             }, 1300);
           }
-          sslDetail.append(
+          sslDetail.append(...[
             el("p", { class: "dm-hint", html: d.le_available ? "✅ A Let's Encrypt certificate exists for this domain — save to use it. It renews automatically via certbot's timer." : "Free, trusted certificate. The domain must already point at this Pi's <b>public IP</b> and port <b>80</b> must be forwarded to it, so Let's Encrypt can verify it." }),
-            field("Email for expiry notices", email),
+            field("Email for expiry notices (optional)", email, "A real address (not @…local). Empty is fine: certificates still renew automatically, you just won't get Let's Encrypt's reminder emails."),
             el("label", { class: "dm-check" }, [withAliases, " Include aliases (", s.aliases.filter((a) => !a.startsWith("*")).join(", ") || "none", ")"]),
             d.le_available ? el("label", { class: "dm-check" }, [force, " Renew now, even if it isn't due yet ", el("span", { class: "muted", text: "(Let's Encrypt allows only a few of these per week)" })]) : null,
             el("p", { class: "dm-hint", html: "By issuing you agree to the <a href='https://letsencrypt.org/repository/' target='_blank' rel='noopener'>Let's Encrypt Subscriber Agreement</a>." }),
-            el("div", {}, issue), log);
+            el("div", {}, issue), log].filter(Boolean));  // optional rows are null: append() would print "null"
           Object.assign(le, { issue });
         }
       };
@@ -5153,6 +5269,7 @@
       if (ro) httpsToggles.querySelectorAll(".dm-trow")[1].hidden = true;  // HSTS isn't set on the built-in sites
       left.append(card("lock", "HTTPS / SSL", "Encrypt traffic and choose where the certificate comes from.",
         seg("ssl", [["none", "None"], ["selfsigned", "Self-signed"], ...(ipSite || sysSsl ? [] : [["letsencrypt", "Let's Encrypt"]]), ["custom", "Custom"]], (v) => { if (v === "none" && !sysSsl) { s.force_https = false; s.hsts = false; httpsToggles.querySelectorAll(".sw-in").forEach((i) => { i.checked = false; }); } drawSsl(); syncHttps(); }, sysSsl),
+        ipSite ? el("p", { class: "dm-hint", text: "Why no Let's Encrypt? It only issues certificates for domain names that point at this server from the internet — never for an IP address like this one. For a trusted certificate, point a domain (even a free one, e.g. from DuckDNS) at this server and add it as a domain site; or upload your own certificate with Custom." }) : null,
         certRow, sslDetail, httpsToggles));
       syncHttps();
 
@@ -5637,6 +5754,37 @@
   };
 
   // Random password from the browser's CSPRNG (works on plain-http LAN too).
+  // Passwords are never shown in clear on screen by default: each password field (class
+  // pw-secret, or one of the panel's password rows / "copy it now" boxes) is masked with an eye
+  // button to reveal it. Applied to fields as they appear, so every form gets it.
+  const PW_SEL = "input.pw-secret, input.net-pw-out, .em-pw-row > input, .op-pwrow > input, .wp-pw > input";
+  function maskPw(inp) {
+    if (inp.dataset.pwm || inp.type === "hidden") return;
+    inp.dataset.pwm = "1";
+    inp.type = "password";
+    inp.setAttribute("spellcheck", "false");
+    if (!inp.getAttribute("autocomplete") || inp.getAttribute("autocomplete") === "off") inp.setAttribute("autocomplete", inp.readOnly ? "off" : "new-password");
+    const eye = el("button", { type: "button", class: "pw-eye", title: "Show password", "aria-label": "Show password", "aria-pressed": "false" }, icon("eye", 16));
+    eye.onclick = () => {
+      const on = inp.type === "password";
+      inp.type = on ? "text" : "password";
+      eye.replaceChildren(icon(on ? "eyeOff" : "eye", 16));
+      eye.title = on ? "Hide password" : "Show password";
+      eye.setAttribute("aria-label", eye.title);
+      eye.setAttribute("aria-pressed", on ? "true" : "false");
+    };
+    const wrap = el("span", { class: "pw-wrap" });
+    inp.replaceWith(wrap);
+    wrap.append(inp, eye);
+  }
+  new MutationObserver((muts) => {
+    for (const m of muts) for (const n of m.addedNodes) {
+      if (n.nodeType !== 1) continue;
+      if (n.matches && n.matches(PW_SEL)) maskPw(n);
+      n.querySelectorAll && n.querySelectorAll(PW_SEL).forEach(maskPw);
+    }
+  }).observe(document.body, { childList: true, subtree: true });
+
   function genPassword(len = 16) {
     const abc = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
     const buf = new Uint32Array(len); crypto.getRandomValues(buf);
@@ -5732,7 +5880,7 @@
       manage(s, jp, reload) {
         const head = el("div"), warn = el("div"), list = el("div");
         const name = el("input", { type: "text", placeholder: "e.g. iphone", maxlength: 32 });
-        const pw = el("input", { type: "text", placeholder: "leave empty to generate" });
+        const pw = el("input", { type: "text", class: "pw-secret", placeholder: "leave empty to generate" });
         const add = btn("Add user", async () => {
           try {
             const r = await API.vpnClientAdd("ipsec", { name: name.value.trim(), password: pw.value });
@@ -6326,7 +6474,7 @@
     return { input: c, node: el("label", { class: "dm-check" }, [c, el("span", {}, [label, hint ? el("span", { class: "muted", text: ` — ${hint}` }) : null].filter(Boolean))]) };
   };
   const dbPwField = () => {
-    const inp = el("input", { type: "text", placeholder: "password (6+ characters)", autocomplete: "new-password", spellcheck: "false", style: "min-width:0;flex:1" });
+    const inp = el("input", { type: "text", class: "pw-secret", placeholder: "password (6+ characters)", autocomplete: "new-password", spellcheck: "false", style: "min-width:0;flex:1" });
     return { input: inp, node: el("div", { class: "toolbar", style: "margin:0;flex-wrap:nowrap" }, [inp,
       btn("Generate", () => { inp.value = genPassword(18); }, "btn-ghost"),
       btn("Copy", async () => { if (!inp.value) return toast("Nothing to copy yet", "bad"); toast(await copyText(inp.value) ? "Password copied" : "Copy failed", "good"); }, "btn-ghost")]) };
@@ -6626,7 +6774,7 @@
       return { input: c, node: el("label", { class: "dm-check" }, [c, el("span", {}, [label, hint ? el("span", { class: "muted", text: ` — ${hint}` }) : null].filter(Boolean))]) };
     };
     const pwField = (id) => {
-      const inp = el("input", { id, type: "text", placeholder: "password (6+ characters)", autocomplete: "new-password", style: "min-width:0;flex:1" });
+      const inp = el("input", { id, type: "text", class: "pw-secret", placeholder: "password (6+ characters)", autocomplete: "new-password", style: "min-width:0;flex:1" });
       return { input: inp, node: el("div", { class: "toolbar", style: "margin:0;flex-wrap:nowrap" }, [inp,
         btn("Generate", () => { inp.value = genPassword(18); }, "btn-ghost"),
         btn("Copy", async () => toast(await copyText(inp.value) ? "Password copied" : "Copy failed", "good"), "btn-ghost")]) };
@@ -7607,8 +7755,18 @@
   // ======================================================================
   function openModal(title, bodyNode, footButtons) {
     closeModal();
+    // A click beside the window closes it only when there's nothing to lose (no fields to fill).
+    // A form stays open and gives a small bump instead — ✕, Close or Esc close it. A press that
+    // started inside (selecting text in a field, released outside) never counts as an outside click.
+    let downInside = false;
     const backdrop = el("div", { class: "modal-backdrop", id: "modal",
-      onclick: (e) => { if (e.target.id === "modal") closeModal(); } }, [
+      onmousedown: (e) => { downInside = e.target.id !== "modal"; },
+      onclick: (e) => {
+        if (e.target.id !== "modal" || downInside) return;
+        const box = backdrop.querySelector(".modal");
+        if (!box.querySelector("input:not([type=hidden]):not([type=checkbox]):not([type=radio]), textarea, select")) return closeModal();
+        box.classList.remove("bump"); void box.offsetWidth; box.classList.add("bump");
+      } }, [
       el("div", { class: "modal" }, [
         el("div", { class: "modal-head" }, [
           el("h3", { text: title }),

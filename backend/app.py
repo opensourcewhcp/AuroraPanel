@@ -9,6 +9,7 @@ import io
 import json
 import os
 import re
+import sys
 import threading
 import time
 from pathlib import Path
@@ -25,7 +26,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
 
 from . import (
-    abuse, alerts, antivirus, audit, authz, autossl, dockerapps, isolate, migrate, panelusers, servers, wptoolkit, schedules, tasks, updates, apache, apitokens, appmanager, auth, backups, config, cron,
+    abuse, alerts, slackbot, hosting, antivirus, audit, authz, autossl, dockerapps, isolate, migrate, panelusers, servers, wptoolkit, schedules, tasks, updates, apache, apitokens, appmanager, auth, backups, config, cron,
     apps, databases, diskusage, dnszones, domains, fail2ban, netmgr, sites, files, firewall, ipblocker, jobs,
     metrics, modsecurity, netdiag, waf, packages, perms, phpmgr, services, sslcerts, sshaccess,
     sysapps, system_info, terminal, twofa, users,
@@ -124,11 +125,6 @@ class LoginBody(BaseModel):
     otp: str | None = None
 
 
-class SetupBody(BaseModel):
-    username: str
-    password: str
-
-
 class ServiceBody(BaseModel):
     unit: str
     action: str
@@ -153,21 +149,14 @@ class MkdirBody(BaseModel):
 # --------------------------------------------------------------------------- #
 @app.get("/api/status")
 def api_status():
-    """Public: whether first-run setup is needed, and whether this is a Raspberry Pi
-    (the interface says "server" instead of "Pi" on other machines)."""
-    return {"initialized": config.is_initialized(), "pi": system_info.is_pi()}
+    """Public: whether the owner still has the installer's random password (the sign-in
+    page then says where to find it), and whether this is a Raspberry Pi (the interface
+    says "server" instead of "Pi" on other machines).
 
-
-@app.post("/api/setup")
-def api_setup(body: SetupBody):
-    if config.is_initialized():
-        raise HTTPException(status_code=409, detail="Already initialized")
-    if len(body.password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
-    if not body.username.strip():
-        raise HTTPException(status_code=400, detail="Username required")
-    config.set_credentials(body.username.strip(), body.password)
-    return {"ok": True}
+    There is deliberately no "create your admin account" call: the installer makes the
+    account with a random password, so nobody who finds a fresh panel can claim it."""
+    return {"initialized": config.is_initialized(), "first_login": config.must_change_password(),
+            "pi": system_info.is_pi()}
 
 
 def _auth_log(ok: bool, username: str, request: Request):
@@ -283,6 +272,8 @@ def api_me(user: str = auth.CurrentUser):
     me = panelusers.get(user) or {"role": "admin", "sites": []}
     full = me["role"] == "admin"  # limited users don't need to know the server's Linux account
     return {"username": user, "role": me["role"], "sites": me.get("sites", []), "owner": bool(me.get("owner")),
+            "must_change_password": bool(me.get("owner")) and config.must_change_password(),
+            "account": me.get("account", ""),
             "system_user": owner.pw_name if owner and full else None,
             "home": owner.pw_dir if owner and full else None}
 
@@ -2453,6 +2444,11 @@ def api_mail_accounts(user: str = auth.CurrentUser):
 
 @app.post("/api/mail/accounts/create")
 def api_mail_account_create(body: MailAccountBody, user: str = auth.CurrentUser):
+    if (authz.current() or {}).get("role") in ("site", "reseller"):  # an admin may go over a plan on purpose
+        try:
+            hosting.check_mailbox_limit(body.address)
+        except hosting.HostingError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
     return _mail(mail.create_account, body.address, body.password or "", body.quota_mb if body.quota_mb is not None else 1024, body.name or "")
 
 
@@ -3457,6 +3453,8 @@ def api_account_password(body: PasswordChangeBody, request: Request, user: str =
         raise HTTPException(status_code=400, detail="Current password is incorrect")
     if len(body.new_password) < 8:
         raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+    if body.new_password == body.current:
+        raise HTTPException(status_code=400, detail="Choose a password different from the current one")
     config.change_password(body.new_password)
     # change_password rotated the signing secret, which signs out every other
     # session; hand this browser a fresh cookie so it stays logged in.
@@ -3485,7 +3483,20 @@ def _met_call(fn):
 
 @app.on_event("startup")
 def _metrics_start():
+    config.lock_down()
+    # install.sh normally makes the account before the first start; this covers
+    # run.sh / run.bat and an update of a panel nobody had signed in to yet.
+    made = config.ensure_initial_credentials()
+    if made:
+        where = config.initial_password_path()
+        # The password itself only goes to a terminal, never into the journal.
+        shown = f"password {made[1]}" if sys.stdout.isatty() else f"password in {where} (sudo cat {where})"
+        print(f"aurora: first sign-in: user {made[0]}, {shown} — you'll be asked to change it", flush=True)
     metrics.start()
+    try:
+        slackbot.start()  # Socket Mode: receives button clicks and /aurora
+    except Exception as exc:
+        print(f"aurora: Slack not started: {exc}", flush=True)
     try:
         tasks.ensure_timer()
     except Exception as exc:  # never block the panel from starting
@@ -3515,6 +3526,139 @@ def api_alerts_save(body: dict, user: str = auth.CurrentUser):
 @app.post("/api/alerts/test")
 def api_alerts_test(user: str = auth.CurrentUser):
     return _alert_call(alerts.test)
+
+
+# Hosting: WHM-style plans, accounts (separate Linux users), resellers (see hosting.py)
+def _host_call(fn):
+    try:
+        return fn()
+    except (hosting.HostingError, panelusers.PanelUserError, databases.DatabaseError, isolate.IsolateError, sites.SiteError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/hosting")
+def api_hosting(user: str = auth.CurrentUser):
+    return _host_call(hosting.listing)
+
+
+@app.post("/api/hosting/plans/save")
+async def api_hosting_plan_save(request: Request, user: str = auth.CurrentUser):
+    b = await request.json()
+    return _host_call(lambda: hosting.save_plan(str(b.get("name", "")), b.get("limits") or {}, str(b.get("original") or "")))
+
+
+@app.post("/api/hosting/plans/delete")
+async def api_hosting_plan_delete(request: Request, user: str = auth.CurrentUser):
+    b = await request.json()
+    return _host_call(lambda: hosting.delete_plan(str(b.get("name", ""))))
+
+
+@app.post("/api/hosting/resellers/save")
+async def api_hosting_reseller(request: Request, user: str = auth.CurrentUser):
+    b = await request.json()
+    return _host_call(lambda: hosting.set_reseller(str(b.get("username", "")), list(b.get("plans") or []), int(b.get("max_accounts") or 0)))
+
+
+@app.post("/api/hosting/accounts/create")
+async def api_hosting_create(request: Request, user: str = auth.CurrentUser):
+    b = await request.json()
+    def go():
+        # Checks first (fast, clear errors), then the slow part as a job with a progress log.
+        hosting.validate_new(str(b.get("user", "")), str(b.get("domain", "")), str(b.get("plan", "")), str(b.get("password", "")), str(b.get("email", "")))
+        return {"job": hosting.create_account_job(str(b.get("user", "")), str(b.get("domain", "")), str(b.get("plan", "")),
+                                                  str(b.get("password", "")), str(b.get("email", ""))).id}
+    return _host_call(go)
+
+
+@app.post("/api/hosting/accounts/domain")
+async def api_hosting_domain(request: Request, user: str = auth.CurrentUser):
+    b = await request.json()
+    return _host_call(lambda: hosting.add_domain(str(b.get("user", "")), str(b.get("domain", ""))))
+
+
+@app.post("/api/hosting/accounts/plan")
+async def api_hosting_plan(request: Request, user: str = auth.CurrentUser):
+    b = await request.json()
+    return _host_call(lambda: hosting.change_plan(str(b.get("user", "")), str(b.get("plan", ""))))
+
+
+@app.post("/api/hosting/accounts/password")
+async def api_hosting_password(request: Request, user: str = auth.CurrentUser):
+    b = await request.json()
+    return _host_call(lambda: hosting.set_password(str(b.get("user", "")), str(b.get("password", ""))))
+
+
+@app.post("/api/hosting/accounts/suspend")
+async def api_hosting_suspend(request: Request, user: str = auth.CurrentUser):
+    b = await request.json()
+    return _host_call(lambda: hosting.suspend(str(b.get("user", "")), bool(b.get("on")), str(b.get("reason", ""))))
+
+
+@app.post("/api/hosting/accounts/terminate")
+async def api_hosting_terminate(request: Request, user: str = auth.CurrentUser):
+    b = await request.json()
+    return _host_call(lambda: hosting.terminate(str(b.get("user", "")), bool(b.get("keep_files")), bool(b.get("delete_mail", True)),
+                                                bool(b.get("delete_databases", True))))
+
+
+@app.post("/api/hosting/measure")
+def api_hosting_measure(user: str = auth.CurrentUser):
+    return _host_call(hosting.measure)
+
+
+@app.get("/api/hosting/me")
+def api_hosting_me(user: str = auth.CurrentUser):
+    return _host_call(hosting.me)
+
+
+@app.get("/api/hosting/me/db")
+def api_hosting_me_db(user: str = auth.CurrentUser):
+    return _host_call(lambda: hosting.my_databases())
+
+
+@app.post("/api/hosting/me/db/create")
+async def api_hosting_me_db_create(request: Request, user: str = auth.CurrentUser):
+    b = await request.json()
+    return _host_call(lambda: hosting.db_create(str(b.get("name", "")), str(b.get("password", ""))))
+
+
+@app.post("/api/hosting/me/db/drop")
+async def api_hosting_me_db_drop(request: Request, user: str = auth.CurrentUser):
+    b = await request.json()
+    return _host_call(lambda: hosting.db_drop(hosting._me(), str(b.get("name", ""))))
+
+
+@app.post("/api/hosting/me/db/password")
+async def api_hosting_me_db_pw(request: Request, user: str = auth.CurrentUser):
+    b = await request.json()
+    return _host_call(lambda: hosting.db_password(str(b.get("name", "")), str(b.get("password", ""))))
+
+
+# Slack app: alerts with buttons, attack reports, /aurora (see slackbot.py)
+def _slack_call(fn):
+    try:
+        return fn()
+    except (slackbot.SlackError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/slack")
+def api_slack(user: str = auth.CurrentUser):
+    return slackbot.public()
+
+
+@app.post("/api/slack")
+async def api_slack_save(request: Request, user: str = auth.CurrentUser):
+    body = await request.json()
+    # Links in Slack messages open the panel at the address it's being used from.
+    host = request.headers.get("host", "")
+    url = f"{request.url.scheme}://{host}" if re.fullmatch(r"[\w.\-\[\]:]{1,255}", host) else ""
+    return _slack_call(lambda: slackbot.update(body if isinstance(body, dict) else {}, url))
+
+
+@app.post("/api/slack/test")
+def api_slack_test(user: str = auth.CurrentUser):
+    return _slack_call(slackbot.test)
 
 
 @app.post("/api/alerts/check")
@@ -3955,8 +4099,8 @@ def api_met_visitors(site: str, limit: int = 1000, hours: int = 0, name: str = "
 
 @app.get("/api/metrics/errors")
 def api_met_errors(site: str = "", hours: int = 24, sources: str = "web,mail,database,dns,php_fpm,panel,system",
-                   user: str = auth.CurrentUser):
-    return _met_call(lambda: metrics.errors(site, hours, sources))
+                   start: float = 0, end: float = 0, user: str = auth.CurrentUser):
+    return _met_call(lambda: metrics.errors(site, hours, sources, start, end))
 
 
 @app.get("/api/metrics/bandwidth")

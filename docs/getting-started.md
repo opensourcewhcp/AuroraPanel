@@ -12,8 +12,16 @@ sudo bash install.sh
 ```
 
 The installer asks for a port (default `8088`), sets up the `aurorapanel` service and prints the
-address to open, e.g. `https://192.168.1.20:8088`. The first visit asks you to create the owner
-account — this account is always an administrator, and two-factor login (TOTP) is available for it.
+address to open, e.g. `https://192.168.1.20:8088`, with the first sign-in: user `admin` and a random
+password. Sign in with them and the panel asks you to choose your own password before anything else
+opens. There is no "create your account" page, so nobody who finds a freshly installed server
+(on a VPS: anyone on the internet) can claim it before you.
+
+Until you change it, the password is kept in `aurora_initial_password` in the AuroraPanel folder,
+readable by root only (`sudo cat aurora_initial_password`). Lost your password later?
+`sudo bash install.sh --reset-password` prints a new one-time password (the username stays).
+
+The owner account is always an administrator, and two-factor login (TOTP) is available for it.
 More people can be added later with their own roles (see [Users and roles](users-and-roles.md)).
 
 Nothing else needs to be installed first: pages that need Apache, PHP, MariaDB, the mail server,

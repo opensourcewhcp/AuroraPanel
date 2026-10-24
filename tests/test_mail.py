@@ -147,3 +147,12 @@ def test_autoresponder_save_cleans_from_name(monkeypatch):
         mail.set_autoresponder("nobody@ex.com", {"subject": "a", "body": "b"})
     with pytest.raises(mail.MailError):
         mail.set_autoresponder("alice@ex.com", {"subject": "a", "body": "b", "start": "2026-02-01T00:00:00Z", "stop": "2026-01-01T00:00:00Z"})
+
+
+def test_ip_address_is_not_a_mail_domain():
+    # name@192.168.0.100 is refused by webmail and mail apps: point to local mail instead.
+    assert mail.is_ip_name("192.168.0.100") and not mail.is_ip_name("ns0.local") and not mail.is_ip_name("1.example.com")
+    with pytest.raises(mail.MailError, match="Local mail"):
+        mail._ensure_domain({"domains": {}}, "192.168.0.100")
+    s = {"domains": {"192.168.0.100": {"routing": "auto"}}}
+    assert mail._ensure_domain(s, "192.168.0.100") is s["domains"]["192.168.0.100"]  # an existing one keeps working

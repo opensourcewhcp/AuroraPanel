@@ -70,6 +70,14 @@ def run() -> dict:
                 done["updates"] = "refreshed"
             except Exception as e:
                 done["updates"] = f"error: {e}"
+        if _every(s, "hosting", 3600):
+            try:  # hosting accounts' disk and bandwidth, for their usage bars and over-limit alerts
+                from . import hosting
+                if hosting.load()["accounts"]:
+                    hosting.measure()
+                    done["hosting"] = "measured"
+            except Exception as e:
+                done["hosting"] = f"error: {e}"
         hour = datetime.now().hour
         if hour == 3 and _every(s, "autossl", 20 * 3600):
             try:

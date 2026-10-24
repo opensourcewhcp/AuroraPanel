@@ -832,18 +832,40 @@ def certbot_install() -> jobs.Job:
     return jobs.launch("install certbot", ["apt-get", "-y", "install", "certbot"], env=env)
 
 
+# Mail domains that exist only on your own network: Let's Encrypt refuses them ("invalid email address").
+_LOCAL_MAIL = re.compile(r"(\.(local|lan|home|internal|intranet|localdomain|localhost|test|example|invalid|home\.arpa)|^[0-9.]+|^\[.*\])$", re.I)
+
+
+def le_email_problem(email: str) -> str:
+    """Why Let's Encrypt would refuse this address ("" = fine). Empty is fine: no expiry emails."""
+    email = (email or "").strip()
+    if not email:
+        return ""
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        return "That email address doesn't look right"
+    dom = email.rsplit("@", 1)[1]
+    if _LOCAL_MAIL.search(dom) or "." not in dom:
+        return (f"Let's Encrypt only accepts an email on a real internet domain — {dom} exists only on your network. "
+                "Use your normal email address, or leave it empty (certificates still renew automatically; you just "
+                "won't get Let's Encrypt's reminder emails).")
+    return ""
+
+
 def issue_letsencrypt(name: str, email: str, include_aliases: bool = True, force: bool = False) -> jobs.Job:
     _require()
     if not shutil.which("certbot"):
         raise SiteError("certbot is not installed")
-    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email or ""):
-        raise SiteError("A valid email is required for Let's Encrypt expiry notices")
+    email = (email or "").strip()
+    why = le_email_problem(email)
+    if why:
+        raise SiteError(why)
     s = get_site(name)["settings"]
     if _is_ip(s["server_name"]):
         raise SiteError("Let's Encrypt can't issue certificates for an IP address")
     names = [s["server_name"]] + ([a for a in s["aliases"] if not a.startswith("*") and not _is_ip(a)] if include_aliases else [])
     argv = ["certbot", "certonly", "--webroot", "-w", s["docroot"], "--non-interactive", "--agree-tos",
-            "-m", email, "--force-renewal" if force else "--keep-until-expiring", "--cert-name", s["server_name"]]
+            *(["-m", email] if email else ["--register-unsafely-without-email"]),
+            "--force-renewal" if force else "--keep-until-expiring", "--cert-name", s["server_name"]]
     for n in names:
         argv += ["-d", n]
     return jobs.launch(f"Let's Encrypt: {s['server_name']}", argv)

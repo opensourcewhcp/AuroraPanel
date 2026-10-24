@@ -7,7 +7,7 @@ databases, fail2ban, FTP, backups, Git and more — all from your browser.
 Built with **FastAPI** (Python) + a dependency-free **vanilla JS** frontend, so
 there's nothing to compile on the Pi.
 
-**Version: v1.1.1** (`1.1.1`) — a free, open-source hobby project (MIT License). Website: https://aurora51.com
+**Version: v1.1.2** (`1.1.2`) — a free, open-source hobby project (MIT License). Website: https://aurora51.com
 
 To update, open **Preferences → About & Updates → Check for updates** in the panel (it only contacts
 aurora51.com when you click), or re-download the zip, unzip it over your install and re-run `sudo bash install.sh`.
@@ -21,7 +21,8 @@ Guides for the bigger features are in [`docs/`](docs/README.md).
 
 | Section | What it does |
 | ------- | ------------ |
-| **System** | Live dashboard (CPU, per-core load, temperature, throttling, memory, disks, uptime), `systemd` services grouped by state, processes, `apt` packages, `ufw` firewall (with lock-out protection), Linux users. **Updates** (security fixes marked, one-click install, automatic security or full updates with an optional restart time). **Alerts** by email, Telegram or webhook (Discord, Slack, ntfy) for disk, memory, temperature, power, stopped services, expiring certificates, attack bursts, failed logins, failed backups, waiting updates and restarts. **Servers**: every AuroraPanel you run on one page, with pinned certificates and ban-everywhere. **Panel Users** with roles: administrator, read-only viewer and website manager. |
+| **Hosting** | WHM-style **plans** (disk, bandwidth, websites, databases, mailboxes, PHP workers and memory), **accounts** that are each a separate Linux user with their own home, website(s), panel login, mailboxes and `user_` databases, PHP running as the account within its plan, suspend / unsuspend / terminate, hourly usage with over-limit alerts, and **resellers** who manage only their own accounts. See [docs/hosting.md](docs/hosting.md). |
+| **System** | Live dashboard (CPU, per-core load, temperature, throttling, memory, disks, uptime), `systemd` services grouped by state, processes, `apt` packages, `ufw` firewall (with lock-out protection), Linux users. **Updates** (security fixes marked, one-click install, automatic security or full updates with an optional restart time). **Alerts** by email, Telegram, webhook (Discord, Slack, ntfy) or the **Slack app** — alerts and per-attacker reports with Ban / Trust / Allow-rule buttons that can always be undone, plus `/aurora` (works behind a home router; [docs/slack.md](docs/slack.md)) for disk, memory, temperature, power, stopped services, expiring certificates, attack bursts, failed logins, failed backups, waiting updates and restarts. **Servers**: every AuroraPanel you run on one page, with pinned certificates and ban-everywhere. **Panel Users** with roles: administrator, read-only viewer and website manager. |
 | **Network** | VPN servers — **WireGuard** (QR codes), **OpenVPN** (per-user logins: certificate + password, password only or certificate only) and **IPsec/IKEv2** (native on iPhone/Mac/Windows) — each with an end-to-end self-test. Dynamic DNS (DuckDNS, No-IP, Dynu, deSEC, Cloudflare, FreeDNS, custom). Port Checker (outside probe, double-NAT/CGNAT detection, router instructions, UPnP). Network Monitor (who tried to connect). IP Blocker & Trust (ban IPs/ranges with expiry, trusted list). Fail2ban. Interfaces & Wi-Fi with confirm-or-revert. |
 | **Databases** | MariaDB and PostgreSQL databases and users, wizards, phpMyAdmin link. |
 | **Domains** | Apache virtual hosts (Force HTTPS, Let's Encrypt), folder sites at `http://<pi-ip>/<name>` (no domain needed), redirects, BIND zone editor, cPanel-style Dynamic DNS hosts (`home.example.com` follows a changing IP via a secret update URL or the DynDNS2 protocol most routers speak). |
@@ -33,8 +34,10 @@ Guides for the bigger features are in [`docs/`](docs/README.md).
 | **Software** | One-click Apache / Nginx / Lighttpd / Caddy / PHP-FPM / MariaDB / vsftpd, each with a settings page, config editor (validated, auto-rollback) and logs; PHP settings and extensions; App Manager. |
 | **App Installer** | Softaculous-style catalog of 40+ web apps in 18 categories (WordPress, Joomla, Drupal, phpBB, MediaWiki, Nextcloud, Moodle, OpenCart, Roundcube, Matomo, Laravel, Symfony…). Pick an app, choose Local / IP / domain / subdomain / existing site / any folder, and it downloads the latest release (checksum-verified where published), creates the database and — for apps with a command-line installer — sets up the admin account too, with a live progress bar. **WordPress Toolkit**: updates, hacked-file scan against wordpress.org checksums, hardening, auto-updates, maintenance mode and private staging copies. **Docker Apps**: Home Assistant, Jellyfin, Vaultwarden, Uptime Kuma, Pi-hole, Gitea, n8n and more, private by default behind an HTTPS web address. |
 
-First launch walks you through creating the owner account (PBKDF2-hashed password, signed 8-hour
-session cookies, optional TOTP 2FA). More people can be added as administrators, read-only viewers
+The installer creates the owner account `admin` with a random password and prints it; the first
+sign-in asks you to choose your own before anything else opens, so a fresh panel can never be claimed
+by whoever finds it first (lost it? `sudo bash install.sh --reset-password`). Passwords are
+PBKDF2-hashed, sessions are signed 8-hour cookies, TOTP 2FA is optional. More people can be added as administrators, read-only viewers
 or website managers who only see their own sites. The panel can be installed as an app from the
 browser (with a trusted certificate). Most system actions require the panel to run as **root** (the systemd
 unit does); features degrade gracefully where a tool (`ufw`, `systemctl`) is

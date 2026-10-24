@@ -28,6 +28,8 @@ window.AuroraMail = (ui) => {
       el("div", { class: `em-use-bar ${pct >= 90 ? "bad" : pct >= 75 ? "warn" : ""}` }, el("span", { style: `width:${quotaMb ? Math.max(pct, used ? 1 : 0) : 0}%` })),
     ]);
   }
+  // The default domain in forms: not an IP address (left from before those were refused — mail apps reject name@1.2.3.4).
+  const prefDomain = () => (MAIL.domains || []).find((d) => !/^[0-9.]+$/.test(d)) || (MAIL.domains || [])[0];
   function domainSelect(domains, value, opts = {}) {
     const s = el("select", { class: "em-select" });
     if (opts.all) s.append(el("option", { value: "", text: opts.all }));
@@ -250,13 +252,32 @@ window.AuroraMail = (ui) => {
     const bulk = el("div", { class: "em-bulk", hidden: true });
     const list = el("div", { class: "em-list" }, el("div", { class: "loading", text: "Loading…" }));
     const summary = el("div", { class: "em-summary muted" });
-    root.append(head, el("div", { class: "card em-pad0" }, [el("div", { class: "em-tools-bar" }, [search, filt, summary]), chips, bulk, list]));
+    const localBox = el("div", {});
+    root.append(head, localBox, el("div", { class: "card em-pad0" }, [el("div", { class: "em-tools-bar" }, [search, filt, summary]), chips, bulk, list]));
     let data = null;
     const load = async () => {
       try { data = await API.mailAccounts(); MAIL.domains = data.domains; MAIL.candidates = data.candidates; MAIL.webmail = data.webmail; }
       catch (e) { list.innerHTML = ""; list.append(el("p", { class: "empty", text: e.message })); return; }
+      drawLocal();
       draw();
     };
+    // No domain yet (or only an IP, which mail apps refuse): offer you@<hostname>.local in one click.
+    function drawLocal() {
+      localBox.innerHTML = "";
+      const ld = data.local_domain;
+      if (!ld || data.domains.includes(ld)) return;
+      const ips = data.ip_domains || [];
+      localBox.append(el("div", { class: "card em-local-offer" }, [
+        el("span", { class: "em-local-ico" }, icon("mail", 18)),
+        el("div", { class: "grow" }, [
+          el("b", { text: `Mail without a domain: info@${ld}` }),
+          el("p", { class: "muted", text: ips.length
+            ? `Webmail and mail apps refuse addresses on an IP (${ips.join(", ")}). Local mail gives this server addresses like info@${ld} — for alerts, apps and webmail, no DNS or internet needed.`
+            : `Gives this server addresses like info@${ld} — for alerts, cron, apps and webmail, with no DNS or internet needed. Other AuroraPanel servers on your network can send to it too.` }),
+        ]),
+        btn(`Turn on @${ld}`, () => call(() => API.mailLocal(true), `Local mail is on — create info@${ld} now`, load), "btn-primary"),
+      ]));
+    }
     function draw() {
       const accs = data.accounts;
       chips.innerHTML = "";
@@ -458,7 +479,7 @@ window.AuroraMail = (ui) => {
           : el("p", { class: "empty", text: "None." })]));
     }
     function addFwd() {
-      const ad = addrInput(MAIL.domains[0] || "");
+      const ad = addrInput(prefDomain() || "");
       const dest = el("input", { type: "text", placeholder: "someone@gmail.com, other@example.com" });
       const msg = el("input", { type: "text", value: "No such person at this address" });
       const kind = radioCards("fwd-kind", [
@@ -472,7 +493,7 @@ window.AuroraMail = (ui) => {
       modalWide(); setTimeout(() => ad.user.focus(), 50);
     }
     function addDomainFwd() {
-      const from = domainSelect(MAIL.domains, MAIL.domains[0]);
+      const from = domainSelect(MAIL.domains, prefDomain());
       const to = el("input", { type: "text", placeholder: "newdomain.com" });
       openModal("Add a domain forwarder", el("div", { class: "em-form" }, [field("Forward all mail for", from), field("To the same names at", to)]), [
         el("button", { class: "btn btn-primary", text: "Add Domain Forwarder", onclick: async () => {
@@ -498,7 +519,7 @@ window.AuroraMail = (ui) => {
     await domainsAll().catch(() => {});
     root.append(pageHead("Email Routing", "Decide whether this server receives mail for a domain, or hands it to another mail server (Google Workspace, Microsoft 365…)."));
     if (!MAIL.domains.length) { root.append(el("div", { class: "card" }, empty("route", "No mail domains yet", "Add a domain first.", btn("Add a domain", () => addDomainModal(() => navigate("mailrouting", { history: "none" })), "btn-primary")))); return; }
-    const sel = domainSelect(MAIL.domains, state.mailDomain && MAIL.domains.includes(state.mailDomain) ? state.mailDomain : MAIL.domains[0]);
+    const sel = domainSelect(MAIL.domains, state.mailDomain && MAIL.domains.includes(state.mailDomain) ? state.mailDomain : prefDomain());
     const body = el("div");
     root.append(el("div", { class: "card em-routing" }, [el("div", { class: "em-route-dom" }, [el("span", { class: "muted", text: "Domain" }), sel]), body]));
     const draw = async () => {
@@ -533,7 +554,7 @@ window.AuroraMail = (ui) => {
     try { d = await domainsAll(); } catch (e) { root.append(el("p", { class: "empty", text: e.message })); return; }
     root.append(pageHead("Default Address", "What happens to mail sent to an address that doesn't exist on your domain."));
     if (!d.domains.length) { root.append(el("div", { class: "card" }, empty("at", "No mail domains yet", "Create an email account first.", btn("Email Accounts", () => navigate("mailaccounts"), "btn-primary")))); return; }
-    const sel = domainSelect(MAIL.domains, state.mailDomain && MAIL.domains.includes(state.mailDomain) ? state.mailDomain : MAIL.domains[0]);
+    const sel = domainSelect(MAIL.domains, state.mailDomain && MAIL.domains.includes(state.mailDomain) ? state.mailDomain : prefDomain());
     const body = el("div");
     root.append(el("div", { class: "card" }, [field("Domain", sel), body]));
     const draw = () => {
@@ -636,7 +657,7 @@ window.AuroraMail = (ui) => {
     function edit(l) {
       const isNew = !l;
       l = l || { access: "members", members: [], owners: [], prefix: true, reply_to_list: true, munge_from: true, description: "" };
-      const ad = addrInput(MAIL.domains[0] || "");
+      const ad = addrInput(prefDomain() || "");
       const desc = el("input", { type: "text", value: l.description || "", placeholder: "e.g. Sales team" });
       const members = el("textarea", { rows: 7, class: "em-text em-mono", placeholder: "one address per line (or paste a list)" }); members.value = (l.members || []).join("\n");
       const count = el("span", { class: "muted" });

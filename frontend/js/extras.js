@@ -93,7 +93,8 @@ window.AuroraExtras = (ui) => {
           const v = val(p, s.key); if (!v) return;
           const h = Math.max(1, (v / max) * H);
           y -= h;
-          svg.append(S("rect", { x: i * bw + bw * 0.12, y, width: Math.max(1, bw * 0.76), height: h, fill: s.color, rx: Math.min(2, bw / 4) }));
+          svg.append(S("rect", { x: i * bw + bw * 0.12, y, width: Math.max(1, bw * 0.76), height: h, fill: s.color, rx: Math.min(2, bw / 4),
+            opacity: o.sel != null && o.sel !== i ? 0.3 : null }));
         });
       });
     } else {
@@ -113,17 +114,26 @@ window.AuroraExtras = (ui) => {
       xl.append(el("span", { style: `left:${n === 1 ? 50 : (idx / (n - 1)) * 100}%`, text: o.xfmt(pts[idx][0]) }));
     }
     const guide = el("div", { class: "mx-guide", hidden: "" }), tip = el("div", { class: "mx-tip", hidden: "" });
-    const plot = el("div", { class: "mx-plot" }, [svg, guide, tip]);
-    plot.addEventListener("mousemove", (e) => {
+    const plot = el("div", { class: `mx-plot ${o.onPick ? "mx-plot-pick" : ""}` }, [svg, guide, tip]);
+    const slot = (e) => {
       const r = plot.getBoundingClientRect(), f = (e.clientX - r.left) / r.width;
-      const i = Math.max(0, Math.min(n - 1, o.type === "line" ? Math.round(f * (n - 1)) : Math.floor(f * n)));
+      return Math.max(0, Math.min(n - 1, o.type === "line" ? Math.round(f * (n - 1)) : Math.floor(f * n)));
+    };
+    // onPick(index, point): a click on a bar, e.g. to show only what happened then.
+    if (o.onPick) plot.addEventListener("click", (e) => o.onPick(slot(e), pts[slot(e)]));
+    plot.addEventListener("mousemove", (e) => {
+      const i = slot(e);
       const p = pts[i];
       const gx = o.type === "line" ? (n === 1 ? 50 : (i / (n - 1)) * 100) : ((i + 0.5) / n) * 100;
       guide.hidden = false; guide.style.left = `${gx}%`;
       tip.hidden = false; tip.innerHTML = "";
-      tip.append(el("b", { text: (o.tipX || o.xfmt)(p[0]) }), ...series.filter((s) => p[1][s.key] != null).map((s) =>
+      // tipNonZero: many series (one per category) — list only those present in this slot, biggest first.
+      const shown = series.filter((s) => p[1][s.key] != null && (!o.tipNonZero || val(p, s.key)));
+      if (o.tipNonZero) shown.sort((a, b) => val(p, b.key) - val(p, a.key));
+      tip.append(el("b", { text: (o.tipX || o.xfmt)(p[0]) }), ...shown.map((s) =>
         el("div", {}, [el("i", { style: `background:${s.color}` }), el("span", { text: s.label }), el("em", { text: o.yfmt ? o.yfmt(val(p, s.key)) : num(val(p, s.key)) })])));
       if (o.stacked !== false && series.length > 1) tip.append(el("div", { class: "mx-tip-tot" }, [el("span", { text: "Total" }), el("em", { text: o.yfmt ? o.yfmt(tot[i]) : num(tot[i]) })]));
+      if (o.onPick && o.pickHint && tot[i]) tip.append(el("div", { class: "mx-tip-hint", text: o.pickHint }));
       tip.style.left = gx > 60 ? "" : `calc(${gx}% + 12px)`; tip.style.right = gx > 60 ? `calc(${100 - gx}% + 12px)` : "";
     });
     plot.addEventListener("mouseleave", () => { guide.hidden = true; tip.hidden = true; });
@@ -699,7 +709,9 @@ window.AuroraExtras = (ui) => {
     ssl: "lock", timeout: "clock", server: "server", mail: "mail", database: "database", dns: "dns", php_fpm: "brick", panel: "dashboard", system: "processes", other: "listing" };
   const SOURCES = [["web", "Web server"], ["mail", "Mail"], ["database", "Database"], ["dns", "DNS"], ["php_fpm", "PHP-FPM"], ["panel", "Panel"], ["system", "System"]];
   async function viewErrors(root) {
-    let sid = state.viewArg || "", hours = 24, cat = "", lvl = "", q = "", mode = "grouped", d;
+    // full = the whole period (drives the timeline); d = what the cards and list show —
+    // the same, or only the hour(s) of the bar that was clicked (win).
+    let sid = state.viewArg || "", hours = 24, cat = "", lvl = "", q = "", mode = "grouped", d, full, win = null;
     const srcOn = new Set(LS.get("err.src", SOURCES.map((s) => s[0])));
     let sites = [];
     try { sites = (await API.metSites()).sites.filter((s) => s.kind === "site"); } catch (e) {}
@@ -716,19 +728,42 @@ window.AuroraExtras = (ui) => {
     const drawSrc = () => { srcChips.innerHTML = ""; SOURCES.forEach(([k, l]) => srcChips.append(el("button", { type: "button", class: `em-chip ${srcOn.has(k) ? "on" : ""}`, text: l,
       onclick: () => { srcOn.has(k) ? srcOn.delete(k) : srcOn.add(k); LS.set("err.src", [...srcOn]); drawSrc(); load(); } }))); };
     drawSrc();
+    const lvlSlot = el("span", { class: "mx-seg-slot" });
+    const drawLvl = () => { lvlSlot.innerHTML = ""; lvlSlot.append(seg([["", "All levels"], ["error", "Errors"], ["warn", "Warnings"]], lvl, (v) => { lvl = v; drawList(); })); };
+    drawLvl();
     root.append(el("div", { class: "mx-toolbar mx-toolbar-top" }, [srcChips, el("span", { class: "grow" }),
-      seg([[1, "1 h"], [24, "24 h"], [168, "7 days"], [720, "30 days"]], hours, (v) => { hours = v; load(); })]), catsBox, timeline,
-      el("div", { class: "card em-pad0" }, [el("div", { class: "mx-toolbar" }, [search, el("span", { class: "grow" }),
-        seg([["", "All levels"], ["error", "Errors"], ["warn", "Warnings"]], lvl, (v) => { lvl = v; drawList(); }),
+      seg([[1, "1 h"], [24, "24 h"], [168, "7 days"], [720, "30 days"]], hours, (v) => { hours = v; win = null; load(); })]), catsBox, timeline,
+      el("div", { class: "card em-pad0" }, [el("div", { class: "mx-toolbar" }, [search, el("span", { class: "grow" }), lvlSlot,
         seg([["grouped", "Grouped"], ["lines", "Every line"]], mode, (v) => { mode = v; drawList(); })]), listBox]));
+    const src = () => [...srcOn].join(",");
     async function load() {
       listBox.innerHTML = ""; listBox.append(el("div", { class: "loading", text: "Reading the logs…" }));
-      try { d = await API.metErrors(sid, hours, [...srcOn].join(",")); } catch (e) { listBox.innerHTML = ""; listBox.append(el("p", { class: "empty", text: e.message })); return; }
+      try {
+        full = await API.metErrors(sid, hours, src());
+        d = win ? await API.metErrors(sid, hours, src(), win.start, win.end) : full;
+      } catch (e) { listBox.innerHTML = ""; listBox.append(el("p", { class: "empty", text: e.message })); return; }
       if (cat && !d.counts[cat]) cat = "";
       drawCats(); drawTimeline(); drawList();
     }
+    // A bar of the timeline was clicked: show only that hour (or day); clicking it again shows everything.
+    async function pick(start, end) {
+      win = !start || (win && win.start === start) ? null : { start, end };
+      drawTimeline();
+      listBox.innerHTML = ""; listBox.append(el("div", { class: "loading", text: "Reading the logs…" }));
+      try { d = win ? await API.metErrors(sid, hours, src(), win.start, win.end) : full; } catch (e) { listBox.innerHTML = ""; listBox.append(el("p", { class: "empty", text: e.message })); return; }
+      if (cat && !d.counts[cat]) cat = "";
+      drawCats(); drawList();
+    }
     function drawCats() {
       catsBox.innerHTML = "";
+      if (win) {
+        const f = (t) => new Date(t * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+        const to = new Date(win.end * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        catsBox.append(el("div", { class: "mx-ipbar" }, [icon("clock", 16),
+          el("span", {}, ["Only ", el("b", { text: `${f(win.start)} – ${win.end - win.start > 86400 ? f(win.end) : to}` }), ` · ${num(d.total)} message${d.total === 1 ? "" : "s"}`]),
+          el("span", { class: "grow" }),
+          btn(`Show the whole ${hours === 1 ? "hour" : hours === 24 ? "24 hours" : hours === 168 ? "7 days" : "30 days"}`, () => pick(0), "btn-ghost")]));
+      }
       const cats = Object.entries(d.counts).sort((a, b) => b[1] - a[1]);
       if (!cats.length) return;
       catsBox.append(el("div", { class: "mx-cats" }, [
@@ -739,20 +774,41 @@ window.AuroraExtras = (ui) => {
     }
     function drawTimeline() {
       timeline.innerHTML = "";
-      if (!d.total) return;
-      const step = hours <= 24 ? 3600 : 3600;
+      if (!full.total) return;
+      const step = 3600;
       const now = Math.floor(Date.now() / 1000 / step) * step, start = now - hours * 3600 + step;
-      const map = new Map(d.hourly);
+      const map = new Map(full.hourly_cats || []);
       const pts = [];
-      for (let t = start; t <= now; t += step) pts.push([t, { n: map.get(t) || 0 }]);
+      for (let t = start; t <= now; t += step) pts.push([t, map.get(t) || {}]);
+      // Bars stacked by category (biggest first), so the chart says what went wrong, not only how much.
+      const keys = Object.entries(full.counts).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+      const series = keys.map((k, i) => ({ key: k, label: full.categories[k].label, color: PALETTE[i % PALETTE.length] }));
       const agg = hours > 168 ? 24 : hours > 24 ? 6 : 1;
       const pts2 = [];
-      for (let i = 0; i < pts.length; i += agg) pts2.push([pts[i][0], { n: pts.slice(i, i + agg).reduce((a, p) => a + p[1].n, 0) }]);
-      timeline.append(card("When they happened", [chart({ points: pts2, series: [{ key: "n", label: "Messages", color: "var(--accent)" }], height: 110, legend: false,
+      for (let i = 0; i < pts.length; i += agg) {
+        const sum = {};
+        pts.slice(i, i + agg).forEach((p) => Object.entries(p[1]).forEach(([k, v]) => { sum[k] = (sum[k] || 0) + v; }));
+        pts2.push([pts[i][0], sum]);
+      }
+      const sel = win ? pts2.findIndex((p) => p[0] === win.start) : -1;
+      timeline.append(card("When they happened", [chart({ points: pts2, series, height: 110, tipNonZero: true, sel: sel >= 0 ? sel : null,
+        pickHint: "Click to see only these", onPick: (i, p) => Object.keys(p[1]).length && pick(p[0], p[0] + agg * step),
         xfmt: (t) => new Date(t * 1000).toLocaleString([], hours > 24 ? { month: "short", day: "numeric" } : { hour: "2-digit", minute: "2-digit" }),
-        tipX: (t) => new Date(t * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) })]));
+        tipX: (t) => {
+          const f = (x, o) => new Date(x * 1000).toLocaleString([], o);
+          return `${f(t, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} – ${f(t + agg * step, agg >= 24 ? { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" } : { hour: "2-digit", minute: "2-digit" })}`;
+        } })], "", [el("span", { class: "muted mx-small", text: "click a bar to see only those" })]));
     }
     const lvlOk = (l) => !lvl || (lvl === "error" ? /^(error|crit|alert|emerg)/.test(l) : /^warn/.test(l));
+    // Everything picked is only hidden by the Errors/Warnings switch: say so, with the way out.
+    function hiddenByLevel() {
+      if (!lvl) return null;
+      const n = d.items.filter((e) => (!cat || e.cat === cat) && (!q || `${e.msg} ${e.mod} ${e.client} ${e.code} ${e.file}`.toLowerCase().includes(q))).length;
+      if (!n) return null;
+      return el("div", { class: "mx-lvl-hidden" }, [
+        el("p", { class: "muted", text: `No ${lvl === "error" ? "errors" : "warnings"} here — ${num(n)} message${n === 1 ? " is" : "s are"} ${lvl === "error" ? "warnings or notices" : "errors or notices"}.` }),
+        btn("Show all levels", () => { lvl = ""; drawLvl(); drawList(); }, "btn-primary")]);
+    }
     function filtered() {
       return d.items.filter((e) => (!cat || e.cat === cat) && lvlOk(e.level) && (!q || `${e.msg} ${e.mod} ${e.client} ${e.code} ${e.file}`.toLowerCase().includes(q)));
     }
@@ -764,7 +820,7 @@ window.AuroraExtras = (ui) => {
       if (!d.total) { listBox.append(empty("check", "No errors in this period", "Nothing went wrong — or the selected sources are quiet.")); return; }
       if (mode === "grouped") {
         const gs = d.groups.filter((g) => (!cat || g.cat === cat) && lvlOk(g.level) && (!q || `${g.pattern} ${g.example.msg} ${g.mod} ${g.clients.map((c) => c[0]).join(" ")}`.toLowerCase().includes(q)));
-        if (!gs.length) { listBox.append(empty("search", "Nothing matches", "Try another filter.")); return; }
+        if (!gs.length) { listBox.append(hiddenByLevel() || empty("search", "Nothing matches", "Try another filter.")); return; }
         listBox.append(el("div", { class: "mx-errs" }, gs.slice(0, 300).map((g) => {
           const more = el("div", { class: "mx-err-more", hidden: "" }, [
             el("pre", { class: "mx-pre", text: g.example.msg }),
@@ -783,6 +839,7 @@ window.AuroraExtras = (ui) => {
         })));
       } else {
         const rows = filtered();
+        if (!rows.length) { listBox.append(hiddenByLevel() || empty("search", "Nothing matches", "Try another filter.")); return; }
         listBox.append(el("div", { class: "mx-lines" }, rows.slice(0, 1500).map((e) => el("div", { class: `mx-line lv-${e.level.slice(0, 4)}` }, [
           el("span", { class: "mx-line-t", text: t2s(e.ts, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }) }),
           el("span", { class: "mx-line-src", text: `${e.mod || e.source}:${e.level}` }),

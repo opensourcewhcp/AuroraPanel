@@ -34,6 +34,10 @@ class IsolateError(RuntimeError):
     pass
 
 
+# server_name -> True while hosting.py takes one of an account's sites down (only then may it be un-isolated)
+_removing_account: dict[str, bool] = {}
+
+
 def _run(argv, timeout=120):
     try:
         return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env={**os.environ, "PATH": PATH})
@@ -75,8 +79,13 @@ def _names(server_name: str) -> tuple[str, str]:
     return user, ("aurora-" + slug)[:48]
 
 
-def _pool_conf(ver: str, pool: str, user: str, docroot: str) -> str:
+def _pool_conf(ver: str, pool: str, user: str, docroot: str, limits: dict | None = None, basedir: str = "") -> str:
+    """limits (a hosting plan): php_workers = simultaneous PHP requests, php_memory_mb per request.
+    basedir: what PHP may open — the site's folder, or a hosting account's whole home."""
     sess, tmp = SESS_BASE / pool, TMP_BASE / pool
+    lim = limits or {}
+    workers = int(lim.get("php_workers") or 8)
+    mem = int(lim.get("php_memory_mb") or 0)
     return f"""; Written by AuroraPanel (Security → Site Isolation). Changes here are overwritten.
 [{pool}]
 user = {user}
@@ -86,11 +95,11 @@ listen.owner = www-data
 listen.group = www-data
 listen.mode = 0660
 pm = ondemand
-pm.max_children = 8
+pm.max_children = {workers}
 pm.process_idle_timeout = 30s
 pm.max_requests = 500
 request_terminate_timeout = 300
-php_admin_value[open_basedir] = {docroot}/:{tmp}/:{sess}/:/usr/share/php/:/usr/share/pear/:/dev/urandom
+php_admin_value[open_basedir] = {(basedir or docroot).rstrip("/")}/:{tmp}/:{sess}/:/usr/share/php/:/usr/share/pear/:/dev/urandom
 php_admin_value[upload_tmp_dir] = {tmp}
 php_admin_value[sys_temp_dir] = {tmp}
 php_admin_value[session.save_path] = {sess}
@@ -98,7 +107,7 @@ php_admin_value[disable_functions] = exec,passthru,shell_exec,system,proc_open,p
 php_admin_flag[allow_url_include] = off
 php_admin_value[pcre.jit] = 0
 catch_workers_output = yes
-"""
+""" + (f"php_admin_value[memory_limit] = {mem}M\n" if mem else "")
 
 
 def status() -> dict:
@@ -155,7 +164,9 @@ def _owner_for(docroot: Path) -> str:
     return ""
 
 
-def enable(server_name: str, log=print) -> dict:
+def enable(server_name: str, log=print, run_as: str = "", limits: dict | None = None, basedir: str = "") -> dict:
+    """run_as: a hosting account's Linux user — its sites' PHP runs as the account itself (like
+    cPanel's suEXEC), so the account owns its files and can't read anyone else's."""
     from . import sites
     ver = php_version()
     if not ver:
@@ -168,6 +179,9 @@ def enable(server_name: str, log=print) -> dict:
         raise IsolateError(f"{docroot} can't be isolated — give the site its own folder first")
     _prepare(ver, log)
     user, pool = _names(server_name)
+    if run_as:
+        pwd.getpwnam(run_as)  # the account must exist
+        user = run_as
     # 1. the site's own user (no login), Apache allowed to read its files through the group
     try:
         pwd.getpwnam(user)
@@ -177,8 +191,8 @@ def enable(server_name: str, log=print) -> dict:
         if r.returncode != 0:
             raise IsolateError(r.stderr.strip() or "useradd failed")
     _run(["usermod", "-aG", user, "www-data"])
-    home_owner = _owner_for(docroot)
-    if home_owner:
+    home_owner = run_as or _owner_for(docroot)
+    if home_owner and home_owner != user:
         _run(["usermod", "-aG", user, home_owner])
     log(f"• PHP for {server_name} will run as “{user}”")
     # 2. ownership: owner can write, the site's group (its PHP + Apache) can read/write, nobody else gets in
@@ -197,7 +211,7 @@ def enable(server_name: str, log=print) -> dict:
         os.chmod(d, 0o700)
     # 3. the pool
     conf = Path(f"/etc/php/{ver}/fpm/pool.d/{pool}.conf")
-    conf.write_text(_pool_conf(ver, pool, user, str(docroot)))
+    conf.write_text(_pool_conf(ver, pool, user, str(docroot), limits, basedir))
     t = _run([f"php-fpm{ver}", "-t"])
     if t.returncode != 0:
         conf.unlink(missing_ok=True)
@@ -215,7 +229,8 @@ def enable(server_name: str, log=print) -> dict:
     s["php_pool"] = pool
     sites.save_site(server_name, {k: v for k, v in s.items() if not k.startswith("_")})
     d = _load()
-    d["sites"][server_name] = {"on": True, "user": user, "pool": pool, "php": ver, "owner": owner, "prev": prev, "since": int(__import__("time").time())}
+    d["sites"][server_name] = {"on": True, "user": user, "pool": pool, "php": ver, "owner": owner, "prev": prev, "since": int(__import__("time").time()),
+                               **({"account": run_as, "limits": limits or {}, "basedir": basedir} if run_as else {})}
     _save(d)
     log("✓ Isolated")
     return {"ok": True, "user": user, "pool": pool}
@@ -227,6 +242,9 @@ def disable(server_name: str) -> dict:
     info = d["sites"].get(server_name)
     if not info:
         raise IsolateError("This site isn't isolated")
+    if info.get("account") and not _removing_account.get(server_name):
+        # A hosting account's PHP must keep running as the account (its own user, its limits).
+        raise IsolateError(f"{server_name} belongs to the hosting account “{info['account']}” — its PHP always runs as that account")
     s = sites.get_site(server_name)["settings"]
     s["php_pool"] = ""
     sites.save_site(server_name, {k: v for k, v in s.items() if not k.startswith("_")})
@@ -245,10 +263,11 @@ def disable(server_name: str) -> dict:
             os.chmod(docroot, int(prev["mode"], 8) & 0o777)
         except (OSError, ValueError):
             pass
-    # the site's own user and group are no longer needed
-    _run(["gpasswd", "-d", "www-data", info["user"]])
-    _run(["userdel", info["user"]])
-    _run(["groupdel", info["user"]])
+    # the site's own user and group are no longer needed (a hosting account's user is the account's to remove)
+    if not info.get("account"):
+        _run(["gpasswd", "-d", "www-data", info["user"]])
+        _run(["userdel", info["user"]])
+        _run(["groupdel", info["user"]])
     for base in (SESS_BASE, TMP_BASE):
         shutil.rmtree(base / info["pool"], ignore_errors=True)
     d["sites"].pop(server_name, None)
@@ -280,6 +299,25 @@ def enable_all_job() -> jobs.Job:
         log.progress(100, "Done")
         return {"ok": True}
     return jobs.launch_fn("isolate every site", fn, meta={"isolate": "*"})
+
+
+def apply_limits(server_name: str, limits: dict) -> None:
+    """A hosting plan changed: rewrite the site's pool with the new PHP limits."""
+    d = _load()
+    info = d["sites"].get(server_name)
+    if not info or not info.get("on"):
+        return
+    from . import sites
+    docroot = sites.get_site(server_name)["settings"]["docroot"]
+    conf = Path(f"/etc/php/{info['php']}/fpm/pool.d/{info['pool']}.conf")
+    old = conf.read_text() if conf.exists() else ""
+    conf.write_text(_pool_conf(info["php"], info["pool"], info["user"], docroot, limits, info.get("basedir", "")))
+    if _run([f"php-fpm{info['php']}", "-t"]).returncode != 0:
+        conf.write_text(old)
+        raise IsolateError("PHP-FPM rejected the new limits")
+    _run(["systemctl", "reload-or-restart", f"php{info['php']}-fpm"])
+    info["limits"] = limits
+    _save(d)
 
 
 def fix_permissions(server_name: str) -> dict:

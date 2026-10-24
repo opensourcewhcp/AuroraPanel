@@ -90,3 +90,12 @@ def test_builtin_ssl_choice_is_remembered(tmp_path):
     assert sites._settings_from_conf(conf)["ssl"] == "selfsigned"  # guessed from the path
     conf.write_text("# aurora-ssl-mode: custom\n" + body)
     assert sites._settings_from_conf(conf)["ssl"] == "custom"
+
+
+def test_lets_encrypt_email_must_be_reachable():
+    # Let's Encrypt rejects addresses on a domain that exists only on the local network.
+    from backend.sites import le_email_problem
+    assert le_email_problem("") == ""  # optional: certbot registers without an email
+    assert le_email_problem("me@gmail.com") == ""
+    for bad in ("alert@ns0.local", "a@pi.home.arpa", "x@192.168.0.100", "a@router.lan", "a@box"):
+        assert le_email_problem(bad), bad

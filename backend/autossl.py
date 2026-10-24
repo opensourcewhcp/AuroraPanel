@@ -68,8 +68,10 @@ def settings(enabled: bool | None = None, email: str | None = None, agreed: bool
     s = load()
     if email is not None:
         email = email.strip()
-        if email and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
-            raise AutoSSLError("Enter a valid email — Let's Encrypt writes to it if a certificate is about to expire")
+        from .sites import le_email_problem
+        why = le_email_problem(email)
+        if why:
+            raise AutoSSLError(why)
         s["email"] = email
     if agreed is not None:
         s["agreed"] = bool(agreed)

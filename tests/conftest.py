@@ -54,8 +54,8 @@ def client(app_module):
 
 @pytest.fixture
 def admin(client):
-    """A client that has run first-time setup and is logged in."""
-    assert client.post("/api/setup", json={"username": ADMIN, "password": PASSWORD}).status_code == 200
+    """A client signed in as the owner (with a password of their own, not the installer's)."""
+    config.set_credentials(ADMIN, PASSWORD)
     r = client.post("/api/login", json={"username": ADMIN, "password": PASSWORD})
     assert r.status_code == 200, r.text
     return client

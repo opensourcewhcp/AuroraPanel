@@ -28,6 +28,13 @@ registry), with the evidence from this server's logs — failed logins and web a
 You see a preview, can change the recipient and add a note, and nothing is sent until you click
 Send. An IP that was already reported is marked as such.
 
+## The panel's own login
+
+- A new install has no open "create account" page: the installer sets a random password that must be
+  replaced at the first sign-in.
+- `aurora_config.json` (session key, 2FA secret, API token and user hashes) is readable by root only.
+- Ten failed logins from one address wait 15 minutes; fail2ban can ban at the firewall too.
+
 ## fail2ban, SSH keys, two-factor login, API tokens
 
 See the matching pages under Security; each explains its settings.

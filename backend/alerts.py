@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 STATE = Path("/var/lib/aurora/alerts.json")
+SNOOZE = Path("/var/lib/aurora/alerts-snooze.json")  # own file: written from Slack buttons in the panel process
 PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
 LEVELS = {"critical": 3, "warning": 2, "info": 1}
 WATCH_DEFAULT = ["apache2", "nginx", "mariadb", "postgresql", "postfix", "dovecot", "rspamd", "named", "fail2ban", "vsftpd",
@@ -138,6 +139,40 @@ def update(data: dict) -> dict:
     return public(s)
 
 
+# ------------------------------------------------------------------ snooze (Slack "Snooze 24 h")
+def _snoozes() -> dict:
+    try:
+        d = json.loads(SNOOZE.read_text())
+        return {k: v for k, v in d.items() if v > time.time()}
+    except (OSError, ValueError):
+        return {}
+
+
+def snoozed(key: str) -> bool:
+    return key in _snoozes()
+
+
+def snooze(key: str, hours: float) -> None:
+    """No reminders for this problem on any channel until then (0 = reminders back on)."""
+    d = _snoozes()
+    if hours > 0:
+        d[key] = time.time() + hours * 3600
+    else:
+        d.pop(key, None)
+    SNOOZE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = SNOOZE.with_name(f".{SNOOZE.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(d))
+    tmp.replace(SNOOZE)
+
+
+def _slack_on() -> bool:
+    try:
+        from . import slackbot
+        return slackbot.enabled()
+    except Exception:
+        return False
+
+
 # ------------------------------------------------------------------ sending
 def _post(url: str, payload: bytes, ctype: str, headers: dict | None = None) -> None:
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": ctype, "User-Agent": "AuroraPanel", **(headers or {})})
@@ -145,11 +180,25 @@ def _post(url: str, payload: bytes, ctype: str, headers: dict | None = None) -> 
         r.read(1000)
 
 
+def _default_from() -> str:
+    """aurora@<hostname>.local when local mail is on — a real address that webmail can reply
+    to and that passes the receiving server's checks; else the machine's full name."""
+    try:
+        from . import mail
+        local = mail.local_domain_name()
+        if local in mail.load().get("domains", {}):
+            return f"aurora@{local}"
+    except Exception:
+        pass
+    host = socket.getfqdn() or "localhost"
+    return f"aurora@{host if '.' in host else host + '.local'}"
+
+
 def _send_email(c: dict, subject: str, body: str) -> None:
     from email.message import EmailMessage
     from email.utils import formatdate
     to = c["to"]
-    frm = c.get("from") or f"aurora@{socket.getfqdn() or 'localhost'}"
+    frm = c.get("from") or _default_from()
     msg = EmailMessage()
     msg["From"], msg["To"], msg["Subject"] = frm, to, subject
     msg["Date"] = formatdate(localtime=True)
@@ -161,7 +210,7 @@ def _send_email(c: dict, subject: str, body: str) -> None:
         raise AlertError(r.stderr.decode(errors="replace").strip()[-200:] or "sendmail failed")
 
 
-def _send(s: dict, level: str, title: str, text: str) -> list[str]:
+def _send(s: dict, level: str, title: str, text: str, key: str = "", extra: dict | None = None) -> list[str]:
     host = socket.getfqdn() or socket.gethostname()
     icon = {"critical": "🔴", "warning": "🟠", "info": "🔵", "resolved": "✅"}.get(level, "•")
     subject = f"{icon} [{host}] {title}"
@@ -182,6 +231,13 @@ def _send(s: dict, level: str, title: str, text: str) -> list[str]:
             sent.append("telegram")
         except Exception as e:
             errors.append(f"telegram: {re.sub(r'bot[^/]+/', 'bot…/', str(e))}")
+    if _slack_on():
+        try:
+            from . import slackbot
+            slackbot.notify_alert(level, title, text, key, extra)
+            sent.append("slack")
+        except Exception as e:
+            errors.append(f"slack: {e}")
     w = c["webhook"]
     if w["enabled"] and w["url"]:
         try:
@@ -205,7 +261,7 @@ def _send(s: dict, level: str, title: str, text: str) -> list[str]:
 
 def test() -> dict:
     s = load()
-    if not any(ch.get("enabled") for ch in s["channels"].values()):
+    if not any(ch.get("enabled") for ch in s["channels"].values()) and not _slack_on():
         raise AlertError("Turn on at least one channel first")
     res = _send(s, "info", "Test alert", "If you can read this, AuroraPanel alerts reach you. 🎉")
     return {"sent": [x for x in res if not x.startswith("!")], "errors": [x[1:] for x in res if x.startswith("!")]}
@@ -250,8 +306,9 @@ def _cert_expiries() -> list[tuple[str, float]]:
     return out
 
 
-def collect(s: dict) -> dict[str, tuple[str, str, str]]:
-    """key -> (level, title, details) for every problem present right now."""
+def collect(s: dict) -> dict[str, tuple]:
+    """key -> (level, title, details[, extra]) for every problem present right now; extra carries
+    what buttons need (e.g. the attacking IPs, for Ban/Trust in Slack)."""
     import psutil
     r = s["rules"]
     found: dict[str, tuple[str, str, str]] = {}
@@ -311,15 +368,20 @@ def collect(s: dict) -> dict[str, tuple[str, str, str]]:
                 for e in ev:
                     ips[e["ip"]] = ips.get(e["ip"], 0) + 1
                 top = ", ".join(f"{ip} ×{n}" for ip, n in sorted(ips.items(), key=lambda x: -x[1])[:5])
-                found["waf"] = ("warning", f"Attack wave: the WAF blocked {len(ev)} requests in 10 minutes", f"Top sources: {top}. You can ban them from Security → WAF Firewall.")
+                found["waf"] = ("warning", f"Attack wave: the WAF blocked {len(ev)} requests in 10 minutes", f"Top sources: {top}. You can ban them from Security → WAF Firewall.",
+                                {"ips": sorted(ips.items(), key=lambda x: -x[1])[:5]})
     except Exception:
         pass
     try:
         from . import audit
         fails = [e for e in audit.entries(days=1, q="login failed")["entries"] if e["ts"] >= now - 900]
         if len(fails) >= r["login_fails"]:
+            per: dict[str, int] = {}
+            for e in fails:
+                per[e["ip"]] = per.get(e["ip"], 0) + 1
             found["logins"] = ("warning", f"{len(fails)} failed panel logins in 15 minutes",
-                               f"From: {', '.join(sorted({e['ip'] for e in fails})[:6])}. Fail2ban bans repeat offenders; make sure 2FA is on.")
+                               f"From: {', '.join(sorted(per)[:6])}. Fail2ban bans repeat offenders; make sure 2FA is on.",
+                               {"ips": sorted(per.items(), key=lambda x: -x[1])[:5]})
     except Exception:
         pass
     if r["backups"]:
@@ -343,6 +405,11 @@ def collect(s: dict) -> dict[str, tuple[str, str, str]]:
                                     "System → Updates installs them in one click (or turn on automatic security updates).")
         except Exception:
             pass
+    try:
+        from . import hosting
+        found.update(hosting.over_limits())
+    except Exception:
+        pass
     if r["reboot"] and Path("/var/run/reboot-required").exists():
         pk = ""
         try:
@@ -363,9 +430,11 @@ def check() -> dict:
     now = time.time()
     min_lvl = LEVELS.get(s["min_level"], 2)
     active = s["active"]
-    channels_on = any(c.get("enabled") for c in s["channels"].values())
+    channels_on = any(c.get("enabled") for c in s["channels"].values()) or _slack_on()
+    snoozes = _snoozes()
     sent_any = []
-    for key, (level, title, text) in found.items():
+    for key, (level, title, text, *more) in found.items():
+        extra = more[0] if more else None
         a = active.get(key)
         notify = LEVELS.get(level, 1) >= min_lvl and channels_on and not s["quiet"]
         if not a:
@@ -373,10 +442,10 @@ def check() -> dict:
             s["history"].append({"ts": now, "key": key, "level": level, "title": title, "event": "started"})
         else:
             a.update(level=level, title=title, text=text)
-        due = not a["last_sent"] or (s["remind_hours"] and now - a["last_sent"] >= s["remind_hours"] * 3600)
+        due = not a["last_sent"] or (s["remind_hours"] and now - a["last_sent"] >= s["remind_hours"] * 3600 and key not in snoozes)
         if notify and due:
             try:
-                _send(s, level, title + (" (still)" if a["last_sent"] else ""), text)
+                _send(s, level, title + (" (still)" if a["last_sent"] else ""), text, key, extra)
                 a["last_sent"] = now
                 sent_any.append(key)
             except Exception as e:
@@ -392,7 +461,13 @@ def check() -> dict:
     s["history"] = s["history"][-500:]
     s["checked"] = now
     _save(s)
-    return {"active": len(active), "sent": sent_any}
+    reports = []
+    try:  # Slack: one message per new attacker, with Ban / Trust / Allow-rule buttons
+        from . import slackbot
+        reports = slackbot.security_scan()
+    except Exception as e:
+        print(f"alerts: Slack reports failed: {e}", flush=True)
+    return {"active": len(active), "sent": sent_any, "reports": reports}
 
 
 def _dur(sec: float) -> str:

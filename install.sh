@@ -5,6 +5,7 @@
 #   sudo bash install.sh --port 9000     # non-interactive
 #   sudo bash install.sh --no-https      # new install on plain HTTP (HTTPS is the default)
 #   sudo bash install.sh --uninstall     # remove AuroraPanel completely (asks first)
+#   sudo bash install.sh --reset-password  # lost the admin password: print a new one
 #
 # Installs in place (the folder this script lives in): creates .venv, installs
 # Python deps, and registers a systemd service "aurorapanel" that starts on
@@ -22,6 +23,7 @@ PORT=""
 ASSUME_YES=0
 NO_HTTPS=0
 UNINSTALL=0
+RESET_PW=0
 
 c_ok=$'\e[32m'; c_warn=$'\e[33m'; c_err=$'\e[31m'; c_hi=$'\e[1;38;5;208m'; c_off=$'\e[0m'
 [ -t 1 ] || { c_ok=; c_warn=; c_err=; c_hi=; c_off=; }
@@ -31,7 +33,7 @@ warn() { echo "${c_warn}  !${c_off} $*"; }
 die()  { echo "${c_err}  ✗ $*${c_off}" >&2; exit 1; }
 
 usage() {
-  sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
   exit 0
 }
 
@@ -42,6 +44,7 @@ while [ $# -gt 0 ]; do
     -y|--yes)    ASSUME_YES=1; shift ;;
     --no-https)  NO_HTTPS=1; shift ;;
     --uninstall) UNINSTALL=1; shift ;;
+    --reset-password) RESET_PW=1; shift ;;
     -h|--help)   usage ;;
     *) die "Unknown option: $1 (try --help)" ;;
   esac
@@ -181,8 +184,9 @@ if [ $UNINSTALL = 1 ]; then
   # Only the files AuroraPanel ships (and what it made there) — never anything else
   # that happens to share the folder.
   say "Removing the program files"
-  for f in backend frontend deploy .venv install.sh run.sh run.bat requirements.txt README.md LICENSE \
-           .gitattributes .gitignore .git aurora_config.json aurora_config.tmp \
+  for f in backend frontend docs deploy .venv install.sh run.sh run.bat requirements.txt README.md LICENSE \
+           .gitattributes .gitignore .git aurora_config.json aurora_config.tmp aurora_config.json.tmp \
+           aurora_initial_password aurora_initial_password.tmp \
            tests requirements-dev.txt pytest.ini .coveragerc .github htmlcov .coverage .pytest_cache; do
     rm -rf "${APP_DIR:?}/$f"
   done
@@ -204,6 +208,29 @@ echo
 
 [ -f "$APP_DIR/backend/app.py" ] || die "backend/app.py not found — run this from the AuroraPanel folder."
 command -v systemctl >/dev/null || die "systemd is required."
+
+# The admin account's first password: random, printed here, saved root-only in
+# aurora_initial_password until it's changed at the first sign-in (the panel asks).
+show_initial_password() {
+  local f="$APP_DIR/aurora_initial_password"
+  [ -f "$f" ] || return 0
+  echo "  ${c_hi}Sign in with:${c_off}"
+  sed 's/^/    /' "$f"
+  echo "  You'll be asked to choose your own password straight away."
+  echo "  (Saved until then in ${f}, readable by root only.)"
+}
+
+# --- lost password ----------------------------------------------------------
+if [ $RESET_PW = 1 ]; then
+  [ -x "$APP_DIR/.venv/bin/python" ] || die "AuroraPanel isn't installed here yet — run: sudo bash install.sh"
+  ( cd "$APP_DIR" && .venv/bin/python -c 'from backend import config; config.issue_temporary_password()' ) \
+    || die "Could not set a new password."
+  ok "New password set. Everyone signed in to the panel was signed out."
+  echo
+  show_initial_password
+  echo
+  exit 0
+fi
 
 # --- port -------------------------------------------------------------------
 # Default to the currently-installed port on a re-run.
@@ -355,6 +382,10 @@ EOF
 # Drop the blank lines left by empty optional entries.
 sed -i '/^$/N;/^\n$/D' "$UNIT"
 
+# Before the panel starts: a fresh panel never waits unclaimed for whoever finds it first.
+.venv/bin/python -c 'from backend import config; config.lock_down(); config.ensure_initial_credentials()' \
+  || die "Could not create the admin account."
+
 systemctl daemon-reload
 systemctl enable "$SERVICE" >/dev/null 2>&1
 systemctl restart "$SERVICE"
@@ -395,8 +426,9 @@ echo "  Open it from a browser on your network:"
 for ip in $IPS; do echo "    ${SCHEME}://${ip}:${PORT}"; done
 systemctl is-active --quiet avahi-daemon 2>/dev/null && echo "    ${SCHEME}://$(hostname).local:${PORT}"
 echo
-if [ ! -f "$APP_DIR/aurora_config.json" ]; then
-  echo "  First visit: you'll be asked to create your admin account."
+if [ -f "$APP_DIR/aurora_initial_password" ]; then
+  show_initial_password
+  echo
 fi
 if [ "$SCHEME" = https ] && [ $FRESH = 1 ]; then
   echo "  The panel uses HTTPS with a self-signed certificate: your browser warns once"

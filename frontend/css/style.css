@@ -86,6 +86,8 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: .92em; }
 }
 .auth-card .brand { justify-content: center; margin-bottom: 6px; font-size: 22px; }
 .auth-subtitle { text-align: center; color: var(--text-dim); margin: 0 0 24px; }
+.auth-hint { font-size: 12.5px; line-height: 1.55; color: var(--text-dim); background: var(--glass-2); border: 1px solid var(--stroke-strong); border-radius: 10px; padding: 10px 12px; margin: -10px 0 18px; }
+.auth-hint code { font-size: 11.5px; word-break: break-word; }
 .auth-card form { display: flex; flex-direction: column; gap: 15px; }
 .auth-card label { display: flex; flex-direction: column; gap: 7px; font-size: 12.5px; color: var(--text-dim); font-weight: 500; }
 
@@ -133,6 +135,28 @@ select option { background: var(--glass-solid); }
 }
 .rail-btn:hover { color: var(--text); background: rgba(255,255,255,0.05); }
 .rail-btn.active { color: var(--accent); background: var(--accent-soft); border-color: rgba(255,122,26,0.45); box-shadow: 0 0 18px -6px rgba(255,122,26,0.7); }
+/* Dock magnification (dockRail in app.js sets --dock: 0 … 0.5 per icon). The icon grows and
+   leans into the page; the margins open the column so neighbours never overlap. */
+.rail-btn {
+  --dock: 0;
+  transform: translateX(calc(var(--dock) * 14px)) scale(calc(1 + var(--dock)));
+  margin-block: calc(var(--dock) * 21px);
+  transition: color .15s, background .15s, border-color .15s,
+              transform .22s cubic-bezier(.2, .9, .3, 1.25), margin .22s cubic-bezier(.2, .9, .3, 1.1);
+  will-change: transform;
+}
+.rail.docking .rail-btn { transition: color .15s, background .15s, border-color .15s, transform .12s cubic-bezier(.2, .9, .3, 1.15), margin .12s ease-out; }
+.rail-btn svg { transition: filter .2s; }
+.rail.docking .rail-btn:hover { color: var(--text); background: rgba(255,255,255,0.08); box-shadow: 0 8px 22px -8px rgba(0,0,0,.6); }
+.rail.docking .rail-btn.active:hover { color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 24px -4px rgba(255,122,26,0.75); }
+.rail-label {
+  position: fixed; z-index: 60; transform: translateY(-50%); pointer-events: none;
+  padding: 5px 11px; border-radius: 9px; font-size: 12.5px; font-weight: 600; white-space: nowrap;
+  color: var(--text); background: var(--glass-solid); border: 1px solid var(--stroke-strong);
+  box-shadow: 0 10px 28px -10px rgba(0,0,0,.7); animation: rail-label-in .16s ease-out;
+}
+@keyframes rail-label-in { from { opacity: 0; transform: translate(-6px, -50%); } to { opacity: 1; transform: translate(0, -50%); } }
+@media (prefers-reduced-motion: reduce) { .rail-btn { transition: color .15s, background .15s; } }
 
 .content { display: flex; flex-direction: column; min-width: 0; }
 
@@ -878,6 +902,8 @@ a.btn { text-decoration: none; }
 .modal-backdrop { position: fixed; inset: 0; background: rgba(8,6,5,0.72); backdrop-filter: blur(6px); display: grid; place-items: center; z-index: 50; padding: 24px; animation: fadeIn .18s ease; }
 @keyframes fadeIn { from { opacity: 0; } }
 .modal { background: var(--glass-solid); border: 1px solid var(--stroke-strong); border-radius: 24px; width: min(860px, 100%); max-height: 90vh; display: flex; flex-direction: column; box-shadow: var(--shadow); animation: modalIn .24s cubic-bezier(.2,.8,.2,1); }
+.modal.bump { animation: modalBump .32s cubic-bezier(.3,.7,.4,1.4); }
+@keyframes modalBump { 0% { transform: scale(1); } 40% { transform: scale(1.018); } 100% { transform: scale(1); } }
 @keyframes modalIn { from { opacity: 0; transform: translateY(12px) scale(.98); } }
 .modal-head { display: flex; justify-content: space-between; align-items: center; padding: 17px 22px; border-bottom: 1px solid var(--stroke); }
 .modal-body { padding: 18px 22px; overflow: auto; }
@@ -1764,6 +1790,11 @@ button.mx-tile:hover { border-color: var(--accent); }
 .mx-tip i, .mx-legend i, .mx-donut-legend i { width: 9px; height: 9px; border-radius: 3px; flex: none; display: inline-block; }
 .mx-tip em { margin-left: auto; font-style: normal; font-weight: 700; padding-left: 10px; }
 .mx-tip-tot { border-top: 1px solid var(--stroke); padding-top: 3px; }
+.mx-tip-hint { color: var(--text-faint); font-size: 11px; padding-top: 2px; }
+.mx-plot-pick { cursor: pointer; }
+.mx-seg-slot { display: contents; }
+.mx-lvl-hidden { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 28px 16px; text-align: center; }
+.mx-lvl-hidden p { margin: 0; }
 .mx-chart-empty { grid-column: 1 / -1; height: 90px; display: grid; place-items: center; font-size: 13px; border: 1px dashed var(--stroke-strong); border-radius: 14px; }
 
 /* donut + ranked lists */
@@ -2350,3 +2381,37 @@ label.op-rule { justify-content: flex-start; cursor: pointer; }
 .op-wp { margin-bottom: 14px; }
 .op-wp-list { margin-top: 10px; }
 .op-wp-list summary { cursor: pointer; font-size: 13px; font-weight: 650; color: var(--text-dim); margin-bottom: 8px; }
+
+/* Email Accounts: "mail without a domain" offer */
+.em-local-offer { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; padding: 14px 18px; flex-wrap: wrap; }
+.em-local-offer p { margin: 3px 0 0; font-size: 13px; }
+.em-local-offer .grow { flex: 1 1 320px; min-width: 0; }
+.em-local-ico { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; flex: none; color: var(--accent); background: var(--accent-soft); }
+
+/* Alerts → Slack setup steps */
+.sl-steps { display: grid; gap: 16px; margin: 16px 0 6px; }
+.sl-step { display: flex; gap: 12px; align-items: flex-start; }
+.sl-step > .grow { flex: 1; min-width: 0; display: grid; gap: 6px; }
+.sl-step p { margin: 0; }
+.sl-step-n { width: 26px; height: 26px; border-radius: 50%; flex: none; display: grid; place-items: center; font-size: 12.5px; font-weight: 700; color: var(--accent); background: var(--accent-soft); }
+
+/* Hosting (WHM-style) */
+.hs-accts, .hs-plans { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: 14px; }
+.hs-acct, .hs-plan { display: flex; flex-direction: column; gap: 12px; margin: 0; }
+.hs-acct.susp { border-color: rgba(255,107,107,0.35); }
+.hs-acct-h { display: flex; align-items: center; gap: 12px; }
+.hs-acct-h p { margin: 2px 0 0; }
+.hs-acct .toolbar, .hs-plan .toolbar { flex-wrap: wrap; margin-top: auto; }
+.hs-uses { display: grid; gap: 10px; }
+.hs-use-t { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; margin-bottom: 5px; }
+.hs-limits { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 14px; font-size: 13px; }
+.hs-limits > div { display: flex; flex-direction: column; gap: 2px; }
+
+/* Masked password fields with an eye button (maskPw in app.js) */
+.pw-wrap { position: relative; display: flex; flex: 1 1 auto; min-width: 0; align-items: stretch; }
+.pw-wrap > input { flex: 1 1 auto; min-width: 0; width: 100%; padding-right: 42px; }
+.pw-wrap > input[type="password"] { letter-spacing: .12em; }
+.pw-eye { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 30px; height: 30px; display: grid; place-items: center;
+  border: 0; border-radius: 8px; background: transparent; color: var(--text-faint); cursor: pointer; }
+.pw-eye:hover { color: var(--text); background: rgba(255,255,255,0.06); }
+.pw-eye[aria-pressed="true"] { color: var(--accent); }

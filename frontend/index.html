@@ -16,7 +16,7 @@
   <link rel="stylesheet" href="/css/style.css?v=__V__" />
 </head>
 <body>
-  <!-- Auth screen (login / first-run setup) -->
+  <!-- Auth screen (sign in / replace the installer's password) -->
   <div id="auth-screen" class="auth-screen" hidden>
     <div class="auth-card">
       <div class="brand">
@@ -24,6 +24,10 @@
         <span class="brand-name">AuroraPanel</span>
       </div>
       <p id="auth-subtitle" class="auth-subtitle">Sign in to your Raspberry Pi</p>
+      <div id="auth-hint" class="auth-hint" hidden>
+        First sign-in: the username is <b>admin</b> and the password was shown at the end of the install.
+        Lost it? On the server run <code>sudo bash install.sh --reset-password</code> in the AuroraPanel folder.
+      </div>
       <form id="auth-form" autocomplete="off">
         <label>Username
           <input id="auth-username" name="username" type="text" required autocomplete="username" />
@@ -33,6 +37,21 @@
         </label>
         <p id="auth-error" class="form-error" hidden></p>
         <button id="auth-submit" type="submit" class="btn btn-primary btn-block">Sign in</button>
+      </form>
+      <form id="pw-form" autocomplete="off" hidden>
+        <input type="text" name="username" autocomplete="username" hidden />
+        <label id="pw-current-wrap">Current password
+          <input id="pw-current" type="password" autocomplete="current-password" />
+        </label>
+        <label>New password
+          <input id="pw-new" type="password" required minlength="8" autocomplete="new-password" />
+        </label>
+        <label>Repeat the new password
+          <input id="pw-repeat" type="password" required minlength="8" autocomplete="new-password" />
+        </label>
+        <p id="pw-error" class="form-error" hidden></p>
+        <button type="submit" class="btn btn-primary btn-block">Save and continue</button>
+        <button id="pw-logout" type="button" class="btn btn-ghost btn-block">Sign out</button>
       </form>
     </div>
   </div>
@@ -56,6 +75,10 @@
         <button class="nav-item" data-view="firewall"><span class="nav-ico">⛨</span> Firewall</button>
         <button class="nav-item" data-view="users"><span class="nav-ico">☻</span> Users</button>
         <button class="nav-item" data-view="panelusers"><span class="nav-ico">👥</span> Panel Users</button>
+        <div class="nav-group">Hosting</div>
+        <button class="nav-item" data-view="hostaccounts"><span class="nav-ico">👤</span> Accounts</button>
+        <button class="nav-item" data-view="hostplans"><span class="nav-ico">▦</span> Plans</button>
+        <button class="nav-item" data-view="hostresellers"><span class="nav-ico">🤝</span> Resellers</button>
         <div class="nav-group">Network</div>
         <button class="nav-item" data-view="vpn"><span class="nav-ico">⛨</span> VPN Overview</button>
         <button class="nav-item" data-view="wireguard"><span class="nav-ico">⛨</span> WireGuard</button>

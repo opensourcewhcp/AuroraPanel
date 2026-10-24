@@ -10,3 +10,4 @@ deploy/
 .pytest_cache/
 .coverage
 htmlcov/
+aurora_initial_password

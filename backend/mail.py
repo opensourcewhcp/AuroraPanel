@@ -205,9 +205,22 @@ def hostname(s: dict | None = None) -> str:
 
 
 # ----------------------------------------------------------------------------- domains
+def is_ip_name(d: str) -> bool:
+    """192.168.0.100 passes the domain pattern, but name@192.168.0.100 isn't a valid email
+    address: Roundcube, phones and most mail programs refuse to send to it."""
+    return bool(re.fullmatch(r"[0-9.]+", d or ""))
+
+
+IP_DOMAIN_HINT = ("An IP address can't be a mail domain — webmail and mail apps refuse addresses like name@192.168.0.100. "
+                  "Without a domain, turn on Local mail on the Email page: addresses like you@{local} work on this server "
+                  "(alerts, apps, webmail) with no DNS or internet.")
+
+
 def _ensure_domain(s: dict, d: str) -> dict:
     d = _domain(d)
     if d not in s["domains"]:
+        if is_ip_name(d):
+            raise MailError(IP_DOMAIN_HINT.format(local=local_domain_name()))
         s["domains"][d] = {"routing": "auto", "catchall": {"mode": "fail", "message": "No such user here"},
                            "created": int(time.time())}
     return s["domains"][d]
@@ -221,7 +234,7 @@ def candidate_domains() -> list[str]:
         for x in sites.list_sites().get("sites", []):
             for n in [x["server_name"], *x.get("aliases", [])]:
                 n = (n or "").lower()
-                if _DOMAIN.match(n) and not n.startswith("www.") and "." in n:
+                if _DOMAIN.match(n) and not n.startswith("www.") and "." in n and not is_ip_name(n):
                     out.add(n)
     except Exception:
         pass
@@ -289,10 +302,12 @@ def enable_local(on: bool = True) -> dict:
     if on:
         dom = _ensure_domain(s, name)
         dom.update(routing="local", routing_set=True, local=True)
+        s.pop("local_off", None)
     else:
         if any(a.endswith("@" + name) for a in s["accounts"]):
             raise MailError(f"Delete the accounts on {name} first")
         s["domains"].pop(name, None)
+        s["local_off"] = True  # a re-run of the mail setup won't turn it back on
     save(s)
     apply(s)
     return local_status()
@@ -400,7 +415,10 @@ def list_accounts() -> dict:
                     "forwards": [k for k, v in s["forwarders"].items() if a in v.get("dest", [])]})
     doms = sorted(d for d in s["domains"] if authz.domain_ok(d))
     return {"accounts": out, "domains": doms, "candidates": candidate_domains() if authz.scope() is None else [],
-            "hostname": hostname(s), "webmail": webmail_url()}
+            "hostname": hostname(s), "webmail": webmail_url(),
+            # Offered on the page when off: mail on this server without owning a domain.
+            "local_domain": local_domain_name() if authz.scope() is None else "",
+            "ip_domains": [d for d in doms if is_ip_name(d)]}
 
 
 def _quota_usage() -> dict[str, int]:
@@ -1450,6 +1468,12 @@ def setup(log, host: str | None = None) -> dict:
         (RSPAMD_MAPS / f"{n}.map").touch()
     DKIM_DIR.mkdir(parents=True, exist_ok=True)
     shutil.chown(DKIM_DIR, "_rspamd" if _user_exists("_rspamd") else "root", None)
+    # Mail works from the first minute, domain or not: you@<hostname>.local for alerts,
+    # apps and webmail on this server (unless it was turned off on purpose).
+    if not s.get("local_off"):
+        _ensure_domain(s, local_domain_name()).update(routing="local", routing_set=True, local=True)
+        save(s)
+        log(f"• Local mail is on: addresses like info@{local_domain_name()} work on this server")
     apply(s)
     log("• Starting services")
     for u in ("redis-server", "rspamd", "dovecot", "postfix"):
@@ -2120,6 +2144,9 @@ def deliverability_all() -> dict:
     s = load()
     out = []
     for d in sorted(s["domains"]):
+        if is_ip_name(d):  # made before this was refused: say why its addresses don't work
+            out.append({"domain": d, "error": IP_DOMAIN_HINT.format(local=local_domain_name())})
+            continue
         try:
             r = deliverability(d)
             out.append({"domain": d, "score": r["score"], "total": r["total"], "local": r.get("local", False),

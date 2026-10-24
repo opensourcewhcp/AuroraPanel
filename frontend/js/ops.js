@@ -91,9 +91,60 @@ window.AuroraOps = (ui) => {
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
     root.append(body);
     let d;
+    const slackCard = el("div", {});
     async function load() {
       try { d = await API.alerts(); } catch (e) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); return; }
       draw();
+      loadSlack();
+    }
+    // Slack app: alerts and attack reports with Ban / Trust / Allow buttons, and /aurora.
+    async function loadSlack() {
+      let sl;
+      try { sl = await API.slack(); } catch (e) { slackCard.innerHTML = ""; return; }
+      drawSlack(sl);
+    }
+    function drawSlack(sl) {
+      slackCard.innerHTML = "";
+      const on = sw(sl.enabled, () => {});
+      const bot = el("input", { type: "password", autocomplete: "off", placeholder: sl.bot_token_set ? "(saved — leave empty to keep)" : "xoxb-…" });
+      const app = el("input", { type: "password", autocomplete: "off", placeholder: sl.app_token_set ? "(saved — leave empty to keep)" : "xapp-…" });
+      const chan = el("input", { type: "text", value: sl.channel || "", placeholder: "#alerts" });
+      const allowed = el("input", { type: "text", value: (sl.allowed || []).join(", "), placeholder: "U0123ABCD, U0456EFGH" });
+      const sec = sw(sl.security, () => {}), f2b = sw(sl.fail2ban, () => {});
+      const wafMin = el("input", { type: "number", min: 1, max: 1000, value: sl.waf_min, class: "op-num" });
+      const loginMin = el("input", { type: "number", min: 1, max: 1000, value: sl.login_min, class: "op-num" });
+      const sk = sl.socket || {};
+      const status = !sl.enabled ? pill("off", "dim")
+        : sk.connected ? pill(`connected${sl.team ? " · " + sl.team : ""}`, "good")
+        : pill(sk.error ? "not connected" : "connecting…", sk.error ? "bad" : "warn");
+      const step = (n, title, kids) => el("div", { class: "sl-step" }, [el("span", { class: "sl-step-n", text: n }), el("div", { class: "grow" }, [el("b", { text: title }), ...kids])]);
+      const save = () => call(() => API.slackSave({ enabled: on.querySelector("input").checked, bot_token: bot.value.trim(), app_token: app.value.trim(),
+        channel: chan.value.trim(), allowed: allowed.value, security: sec.querySelector("input").checked, fail2ban: f2b.querySelector("input").checked,
+        waf_min: +wafMin.value, login_min: +loginMin.value }), "Slack saved", (r) => { drawSlack(r); setTimeout(loadSlack, 3000); });
+      slackCard.append(card("Slack — alerts you can answer", [
+        el("div", { class: "op-ch-h" }, [el("span", { class: "em-rcard-ico" }, icon("send", 18)), el("div", { class: "grow" }, [
+          el("b", { text: "Every alert, plus a message for each attacker with Ban, Trust and Allow-rule buttons" }),
+          el("p", { class: "muted", text: "Every button flips (Ban ⇄ Unban, Trust ⇄ Untrust), so a click can always be undone, and the message records who did what. /aurora status · alerts · ban · unban · trust · ip in any channel. Works behind a home router: no public address or open port needed." })]),
+          status, on]),
+        sk.error && sl.enabled ? el("p", { class: "form-error", text: sk.error }) : null,
+        el("div", { class: "sl-steps" }, [
+          step("1", "Create the Slack app (2 minutes)", [el("p", { class: "muted", text: "Open Slack's app page → Create New App → From a manifest → pick your workspace → paste → Create, then Install to Workspace." }),
+            el("div", { class: "toolbar" }, [btn("Copy the app manifest", async () => toast(await copyText(sl.manifest) ? "Manifest copied — paste it in Slack" : "Copy failed", "good"), "btn-primary"),
+              el("a", { class: "btn btn-ghost", href: "https://api.slack.com/apps?new_app=1", target: "_blank", rel: "noopener noreferrer", text: "Open api.slack.com/apps ↗" })])]),
+          step("2", "Paste the two tokens", [el("p", { class: "muted", text: "Bot token: OAuth & Permissions → Bot User OAuth Token (xoxb-…). App token: Basic Information → App-Level Tokens → Generate, with the connections:write scope (xapp-…)." }),
+            el("div", { class: "op-ch-f" }, [field("Bot token", bot), field("App-level token", app)])]),
+          step("3", "Where to post, and who may press the buttons", [
+            el("div", { class: "op-ch-f" }, [field("Channel", chan), field("Allowed Slack members (member IDs)", allowed)]),
+            el("p", { class: "muted mx-small", text: "Private channel? Invite the bot there first (/invite @aurora-…). Leave the members empty: the test message has an “Allow me” button for the first person. Member ID: your Slack profile → ⋮ → Copy member ID." })]),
+          step("4", "Attack reports", [el("div", { class: "op-rules" }, [
+            el("label", { class: "op-rule" }, [sec, el("div", {}, [el("b", { text: "Report attackers" }), el("p", { class: "muted", text: "One message per new address, at most once a day; private addresses are skipped." })])]),
+            el("div", { class: "op-rule" }, [el("b", { text: "WAF blocks in 10 min" }), el("span", { class: "op-numw" }, [wafMin, el("span", { class: "muted", text: "or more" })])]),
+            el("div", { class: "op-rule" }, [el("b", { text: "Failed panel logins in 15 min" }), el("span", { class: "op-numw" }, [loginMin, el("span", { class: "muted", text: "or more" })])]),
+            el("label", { class: "op-rule" }, [f2b, el("div", {}, [el("b", { text: "fail2ban bans" }), el("p", { class: "muted", text: "With Unban — handy if it was you." })])]),
+          ])]),
+        ]),
+        el("div", { class: "toolbar" }, [btn("Save", save, "btn-primary"), sl.bot_token_set ? btn("Send a test message", () => call(() => API.slackTest(), "Test message sent — press its buttons in Slack"), "btn-ghost") : null]),
+      ]));
     }
     function draw() {
       body.innerHTML = "";
@@ -136,6 +187,7 @@ window.AuroraOps = (ui) => {
         chBox("link", "Webhook", "Discord, Slack, ntfy push, or any URL.", whOn, [field("Type", whKind), field("URL", whUrl)],
           "ntfy: install the ntfy app, subscribe to a hard-to-guess topic and use https://ntfy.sh/<topic>."),
       ]), el("div", { class: "toolbar" }, [saveCh])]));
+      body.append(slackCard);
       // rules
       const r = d.rules;
       const n = (k, min, max, suffix) => { const i = el("input", { type: "number", min, max, value: r[k], class: "op-num" }); i.dataset.k = k; return el("span", { class: "op-numw" }, [i, el("span", { class: "muted", text: suffix })]); };
@@ -851,6 +903,7 @@ window.AuroraOps = (ui) => {
     let d;
     try { d = await API.mySites(); } catch (e) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); return; }
     body.innerHTML = "";
+    if (state.account) hostingMeCards(body);
     if (!d.sites.length) { body.append(el("div", { class: "card" }, empty("globe", "No websites assigned yet", "Ask the server's administrator to give you access to your websites."))); }
     body.append(el("div", { class: "op-dapps" }, d.sites.map((s) => el("div", { class: "op-dapp" }, [
       el("div", { class: "op-dapp-h" }, [el("span", { class: "op-dapp-ico", style: `--h:${APP_HUE(s.name)}`, text: s.name[0].toUpperCase() }),
@@ -870,7 +923,8 @@ window.AuroraOps = (ui) => {
   //  Preferences → Panel Users
   // ======================================================================
   const ROLE_TXT = { admin: ["Administrator", "Everything, like you."], viewer: ["Viewer", "Sees every page, changes nothing, can't open files or secrets."],
-    site: ["Website manager", "Only their own websites: files, email accounts, visitors. Nothing else on the server."] };
+    site: ["Website manager", "Only their own websites: files, email accounts, visitors. Nothing else on the server."],
+    reseller: ["Reseller", "Creates and manages their own hosting accounts with the plans you allow (Hosting → Resellers)."] };
   async function viewPanelUsers(root) {
     root.append(pageHead("Panel Users", "Let other people into the panel with just the power they need — a colleague who only watches, or a client who manages their own website and mailboxes.",
       [btn("Add a user", () => editor(), "btn-primary")]));
@@ -885,8 +939,8 @@ window.AuroraOps = (ui) => {
         el("div", { class: "grow" }, [el("b", { text: u.username }), el("p", { class: "muted mx-small mx-ell", text: u.owner ? "Owner — set up this panel" :
           `${ROLE_TXT[u.role][0]}${u.sites && u.sites.length ? ` · ${u.sites.join(", ")}` : ""}${u.last_login ? ` · last sign-in ${ago(u.last_login)}` : " · never signed in"}` })]),
         pill(u.disabled ? "disabled" : ROLE_TXT[u.role][0], u.disabled ? "dim" : u.role === "admin" ? "warn" : u.role === "site" ? "good" : "dim"),
-        u.owner ? null : btn("Edit", () => editor(u), "btn-ghost"),
-        u.owner ? null : armed("Delete", "Click again", () => call(() => API.panelUserDelete(u.username), "User deleted — signed out at once", load), "btn-ghost"),
+        u.owner ? null : u.account ? btn("Hosting account", () => navigate("hostaccounts"), "btn-ghost") : btn("Edit", () => editor(u), "btn-ghost"),
+        u.owner || u.account ? null : armed("Delete", "Click again", () => call(() => API.panelUserDelete(u.username), "User deleted — signed out at once", load), "btn-ghost"),
       ])))]),
       card("What each role can do", [el("div", { class: "mx-list" }, Object.entries(ROLE_TXT).map(([k, [l, h]]) => el("div", { class: "mx-list-row" }, [pill(l, k === "admin" ? "warn" : k === "site" ? "good" : "dim"), el("span", { class: "grow", text: h })])))]));
     }
@@ -900,7 +954,7 @@ window.AuroraOps = (ui) => {
       siteWrap.hidden = role !== "site";
       const rc = el("div", { class: "em-rcards" });
       Object.entries(ROLE_TXT).forEach(([k, [l, h]]) => { const r = el("input", { type: "radio", name: "role", value: k }); r.checked = k === role; r.onchange = () => { role = k; siteWrap.hidden = role !== "site"; };
-        rc.append(el("label", { class: "em-rcard" }, [r, el("span", { class: "em-rcard-ico" }, icon(k === "admin" ? "key" : k === "site" ? "globe" : "search", 18)), el("div", {}, [el("div", { class: "em-rcard-t" }, el("b", { text: l })), el("p", { class: "muted", text: h })])])); });
+        rc.append(el("label", { class: "em-rcard" }, [r, el("span", { class: "em-rcard-ico" }, icon(k === "admin" ? "key" : k === "site" ? "globe" : k === "reseller" ? "users" : "search", 18)), el("div", {}, [el("div", { class: "em-rcard-t" }, el("b", { text: l })), el("p", { class: "muted", text: h })])])); });
       const dis = el("input", { type: "checkbox" }); dis.checked = !!(u && u.disabled);
       openModal(u ? `Edit ${u.username}` : "Add a user", el("div", { class: "em-form" }, [
         el("div", { class: "mx-grid2" }, [field("User name", name), field("Password", el("div", { class: "op-pwrow" }, [pw, gen]), "Share it with them privately; they can change it on their home page.")]),
@@ -916,6 +970,217 @@ window.AuroraOps = (ui) => {
     load();
   }
 
+  // ======================================================================
+  //  Hosting (WHM-style): accounts, plans, resellers
+  // ======================================================================
+  const genPw = () => { const a = new Uint32Array(16); crypto.getRandomValues(a); return Array.from(a, (n) => "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"[n % 57]).join(""); };
+  const mbFmt = (mb) => (mb >= 1024 ? `${+(mb / 1024).toFixed(1)} GB` : `${mb} MB`);
+  // One usage bar: used of limit (limit 0 = unlimited).
+  function useBar(label, used, limit, fmt) {
+    const pct = limit ? Math.min(100, (used / limit) * 100) : 0;
+    return el("div", { class: "hs-use" }, [
+      el("div", { class: "hs-use-t" }, [el("span", { class: "muted", text: label }), el("b", { text: `${fmt(used)}${limit ? ` / ${fmt(limit)}` : " · unlimited"}` })]),
+      el("div", { class: `em-use-bar ${pct >= 100 ? "bad" : pct >= 85 ? "warn" : ""}` }, el("span", { style: `width:${limit ? Math.max(pct, used ? 1 : 0) : 0}%` })),
+    ]);
+  }
+  function usageBars(u, lim) {
+    u = u || {}; lim = lim || {};
+    return el("div", { class: "hs-uses" }, [
+      useBar("Disk", u.disk_bytes || 0, (lim.disk_mb || 0) * 1048576, fmtBytes),
+      useBar("Bandwidth this month", u.bandwidth_bytes || 0, (lim.bandwidth_gb || 0) * 1e9, fmtBytes),
+      useBar("Email accounts", u.mailboxes || 0, lim.mailboxes || 0, num),
+    ]);
+  }
+  const limitTxt = (lim, labels) => labels.map(([k, l, unit]) => `${l}: ${lim[k] ? `${k === "disk_mb" ? mbFmt(lim[k]) : lim[k]}${unit && k !== "disk_mb" ? " " + unit : ""}` : "unlimited"}`).join(" · ");
+
+  async function viewHostAccounts(root) {
+    const isReseller = state.role === "reseller";
+    root.append(pageHead(isReseller ? "My Hosting Accounts" : "Hosting Accounts",
+      "Each account is a separate Linux user with its own home folder, website(s), panel login, mailboxes and databases — its PHP runs as that user, within its plan's limits. Like cPanel accounts in WHM.",
+      [btn("Create an account", () => create(), "btn-primary")]));
+    const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
+    root.append(body);
+    let d;
+    async function load() {
+      try { d = await API.hosting(); } catch (e) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); return; }
+      draw();
+    }
+    function draw() {
+      body.innerHTML = "";
+      if (d.ready && !(d.ready.apache && d.ready.php)) body.append(el("div", { class: "card mx-hero warn" }, [el("div", { class: "mx-hero-ico" }, icon("warning", 26)),
+        el("div", { class: "mx-hero-txt" }, [el("h3", { text: "Hosting needs Apache and PHP" }), el("p", { class: "muted", text: "Install them under Software (Apache, PHP-FPM) — every account's website runs on them." })]),
+        el("div", { class: "mx-hero-act" }, [btn("Software", () => navigate("software"), "btn-primary")])]));
+      if (d.reseller) body.append(el("p", { class: "muted mx-p", text: `${d.reseller.used} of ${d.reseller.max_accounts || "unlimited"} accounts used.` }));
+      if (!d.accounts.length) { body.append(el("div", { class: "card" }, empty("users", "No hosting accounts yet", "Create one: it gets its own Linux user, website, panel login, mail and databases."))); return; }
+      body.append(el("div", { class: "hs-accts" }, d.accounts.map((a) => el("div", { class: `card hs-acct ${a.suspended ? "susp" : ""}` }, [
+        el("div", { class: "hs-acct-h" }, [
+          el("span", { class: "op-dapp-ico", style: `--h:${APP_HUE(a.user)}`, text: a.user[0].toUpperCase() }),
+          el("div", { class: "grow" }, [el("b", { text: a.user }), el("p", { class: "muted mx-small mx-ell", text: `${a.sites.join(", ")}${a.email ? " · " + a.email : ""}${a.owner ? " · reseller " + a.owner : ""}` })]),
+          pill(a.plan, "dim"), a.suspended ? pill("suspended", "bad") : pill("active", "good"),
+        ]),
+        a.suspended && a.suspend_reason ? el("p", { class: "form-error", text: a.suspend_reason }) : null,
+        usageBars(a.usage, a.limits),
+        el("p", { class: "muted mx-small", text: a.usage && a.usage.measured ? `Measured ${ago(a.usage.measured)} (every hour)` : "Usage is measured every hour." }),
+        el("div", { class: "toolbar" }, [
+          el("a", { class: "btn btn-sm btn-ghost", href: `http://${a.domain}/`, target: "_blank", rel: "noopener", text: `${a.domain} ↗` }),
+          btn("Add a website", () => addDomain(a), "btn-ghost"),
+          btn("Plan", () => changePlan(a), "btn-ghost"),
+          btn("Password", () => setPw(a), "btn-ghost"),
+          a.suspended ? btn("Unsuspend", () => call(() => API.hostingSuspend(a.user, false), `${a.user} is active again`, load), "btn-primary")
+            : btn("Suspend", () => suspendDlg(a), "btn-ghost"),
+          btn("Terminate", () => terminateDlg(a), "btn-ghost"),
+        ]),
+      ]))));
+      if (!isReseller) body.append(el("div", { class: "toolbar" }, [btn("Measure usage now", () => call(() => API.hostingMeasure(), "Measured", load), "btn-ghost")]));
+    }
+    function create() {
+      if (!d) return;
+      const plans = Object.keys(d.plans);
+      if (!plans.length) return toast(isReseller ? "The administrator hasn't given you any plans yet" : "Create a plan first (Hosting → Plans)", "bad");
+      const user = el("input", { type: "text", placeholder: "alice", autocomplete: "off", maxlength: 16 });
+      const dom = el("input", { type: "text", placeholder: "alice-shop.com", autocomplete: "off" });
+      const pw = el("input", { type: "text", autocomplete: "off", placeholder: "at least 10 characters" });
+      const mail = el("input", { type: "email", placeholder: "Optional", autocomplete: "off" });
+      const plan = el("select", { class: "em-select" }, plans.map((p) => el("option", { value: p, text: p })));
+      const planInfo = el("p", { class: "muted mx-small" });
+      const showPlan = () => { planInfo.textContent = limitTxt(d.plans[plan.value] || {}, d.limits); };
+      plan.onchange = showPlan; showPlan();
+      user.oninput = () => { user.value = user.value.toLowerCase().replace(/[^a-z0-9]/g, ""); };
+      const log = el("div", {});
+      openModal("Create a hosting account", el("div", { class: "em-form" }, [
+        el("div", { class: "mx-grid2" }, [field("User name", user, "Lowercase letters and digits — it becomes the Linux user and the panel login."), field("Main domain", dom, "Its website: /home/<user>/public_html")]),
+        el("div", { class: "mx-grid2" }, [field("Panel password", el("div", { class: "op-pwrow" }, [pw, btn("Generate", () => { pw.value = genPw(); }, "btn-ghost")]), "Give it to the customer privately."), field("Contact email", mail)]),
+        field("Plan", plan), planInfo, log,
+      ]), [el("button", { class: "btn btn-primary", text: "Create", onclick: async (ev) => {
+        ev.target.disabled = true;
+        try {
+          const r = await API.hostingCreate({ user: user.value.trim(), domain: dom.value.trim(), plan: plan.value, password: pw.value, email: mail.value.trim() });
+          log.innerHTML = ""; log.append(jobPanel(r.job, { onDone: () => load() }));
+        } catch (e) { toast(e.message, "bad"); ev.target.disabled = false; }
+      } })]);
+    }
+    function addDomain(a) {
+      const dom = el("input", { type: "text", placeholder: "another-site.com" });
+      openModal(`Add a website to ${a.user}`, el("div", { class: "em-form" }, [field("Domain", dom, `Its files: /home/${a.user}/<domain>. Counts toward the plan's websites (${a.limits.sites || "unlimited"}).`)]),
+        [el("button", { class: "btn btn-primary", text: "Add", onclick: () => call(() => API.hostingDomain(a.user, dom.value.trim()), "Website added", () => { closeModal(); load(); }) })]);
+    }
+    function changePlan(a) {
+      const plan = el("select", { class: "em-select" }, Object.keys(d.plans).map((p) => el("option", { value: p, text: p })));
+      plan.value = a.plan;
+      const info = el("p", { class: "muted mx-small" });
+      const show = () => { info.textContent = limitTxt(d.plans[plan.value] || {}, d.limits); };
+      plan.onchange = show; show();
+      openModal(`Plan for ${a.user}`, el("div", { class: "em-form" }, [field("Plan", plan), info]),
+        [el("button", { class: "btn btn-primary", text: "Change plan", onclick: () => call(() => API.hostingPlan(a.user, plan.value), "Plan changed — PHP limits applied", () => { closeModal(); load(); }) })]);
+    }
+    function setPw(a) {
+      const pw = el("input", { type: "text", autocomplete: "off" });
+      openModal(`New panel password for ${a.user}`, el("div", { class: "em-form" }, [field("Password", el("div", { class: "op-pwrow" }, [pw, btn("Generate", () => { pw.value = genPw(); }, "btn-ghost")]), "They're signed out everywhere.")]),
+        [el("button", { class: "btn btn-primary", text: "Set password", onclick: () => call(() => API.hostingPassword(a.user, pw.value), "Password set", () => closeModal()) })]);
+    }
+    function suspendDlg(a) {
+      const why = el("input", { type: "text", placeholder: "e.g. unpaid invoice" });
+      openModal(`Suspend ${a.user}`, el("div", { class: "em-form" }, [el("p", { class: "muted", text: "Its websites go offline, its panel login and its mailboxes' sign-in stop. Nothing is deleted; Unsuspend restores everything exactly." }), field("Reason (shown to admins)", why)]),
+        [el("button", { class: "btn btn-primary", text: "Suspend", onclick: () => call(() => API.hostingSuspend(a.user, true, why.value), `${a.user} suspended`, () => { closeModal(); load(); }) })]);
+    }
+    function terminateDlg(a) {
+      const keep = el("input", { type: "checkbox" });
+      const conf = el("input", { type: "text", placeholder: a.user, autocomplete: "off" });
+      openModal(`Terminate ${a.user}`, el("div", { class: "em-form" }, [
+        el("p", { class: "form-error", text: `Deletes the websites (${a.sites.join(", ")}), the Linux user, the panel login, every mailbox with its mail and every ${a.user}_ database. This can't be undone.` }),
+        el("label", { class: "dm-check" }, [keep, el("span", { text: `Keep the files in /home/${a.user}` })]),
+        field(`Type ${a.user} to confirm`, conf),
+      ]), [el("button", { class: "btn btn-primary", text: "Terminate", onclick: () => {
+        if (conf.value.trim() !== a.user) return toast(`Type ${a.user} to confirm`, "bad");
+        call(() => API.hostingTerminate(a.user, keep.checked), `${a.user} terminated`, () => { closeModal(); load(); });
+      } })]);
+    }
+    load();
+  }
+
+  async function viewHostPlans(root) {
+    root.append(pageHead("Hosting Plans", "What an account may use — like WHM packages. Changing a plan applies to every account on it at once (PHP limits right away, disk and bandwidth at the next hourly check). 0 means unlimited.",
+      [btn("New plan", () => edit(), "btn-primary")]));
+    const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
+    root.append(body);
+    let d;
+    async function load() {
+      try { d = await API.hosting(); } catch (e) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); return; }
+      body.innerHTML = "";
+      const used = (p) => d.accounts.filter((a) => a.plan === p).length;
+      body.append(el("div", { class: "hs-plans" }, Object.entries(d.plans).map(([name, lim]) => el("div", { class: "card hs-plan" }, [
+        el("div", { class: "hs-acct-h" }, [el("div", { class: "grow" }, [el("b", { text: name }), el("p", { class: "muted mx-small", text: `${used(name)} account${used(name) === 1 ? "" : "s"}` })])]),
+        el("div", { class: "hs-limits" }, d.limits.map(([k, l, unit]) => el("div", {}, [el("span", { class: "muted", text: l }),
+          el("b", { text: lim[k] ? (k === "disk_mb" || k === "php_memory_mb" ? mbFmt(lim[k]) : k === "bandwidth_gb" ? `${lim[k]} GB` : String(lim[k])) : "unlimited" })]))),
+        el("div", { class: "toolbar" }, [btn("Edit", () => edit(name, lim), "btn-ghost"), used(name) ? null : armed("Delete", "Click again", () => call(() => API.hostingPlanDelete(name), "Plan deleted", load), "btn-ghost")]),
+      ]))));
+    }
+    function edit(name = "", lim = {}) {
+      const nm = el("input", { type: "text", value: name, maxlength: 40 });
+      const inputs = {};
+      const rows = d.limits.map(([k, l, unit]) => { inputs[k] = el("input", { type: "number", min: 0, value: lim[k] ?? 0, class: "op-num" });
+        return el("div", { class: "op-rule" }, [el("b", { text: l }), el("span", { class: "op-numw" }, [inputs[k], el("span", { class: "muted", text: unit || "" })])]); });
+      openModal(name ? `Edit ${name}` : "New plan", el("div", { class: "em-form" }, [field("Name", nm), el("div", { class: "op-rules" }, rows),
+        el("p", { class: "muted mx-small", text: "PHP workers: how many requests an account's sites run at once (others wait) — keeps one busy site from slowing the server." })]),
+        [el("button", { class: "btn btn-primary", text: "Save plan", onclick: () => {
+          const limits = {}; Object.entries(inputs).forEach(([k, i]) => { limits[k] = +i.value || 0; });
+          call(() => API.hostingPlanSave({ name: nm.value.trim(), original: name, limits }), "Plan saved", () => { closeModal(); load(); });
+        } })]);
+      modalWide();
+    }
+    load();
+  }
+
+  async function viewHostResellers(root) {
+    root.append(pageHead("Resellers", "People who sell hosting from this server: they create and manage their own accounts with the plans you allow, up to the number you set. Make someone a reseller under Panel Users (role: Reseller).",
+      [btn("Panel Users", () => navigate("panelusers"), "btn-ghost")]));
+    const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
+    root.append(body);
+    let d;
+    async function load() {
+      try { d = await API.hosting(); } catch (e) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); return; }
+      body.innerHTML = "";
+      if (!d.resellers.length) { body.append(el("div", { class: "card" }, empty("users", "No resellers yet", "Add a panel user with the Reseller role, then choose their plans here."))); return; }
+      body.append(el("div", { class: "hs-plans" }, d.resellers.map((r) => {
+        const max = el("input", { type: "number", min: 0, value: r.max_accounts || 0, class: "op-num" });
+        const box = el("div", { class: "op-destpick" }, Object.keys(d.plans).map((p) => { const c = el("input", { type: "checkbox", value: p }); c.checked = (r.plans || []).includes(p); return el("label", { class: "dm-check" }, [c, el("span", { text: p })]); }));
+        return el("div", { class: "card hs-plan" }, [
+          el("div", { class: "hs-acct-h" }, [el("span", { class: "op-dapp-ico", style: `--h:${APP_HUE(r.username)}`, text: r.username[0].toUpperCase() }),
+            el("div", { class: "grow" }, [el("b", { text: r.username }), el("p", { class: "muted mx-small", text: `${r.accounts} account${r.accounts === 1 ? "" : "s"}` })])]),
+          el("div", { class: "mx-sub" }, "Plans they may sell"), box,
+          el("div", { class: "op-rule" }, [el("b", { text: "Most accounts" }), el("span", { class: "op-numw" }, [max, el("span", { class: "muted", text: "0 = unlimited" })])]),
+          el("div", { class: "toolbar" }, [btn("Save", () => call(() => API.hostingReseller({ username: r.username, plans: [...box.querySelectorAll("input:checked")].map((c) => c.value), max_accounts: +max.value || 0 }), "Saved", load), "btn-primary")]),
+        ]);
+      })));
+    }
+    load();
+  }
+
+  // A hosting account's own page (shown on My Websites): plan, usage, and its databases.
+  async function hostingMeCards(body) {
+    let me, db;
+    try { [me, db] = await Promise.all([API.hostingMe(), API.hostingMyDb()]); } catch (e) { return; }
+    body.prepend(card(`My plan: ${me.plan}`, [usageBars(me.usage, me.limits),
+      el("p", { class: "muted mx-small", text: `${limitTxt(me.limits, me.labels)} · Your files: ${me.home}` })]));
+    const dbCard = el("div", {});
+    const draw = () => {
+      dbCard.innerHTML = "";
+      const name = el("input", { type: "text", placeholder: "shop", autocomplete: "off" });
+      const pw = el("input", { type: "text", autocomplete: "off", placeholder: "at least 8 characters" });
+      dbCard.append(card(`My databases (${db.databases.length}${db.limit ? ` of ${db.limit}` : ""})`, [
+        !db.available ? el("p", { class: "muted", text: "MySQL/MariaDB isn't installed on this server." }) : el("div", { class: "mx-list" }, db.databases.length ? db.databases.map((x) => el("div", { class: "mx-list-row" }, [
+          icon("database", 16), el("b", { class: "grow", text: x.name }), el("span", { class: "muted", text: `${x.size} · ${x.tables} tables · user ${x.name}@localhost` }),
+          armed("Delete", "Click again — deletes all its data", () => call(() => API.hostingMyDbDrop(x.name), "Database deleted", reload), "btn-ghost")])) : [el("p", { class: "muted", text: "No databases yet." })]),
+        db.available ? el("div", { class: "mx-grid2" }, [field(`New database (${db.prefix}<name>)`, name), field("Its user's password", el("div", { class: "op-pwrow" }, [pw, btn("Generate", () => { pw.value = genPw(); }, "btn-ghost")]))]) : null,
+        db.available ? el("div", { class: "toolbar" }, [btn("Create database and user", () => call(() => API.hostingMyDbCreate(name.value.trim(), pw.value), "Created — the user has the same name as the database", reload), "btn-primary")]) : null,
+      ]));
+    };
+    const reload = async () => { try { db = await API.hostingMyDb(); draw(); } catch (e) {} };
+    draw();
+    body.children[0].after(dbCard);
+  }
+
   return { activity: viewActivity, alerts: viewAlerts, schedbackups: viewSchedBackups, updates: viewUpdates, autossl: viewAutoSSL, isolation: viewIsolation,
-    dockerapps: viewDockerApps, servers: viewServers, mysites: viewMySites, panelusers: viewPanelUsers, wptoolkit: viewWPToolkit, migrate: viewMigrate };
+    dockerapps: viewDockerApps, servers: viewServers, mysites: viewMySites, panelusers: viewPanelUsers, wptoolkit: viewWPToolkit, migrate: viewMigrate,
+    hostaccounts: viewHostAccounts, hostplans: viewHostPlans, hostresellers: viewHostResellers };
 };

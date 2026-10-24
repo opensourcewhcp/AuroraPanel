@@ -26,6 +26,11 @@ const API = (() => {
     let data = null;
     const ct = res.headers.get("content-type") || "";
     if (ct.includes("application/json")) data = await res.json();
+    // Still on the installer's password (e.g. reset from another tab): back to the change form.
+    if (res.status === 403 && data && data.detail === "password_change_required" && !request.pwReload) {
+      request.pwReload = true;
+      location.reload();
+    }
     if (!res.ok) {
       const err = new Error((data && data.detail) || res.statusText || "Request failed");
       err.status = res.status;
@@ -41,7 +46,6 @@ const API = (() => {
 
     // convenience endpoints
     status: () => request("GET", "/api/status"),
-    setup: (username, password) => request("POST", "/api/setup", { username, password }),
     login: (username, password) => request("POST", "/api/login", { username, password }),
     logout: () => request("POST", "/api/logout"),
     me: () => request("GET", "/api/me"),
@@ -489,7 +493,7 @@ const API = (() => {
     // Metrics
     metSites: () => request("GET", "/api/metrics/sites"),
     metVisitors: (site, limit, hours, name) => request("GET", `/api/metrics/visitors?site=${encodeURIComponent(site)}&limit=${limit || 1000}&hours=${hours || 0}${name ? "&name=" + encodeURIComponent(name) : ""}`),
-    metErrors: (site, hours, sources) => request("GET", `/api/metrics/errors?site=${encodeURIComponent(site || "")}&hours=${hours || 24}${sources ? "&sources=" + encodeURIComponent(sources) : ""}`),
+    metErrors: (site, hours, sources, start, end) => request("GET", `/api/metrics/errors?site=${encodeURIComponent(site || "")}&hours=${hours || 24}${sources ? "&sources=" + encodeURIComponent(sources) : ""}${start ? `&start=${start}&end=${end}` : ""}`),
     metBandwidth: () => request("GET", "/api/metrics/bandwidth"),
     metResources: (span) => request("GET", `/api/metrics/resources?span=${encodeURIComponent(span || "day")}`),
     metAnalytics: (site, days, file, name) => request("GET", `/api/metrics/analytics?site=${encodeURIComponent(site)}&days=${days || 30}${file ? "&file=" + encodeURIComponent(file) : ""}${name ? "&name=" + encodeURIComponent(name) : ""}`),
@@ -498,6 +502,24 @@ const API = (() => {
     alerts: () => request("GET", "/api/alerts"),
     alertsSave: (data) => request("POST", "/api/alerts", data),
     alertsTest: () => request("POST", "/api/alerts/test"),
+    hosting: () => request("GET", "/api/hosting"),
+    hostingPlanSave: (body) => request("POST", "/api/hosting/plans/save", body),
+    hostingPlanDelete: (name) => request("POST", "/api/hosting/plans/delete", { name }),
+    hostingReseller: (body) => request("POST", "/api/hosting/resellers/save", body),
+    hostingCreate: (body) => request("POST", "/api/hosting/accounts/create", body),
+    hostingDomain: (user, domain) => request("POST", "/api/hosting/accounts/domain", { user, domain }),
+    hostingPlan: (user, plan) => request("POST", "/api/hosting/accounts/plan", { user, plan }),
+    hostingPassword: (user, password) => request("POST", "/api/hosting/accounts/password", { user, password }),
+    hostingSuspend: (user, on, reason) => request("POST", "/api/hosting/accounts/suspend", { user, on, reason: reason || "" }),
+    hostingTerminate: (user, keep_files) => request("POST", "/api/hosting/accounts/terminate", { user, keep_files }),
+    hostingMeasure: () => request("POST", "/api/hosting/measure"),
+    hostingMe: () => request("GET", "/api/hosting/me"),
+    hostingMyDb: () => request("GET", "/api/hosting/me/db"),
+    hostingMyDbCreate: (name, password) => request("POST", "/api/hosting/me/db/create", { name, password }),
+    hostingMyDbDrop: (name) => request("POST", "/api/hosting/me/db/drop", { name }),
+    slack: () => request("GET", "/api/slack"),
+    slackSave: (body) => request("POST", "/api/slack", body),
+    slackTest: () => request("POST", "/api/slack/test"),
     alertsCheck: () => request("POST", "/api/alerts/check"),
     schedules: () => request("GET", "/api/schedules"),
     schedPlanSave: (data) => request("POST", "/api/schedules/plans", data),

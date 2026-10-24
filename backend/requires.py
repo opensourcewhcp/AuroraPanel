@@ -41,7 +41,8 @@ def _have(*pkgs: str) -> bool:
 
 
 def _apache_php() -> bool:
-    return any(Path("/etc/apache2/mods-enabled").glob("php*.load"))
+    """PHP for Apache: mod_php, or PHP-FPM (what Site Isolation and hosting accounts use)."""
+    return any(Path("/etc/apache2/mods-enabled").glob("php*.load")) or bool(list(Path("/usr/sbin").glob("php-fpm*")))
 
 
 def _ufw_allow(*ports: str) -> list[str]:
@@ -80,8 +81,7 @@ def php_no_jit() -> bool:
     return changed
 
 
-def _post_web() -> list[str]:
-    php_no_jit()
+def _post_apache() -> list[str]:
     out = []
     mods = ["rewrite", "headers", "expires", "ssl", "deflate"]
     r = _run(["a2enmod", "-q", *mods])
@@ -93,6 +93,12 @@ def _post_web() -> list[str]:
     _run(["systemctl", "restart", "apache2"])
     out += _ufw_allow("80/tcp", "443/tcp")
     return out
+
+
+def _post_web() -> list[str]:
+    php_no_jit()
+    _run(["systemctl", "restart", "apache2"])
+    return ["• PHP is ready for websites"]
 
 
 def _mail():
@@ -155,10 +161,20 @@ def _post_certbot() -> list[str]:
 
 
 COMPONENTS: dict[str, dict] = {
+    # Websites, domains, redirects, SSL and stats need only the web server; PHP only for PHP pages
+    # (App Installer, WordPress, PHP settings, hosting accounts) — a static site never needs it.
+    "apache": {
+        "name": "Apache", "icon": "globe", "size": "about 10 MB",
+        "desc": "The web server your websites, domains, redirects and certificates run on.",
+        "pkgs": ["apache2"],
+        "check": lambda: _have("apache2"),
+        "post": _post_apache,
+    },
     "web": {
         "name": "Apache + PHP", "icon": "globe", "size": "about 35 MB",
-        "desc": "The web server and PHP that websites, domains, .htaccess tools and the App Installer run on.",
-        "pkgs": ["apache2", *PHP_PKGS, "unzip"],
+        "desc": "PHP for your websites — needed by WordPress, the App Installer and most web apps (not for plain HTML sites).",
+        "pkgs": [*PHP_PKGS, "unzip"],
+        "needs": ["apache"],
         "check": lambda: _have("apache2") and _apache_php(),
         "post": _post_web,
     },
@@ -194,7 +210,7 @@ COMPONENTS: dict[str, dict] = {
         "name": "Certbot (Let's Encrypt)", "icon": "lock", "size": "about 10 MB",
         "desc": "Free HTTPS certificates for your domains, renewed automatically.",
         "pkgs": ["certbot", "python3-certbot-apache"],
-        "needs": ["web"],
+        "needs": ["apache"],
         "check": lambda: _have("certbot"),
         "post": _post_certbot,
     },
@@ -221,7 +237,7 @@ COMPONENTS: dict[str, dict] = {
         "name": "WAF Firewall", "icon": "shield", "size": "about 6 MB",
         "desc": "ModSecurity with the OWASP Core Rule Set: blocks SQL injection, XSS, path traversal, scanners and other web attacks before they reach your sites.",
         "pkgs": ["libapache2-mod-security2", "modsecurity-crs"],
-        "needs": ["web"],
+        "needs": ["apache"],
         "check": lambda: _waf().installed(),
         "post": lambda: _waf_setup(),
     },
@@ -271,7 +287,7 @@ COMPONENTS: dict[str, dict] = {
         "name": "Calendars & Contacts (Radicale)", "icon": "calendar", "size": "about 5 MB",
         "desc": "CalDAV / CardDAV for every mailbox: sync calendars and contacts with iPhone, Android, Thunderbird and Outlook.",
         "pkgs": ["radicale", "python3-passlib", "python3-bcrypt"],
-        "needs": ["web", "mail"],
+        "needs": ["apache", "mail"],
         "check": lambda: _mail().dav_installed(),
         "post": lambda: _mail().setup_dav(),
     },
@@ -311,6 +327,18 @@ def installed(cid: str) -> bool:
         return False
 
 
+def _missing_needs(cid: str, seen: set | None = None) -> list[str]:
+    """Every prerequisite, deepest first, each once."""
+    seen = seen if seen is not None else set()
+    out = []
+    for n in COMPONENTS[cid].get("needs", []):
+        if n in seen:
+            continue
+        seen.add(n)
+        out += _missing_needs(n, seen) + [n]
+    return out
+
+
 def status(ids: list[str]) -> dict:
     out = {}
     for cid in ids:
@@ -321,7 +349,7 @@ def status(ids: list[str]) -> dict:
         job = running[0] if running and running[0].status == "running" else None
         out[cid] = {"id": cid, "name": c["name"], "icon": c["icon"], "desc": c["desc"], "size": c["size"],
                     "installed": installed(cid), "job": job.id if job else None,
-                    "needs": [n for n in c.get("needs", []) if not installed(n)]}
+                    "needs": [n for n in _missing_needs(cid) if not installed(n)]}
     return {"supported": shutil.which("apt-get", path=PATH) is not None, "components": out}
 
 
@@ -332,8 +360,8 @@ def install(cid: str) -> jobs.Job:
     for j in jobs.find(requires=cid):
         if j.status == "running":
             return j  # already installing (another tab, or a double click)
-    # Missing prerequisites go into the same job, in order.
-    plan = [n for n in c.get("needs", []) if not installed(n)] + [cid]
+    # Missing prerequisites (and theirs: webmail → Apache + PHP → Apache) go into the same job, in order.
+    plan = [n for n in _missing_needs(cid) if not installed(n)] + [cid]
     for n in plan:
         chk = COMPONENTS[n].get("precheck")
         if chk:

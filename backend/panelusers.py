@@ -4,7 +4,11 @@ Roles:
   admin   — everything (the owner set up at first run is always admin)
   viewer  — can look at every page, can't change anything or read secrets
   site    — "website manager": only their own websites — files, email accounts of those domains,
-            visitors/analytics/errors — nothing else on the server
+            visitors/analytics/errors — nothing else on the server. A hosting account's login is a
+            website manager tied to the account (field "account"): files = the account's home,
+            plus its own databases, within its plan's limits (hosting.py).
+  reseller — creates and manages its own hosting accounts (WHM-style), with the plans and the
+            number of accounts the admin allows; nothing else
 
 Passwords are PBKDF2-hashed like the owner's. Sessions name the user; their role is looked up on every
 request, so changing or deleting a user takes effect at once.
@@ -17,7 +21,7 @@ import time
 
 from . import config
 
-ROLES = {"admin": "Administrator", "viewer": "Viewer (read-only)", "site": "Website manager"}
+ROLES = {"admin": "Administrator", "viewer": "Viewer (read-only)", "site": "Website manager", "reseller": "Reseller"}
 _NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._@-]{1,63}$")
 
 
@@ -49,7 +53,8 @@ def get(username: str) -> dict | None:
         return {"username": username, "role": "admin", "sites": [], "owner": True}
     for u in _all():
         if u["username"] == username and not u.get("disabled"):
-            return {"username": username, "role": u["role"], "sites": u.get("sites", [])}
+            return {"username": username, "role": u["role"], "sites": u.get("sites", []),
+                    **({"account": u["account"]} if u.get("account") else {})}
     return None
 
 
@@ -65,7 +70,7 @@ def verify(username: str, password: str) -> bool:
 def listing() -> dict:
     out = [{"username": owner(), "role": "admin", "owner": True, "sites": [], "created": None}]
     for u in _all():
-        out.append({k: u.get(k) for k in ("username", "role", "sites", "created", "disabled", "last_login")})
+        out.append({k: u.get(k) for k in ("username", "role", "sites", "created", "disabled", "last_login", "account")})
     return {"users": out, "roles": ROLES}
 
 
@@ -78,7 +83,7 @@ def _sites_ok(sites: list[str]) -> list[str]:
     return sorted(set(sites))
 
 
-def create(username: str, password: str, role: str, sites: list[str] | None = None) -> dict:
+def create(username: str, password: str, role: str, sites: list[str] | None = None, account: str = "") -> dict:
     username = (username or "").strip()
     if not _NAME.match(username):
         raise PanelUserError("User name: 2–64 letters, digits, dot, dash, underscore or @")
@@ -94,16 +99,19 @@ def create(username: str, password: str, role: str, sites: list[str] | None = No
     salt = secrets.token_hex(16)
     users = _all()
     users.append({"username": username, "role": role, "sites": sites, "salt": salt, "hash": config._hash_password(password, salt),
-                  "created": int(time.time())})
+                  "created": int(time.time()), **({"account": account} if account else {})})
     _store(users)
     return {"ok": True}
 
 
-def update(username: str, role: str | None = None, sites: list[str] | None = None, password: str | None = None, disabled: bool | None = None) -> dict:
+def update(username: str, role: str | None = None, sites: list[str] | None = None, password: str | None = None, disabled: bool | None = None,
+           _hosting: bool = False) -> dict:
     users = _all()
     u = next((x for x in users if x["username"] == username), None)
     if not u:
         raise PanelUserError("Unknown user" if username != owner() else "The owner is changed under Password & Security")
+    if u.get("account") and not _hosting and (role is not None or sites is not None):
+        raise PanelUserError("This is a hosting account's login — change its websites and plan under Hosting → Accounts")
     if role is not None:
         if role not in ROLES:
             raise PanelUserError("Unknown role")
@@ -123,10 +131,12 @@ def update(username: str, role: str | None = None, sites: list[str] | None = Non
     return {"ok": True}
 
 
-def delete(username: str) -> dict:
+def delete(username: str, _hosting: bool = False) -> dict:
     users = _all()
     if username == owner():
         raise PanelUserError("The owner can't be deleted")
+    if any(u["username"] == username and u.get("account") for u in users) and not _hosting:
+        raise PanelUserError("This is a hosting account's login — terminate the account under Hosting → Accounts")
     if not any(u["username"] == username for u in users):
         raise PanelUserError("Unknown user")
     _store([u for u in users if u["username"] != username])

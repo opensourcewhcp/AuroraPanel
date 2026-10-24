@@ -10,7 +10,7 @@ import pytest
 
 from backend.app import app
 
-PUBLIC = {"/", "/index.html", "/api/status", "/api/setup", "/api/login", "/api/logout", "/api/net/confirm"}
+PUBLIC = {"/", "/index.html", "/api/status", "/api/login", "/api/logout", "/api/net/confirm"}
 # Slow (scans the whole disk), or reaches out to the internet.
 SKIP_CALL = {"/api/diskusage", "/api/inodes", "/api/about/update", "/api/files/download", "/api/backups/download"}
 
