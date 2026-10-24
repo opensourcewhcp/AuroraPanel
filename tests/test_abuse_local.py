@@ -89,3 +89,19 @@ def test_abuse_suggestions_prefer_role_address():
         monkeypatch.undo()
     assert out["contacts"] == ["andrew.clarke@hostus.us"]            # parsed default unchanged
     assert "abuse@hostus.us" in out["suggestions"]                   # role address offered
+
+
+def test_counts_handles_probes_without_a_port():
+    # Regression: SSH pre-auth probes (kind "probe") have no 'port'; _counts must not crash,
+    # and firewall probes with ports are still summarised as a scan.
+    from backend import abuse
+    ev = [{"kind": "probe", "source": "SSH", "detail": "Connection closed [preauth]", "ts": 1},  # no port
+          {"kind": "probe", "source": "firewall", "port": "22/tcp", "ts": 2},
+          {"kind": "probe", "source": "firewall", "port": "80/tcp", "ts": 3},
+          {"kind": "login", "source": "SSH", "ts": 4}]
+    c = abuse._counts(ev)
+    assert c == {"logins": 1, "attacks": 0, "probes": 3, "ports": 2}
+    assert "3 connection attempts to 2 different ports" in abuse._what(c)
+    # pure SSH probes, no ports -> "rejected connection attempts", no crash
+    c2 = abuse._counts([{"kind": "probe", "source": "SSH", "ts": 1}])
+    assert c2["ports"] == 0 and "1 rejected connection attempt" in abuse._what(c2)

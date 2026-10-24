@@ -134,16 +134,21 @@ def evidence(ip: str, days: int = 7) -> list[dict]:
 def _counts(ev: list[dict]) -> dict:
     attacks = sum(1 for e in ev if e.get("kind") == "attack")
     probes = [e for e in ev if e.get("kind") == "probe"]
+    # SSH pre-auth probes have no port; only firewall connection attempts do.
     return {"logins": len(ev) - attacks - len(probes), "attacks": attacks, "probes": len(probes),
-            "ports": len({e["port"] for e in probes})}
+            "ports": len({e["port"] for e in probes if e.get("port")})}
 
 
 def _what(c: dict) -> str:
     parts = []
     if c.get("probes"):
         ports = c.get("ports", 0)
-        parts.append(f"{c['probes']} connection attempt{'s' if c['probes'] != 1 else ''} to {ports} different port{'s' if ports != 1 else ''}"
-                     + (" (a port scan)" if ports >= 5 else ""))
+        n = c["probes"]
+        if ports:
+            parts.append(f"{n} connection attempt{'s' if n != 1 else ''} to {ports} different port{'s' if ports != 1 else ''}"
+                         + (" (a port scan)" if ports >= 5 else ""))
+        else:
+            parts.append(f"{n} rejected connection attempt{'s' if n != 1 else ''}")
     if c["logins"]:
         parts.append(f"{c['logins']} unauthorized login attempt{'s' if c['logins'] != 1 else ''}")
     if c["attacks"]:
