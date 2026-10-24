@@ -88,7 +88,8 @@ def test_abuse_suggestions_prefer_role_address():
     finally:
         monkeypatch.undo()
     assert out["contacts"] == ["andrew.clarke@hostus.us"]            # parsed default unchanged
-    assert "abuse@hostus.us" in out["suggestions"]                   # role address offered
+    assert "abuse@hostus.us" in out["suggestions"]
+    assert out["whois_url"].endswith("/160.119.66.206") and out["whois_label"]
 
 
 def test_counts_handles_probes_without_a_port():

@@ -6126,16 +6126,26 @@
       if (!p.info.contacts.length) { toast(`No abuse contact is published for ${ip}`, "bad"); return; }
       const from = el("select", {}, p.accounts.map((a) => el("option", { value: a, text: a })));
       if (p.from) from.value = p.from;
+      // Editable abuse contact: the registry sometimes lists the wrong or a personal address;
+      // abuse@<domain> is offered, and the WHOIS link lets the user check the real one.
+      const sugg = p.info.suggestions && p.info.suggestions.length ? p.info.suggestions : p.info.contacts;
+      const toList = el("datalist", { id: "nm-abuse-to" }, sugg.map((a) => el("option", { value: a })));
+      const to = el("input", { type: "email", class: "em-select", value: p.info.contacts[0] || "", list: "nm-abuse-to", autocomplete: "off", spellcheck: "false" });
+      const whois = p.info.whois_url ? el("p", { class: "muted mx-small", style: "margin:4px 0 0" },
+        [el("a", { href: p.info.whois_url, target: "_blank", rel: "noopener noreferrer", text: p.info.whois_label || "Look up the registry record" }), " — check the abuse address if it looks wrong."]) : null;
       openModal(`Report ${ip}`, el("div", { class: "em-form" }, [
-        kv([["Network", `${p.info.network || "—"}${p.info.country ? ` (${p.info.country})` : ""}`], ["Abuse contact", p.info.contacts.join(", ")],
+        kv([["Network", `${p.info.network || "—"}${p.info.country ? ` (${p.info.country})` : ""}`],
           ["Evidence", p.summary || `${p.events} event${p.events === 1 ? "" : "s"} in the last 7 days`]]),
-        p.reported ? el("div", { class: "dm-note" }, [icon("info", 15), el("span", { text: `Reported to ${p.reported.to.join(", ")} on ${new Date(p.reported.ts * 1000).toLocaleString()} from ${p.reported.from} (${p.reported.events} failed logins). Sending again repeats the report.` })]) : null,
-        p.accounts.length ? field("Send from", from, "Remembered for next time.")
+        p.reported ? el("div", { class: "dm-note" }, [icon("info", 15), el("span", { text: `Reported to ${p.reported.to.join(", ")} on ${new Date(p.reported.ts * 1000).toLocaleString()} from ${p.reported.from}. Sending again repeats the report.` })]) : null,
+        p.accounts.length ? el("div", { class: "mx-grid2" }, [field("Send from", from, "Remembered for next time."), field("To (abuse contact)", el("div", { style: "display:contents" }, [to, toList]), "Pre-filled from the registry — edit it if the desk differs.")])
           : el("p", { class: "empty", text: "Create an email account first (Email → Email Accounts)." }),
         el("h4", { class: "em-sub", text: "The message" }), el("pre", { class: "log", style: "max-height:260px", text: p.body }),
+        whois,
       ].filter(Boolean)), p.accounts.length ? [el("button", { class: "btn btn-primary", text: p.reported ? "Send again" : "Send report", onclick: async (e) => {
+        const dest = to.value.trim();
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(dest)) { to.focus(); return toast("Enter the abuse contact's email address", "bad"); }
         e.currentTarget.disabled = true;
-        try { const r = await API.abuseReport({ ip, sender: from.value, force: !!p.reported }); toast(`Reported ${ip} to ${r.to.join(", ")}`, "good"); reported[ip] = { to: r.to }; closeModal(); load(); }
+        try { const r = await API.abuseReport({ ip, sender: from.value, to: dest, force: !!p.reported }); toast(`Reported ${ip} to ${r.to.join(", ")}`, "good"); reported[ip] = { to: r.to }; closeModal(); load(); }
         catch (err) { toast(err.message, "bad"); e.currentTarget.disabled = false; }
       } })] : []);
     }

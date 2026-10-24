@@ -101,7 +101,11 @@ def lookup(ip: str) -> dict:
             suggestions.append(role)
     out = {"ip": ip, "network": data.get("name") or "", "country": data.get("country") or "",
            "range": f"{data.get('startAddress', '')} – {data.get('endAddress', '')}".strip(" –"),
-           "contacts": contacts, "suggestions": suggestions, "abuse_role": bool(found["abuse"]), "source": data.get("port43") or "RDAP"}
+           "contacts": contacts, "suggestions": suggestions, "abuse_role": bool(found["abuse"]),
+           "source": data.get("port43") or "RDAP",
+           # A human-readable WHOIS/registry page, so the owner can check the abuse address
+           # themselves if it looks wrong (works for every RIR, shows the network and abuse contact).
+           "whois_url": f"https://bgp.he.net/ip/{ip}", "whois_label": f"Look up {ip} in the public WHOIS / registry"}
     _cache[ip] = (time.time(), out)
     return out
 

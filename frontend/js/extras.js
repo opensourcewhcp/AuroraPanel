@@ -304,6 +304,8 @@ window.AuroraExtras = (ui) => {
         : el("p", { class: "empty", text: "Create an email account first (Email → Email Accounts)." }),
       field("Note", note),
       el("div", { class: "mx-sub" }, "The message"), preview,
+      p.info.whois_url ? el("p", { class: "muted mx-small", style: "margin:6px 0 0" },
+        [el("a", { href: p.info.whois_url, target: "_blank", rel: "noopener noreferrer", text: p.info.whois_label || "Look up the registry record" }), " — check the abuse address if it looks wrong."]) : null,
     ].filter(Boolean)), p.accounts.length ? [send] : []);
     const m = document.querySelector("#modal .modal"); if (m) m.classList.add("em-modal");
   }
