@@ -7,7 +7,7 @@ databases, fail2ban, FTP, backups, Git and more — all from your browser.
 Built with **FastAPI** (Python) + a dependency-free **vanilla JS** frontend, so
 there's nothing to compile on the Pi.
 
-**Version: v1.1.5** (`1.1.5`) — a free, open-source hobby project (MIT License). Website: https://aurora51.com
+**Version: v1.1.6** (`1.1.6`) — a free, open-source hobby project (MIT License). Website: https://aurora51.com
 
 To update, open **Preferences → About & Updates → Check for updates** in the panel (it only contacts
 aurora51.com when you click), or re-download the zip, unzip it over your install and re-run `sudo bash install.sh`.

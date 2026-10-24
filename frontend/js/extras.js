@@ -679,10 +679,17 @@ window.AuroraExtras = (ui) => {
       ipBar.innerHTML = "";
       if (ipF) {
         const st = d.ip_status[ipF];
+        const run = (fn, msg) => async () => { try { await fn(); toast(msg, "good"); load(); } catch (e) { toast(e.message, "bad"); } };
+        const btns = [btn("Who is this?", () => ipCard(ipF, load), "btn-primary")];
+        // Context-aware: show the reverse action when already banned/trusted. Ban/Trust ask once (click again).
+        if (st === "banned") btns.push(btn("Unban", run(() => API.guardUnban(ipF), `${ipF} unbanned`), "btn-ghost"));
+        else btns.push(armed("Ban", "Click again to ban", run(() => API.guardBan(ipF, "Visitors", null, "Visitors"), `${ipF} banned`), "btn-ghost"));
+        if (st === "trusted") btns.push(btn("Untrust", run(() => API.guardUntrust(ipF), `${ipF} no longer trusted`), "btn-ghost"));
+        else btns.push(armed("Trust", "Click again to trust", run(() => API.guardTrust(ipF, "Visitors"), `${ipF} trusted`), "btn-ghost"));
+        btns.push(btn("Report", () => reportIp(ipF, load), "btn-ghost"));
+        btns.push(btn("Show everyone", () => setIp(""), "btn-ghost"));
         ipBar.append(el("div", { class: "mx-ipbar" }, [icon("users", 16), el("span", {}, ["Only ", el("b", { text: ipF }), ` · ${num(rows.length)} requests`]), st ? pill(st, st === "trusted" ? "good" : "bad") : null,
-          el("span", { class: "grow" }),
-          btn("Who is this? · Ban · Trust", () => ipCard(ipF, load), "btn-primary"),
-          btn("Show everyone", () => setIp(""), "btn-ghost")]));
+          el("span", { class: "grow" }), ...btns]));
       }
       const shown = VCOLS.filter((c) => cols.has(c.k));
       const pages = per ? Math.max(1, Math.ceil(rows.length / per)) : 1;

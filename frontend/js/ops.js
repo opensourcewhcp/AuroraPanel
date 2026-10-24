@@ -1195,7 +1195,95 @@ window.AuroraOps = (ui) => {
     body.children[0].after(dbCard);
   }
 
+  // ======================================================================
+  //  Security → Global Security (one place for every security tool)
+  // ======================================================================
+  async function viewGlobalSecurity(root) {
+    root.append(pageHead("Global Security", "Every security tool in one place, with its current state. Click a card to open it."));
+    const body = el("div", {});
+    root.append(body);
+    const S = {};
+    // Each status call runs on its own and updates its card when it lands (some, like listing every
+    // certificate, are slow) — the page and the cards are usable straight away.
+    const withTimeout = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(() => r(undefined), ms))]);
+    const grab = (k, fn) => withTimeout(fn().catch(() => undefined), 9000).then((d) => { if (d !== undefined) S[k] = d; });
+    const on = (t) => ({ text: t || "on", tone: "good" });
+    const off = (t) => ({ text: t || "off", tone: "dim" });
+    const warn = (t) => ({ text: t, tone: "warn" });
+    const num0 = (n) => (n || 0);
+    // key view, icon, title, description, status() -> {text,tone} | null, and whether it's a core hardening item
+    const TOOLS = [
+      { view: "modsec", icon: "shield", title: "WAF Firewall", desc: "Blocks SQL injection, XSS and other web attacks (ModSecurity + OWASP CRS).", core: true,
+        status: () => !S.waf ? null : (S.waf.installed ? (S.waf.module_on && S.waf.enabled !== false ? on(S.waf.mode === "detect" ? "detect only" : "blocking") : off("installed, off")) : off("not installed")) },
+      { view: "leech", icon: "trap", title: "Fail2ban", desc: "Bans IPs that repeatedly fail to log in (SSH, panel, mail, FTP…).", core: true,
+        status: () => !S.f2b ? null : (S.f2b.installed ? (S.f2b.active ? on(`active · ${num0(S.f2b.jails && S.f2b.jails.length)} jails`) : warn("installed, stopped")) : off("not installed")) },
+      { view: "ipblocker", icon: "ban", title: "IP Blocker & Trust", desc: "Ban or trust any address at the firewall; see where each ban came from.",
+        status: () => !S.guard ? null : on(`${num0(S.guard.bans && S.guard.bans.length)} banned · ${num0(S.guard.trusted && S.guard.trusted.length)} trusted`) },
+      { view: "netmon", icon: "network", title: "Network Monitor", desc: "Who tried to reach this server — connection attempts, logins and VPN handshakes.",
+        status: () => null },
+      { view: "security", icon: "key", title: "Two-Factor Auth", desc: "A one-time code from your phone on top of your password, for the owner login.", core: true,
+        status: () => !S.twofa ? null : (S.twofa.enabled ? on() : warn("off — recommended")) },
+      { view: "panelhttps", icon: "lock", title: "Panel HTTPS", desc: "Encrypt the connection to this panel; switch to a trusted certificate.", core: true,
+        status: () => !S.https ? null : (S.https.source && S.https.source !== "none" ? on(S.https.source === "self" ? "self-signed" : "trusted") : off()) },
+      { view: "autossl", icon: "autossl", title: "AutoSSL", desc: "Free Let's Encrypt certificates for every site and the mail host, renewed automatically.",
+        status: () => !S.autossl ? null : (S.autossl.enabled ? on() : off()) },
+      { view: "ssl", icon: "lock", title: "SSL/TLS Certificates", desc: "Every certificate on the server: issue, renew, upload or inspect.",
+        status: () => !S.ssl ? null : on(`${num0(S.ssl.certs && S.ssl.certs.length)} certs`) },
+      { view: "isolation", icon: "t_isolate", title: "Site Isolation", desc: "Run each website as its own user so one hacked site can't reach the others.",
+        status: () => { if (!S.iso || !S.iso.sites) return null; const sites = Object.values(S.iso.sites); const n = sites.filter((x) => x.on).length; return n ? on(`${n} isolated`) : off("none isolated"); } },
+      { view: "ssh", icon: "key", title: "SSH Access", desc: "SSH keys, and whether password login is allowed.", status: () => null },
+      { view: "tokens", icon: "token", title: "API Tokens", desc: "Tokens that let scripts or other servers use this panel's API.",
+        status: () => !S.tokens ? null : on(`${num0(S.tokens.tokens ? S.tokens.tokens.length : (Array.isArray(S.tokens) ? S.tokens.length : 0))} tokens`) },
+      { view: "hotlink", icon: "link", title: "Hotlink Protection", desc: "Stop other sites from embedding your images and files.", status: () => null },
+      { view: "virus", icon: "virus", title: "Antivirus", desc: "Scan files for malware with ClamAV.",
+        status: () => !S.av ? null : (S.av.available ? on("ready") : off("not installed")) },
+      { view: "activity", icon: "t_activity", title: "Activity Log", desc: "Who changed what in this panel, from where — plus every login.", status: () => null },
+      { view: "fixperms", icon: "home", title: "Fix Permissions", desc: "Reset a website's file ownership and permissions to safe values.", status: () => null },
+      { view: "firewall", icon: "firewall", title: "Firewall (ufw)", desc: "Which ports are open to the internet.", core: true,
+        status: () => !S.fw ? null : (!S.fw.available ? off("not installed") : (S.fw.active ? on("active") : warn("inactive"))) },
+      { view: "alerts", icon: "t_bell", title: "Alerts & Slack", desc: "Be told about attacks, failures and problems — by email, Telegram, webhook or Slack.",
+        status: () => (S.slack && S.slack.enabled) ? on("Slack on") : null },
+    ];
+    // Render the grid at once; each card carries a status slot that fills in when its call lands.
+    const hero = el("div", { class: "card mx-hero" }, el("div", { class: "loading", text: "Checking your defences…" }));
+    body.append(hero);
+    const slots = new Map();
+    body.append(el("div", { class: "gs-grid" }, TOOLS.map((t) => {
+      const slot = el("span", { class: "gs-status" });
+      slots.set(t, slot);
+      return el("button", { type: "button", class: "card gs-card", onclick: () => navigate(t.view) }, [
+        el("div", { class: "gs-head" }, [el("span", { class: "gs-ico" }, icon(t.icon, 20)), el("b", { class: "grow", text: t.title }), slot]),
+        el("p", { class: "muted gs-desc", text: t.desc }),
+        el("span", { class: "gs-open", text: "Open →" }),
+      ]);
+    })));
+    const paint = () => {
+      TOOLS.forEach((t) => {
+        const s = t.status && t.status();
+        const slot = slots.get(t);
+        slot.innerHTML = "";
+        if (s) slot.append(pill(s.text, s.tone));
+        else if (t.core) slot.append(pill("check", "warn"));
+      });
+      const core = TOOLS.filter((t) => t.core).map((t) => t.status && t.status());
+      const done = core.every((s) => s !== null && s !== undefined);
+      const onCount = core.filter((s) => s && s.tone === "good").length;
+      hero.className = `card mx-hero ${!done ? "" : onCount === core.length ? "good" : onCount >= core.length - 1 ? "" : "warn"}`;
+      hero.innerHTML = "";
+      hero.append(el("div", { class: "mx-hero-ico" }, icon("shield", 28)),
+        el("div", { class: "mx-hero-txt" }, [
+          el("h3", { text: `${onCount} of ${core.length} core protections on` }),
+          el("p", { class: "muted", text: onCount === core.length ? "WAF, Fail2ban, two-factor login, Panel HTTPS and the firewall are all on. Nicely hardened." : "Turn on the ones marked below to harden this server: two-factor login, the WAF, Fail2ban, Panel HTTPS and the firewall." }),
+        ]));
+    };
+    // Fire all status calls; repaint as each resolves.
+    [["guard", API.guard], ["twofa", API.twofaStatus], ["waf", API.waf], ["f2b", API.fail2ban], ["fw", API.firewall],
+     ["autossl", API.autossl], ["iso", API.isolation], ["av", API.avStatus], ["https", API.panelHttps],
+     ["tokens", API.tokens], ["ssl", API.sslCerts], ["slack", () => API.slack()]].forEach(([k, fn]) => grab(k, fn).then(paint));
+    paint();
+  }
+
   return { activity: viewActivity, alerts: viewAlerts, schedbackups: viewSchedBackups, updates: viewUpdates, autossl: viewAutoSSL, isolation: viewIsolation,
     dockerapps: viewDockerApps, servers: viewServers, mysites: viewMySites, panelusers: viewPanelUsers, wptoolkit: viewWPToolkit, migrate: viewMigrate,
-    hostaccounts: viewHostAccounts, hostplans: viewHostPlans, hostresellers: viewHostResellers };
+    hostaccounts: viewHostAccounts, hostplans: viewHostPlans, hostresellers: viewHostResellers, globalsec: viewGlobalSecurity };
 };

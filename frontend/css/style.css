@@ -2425,3 +2425,13 @@ label.op-rule { justify-content: flex-start; cursor: pointer; }
 .tf-manual { margin-top: 16px; }
 .tf-manual summary { cursor: pointer; color: var(--text-dim); font-size: 13px; }
 .tf-secret { margin: 8px 0; padding: 12px; border-radius: 12px; border: 1px solid var(--stroke-strong); font-family: ui-monospace, monospace; font-size: 16px; letter-spacing: .12em; text-align: center; user-select: all; }
+
+/* Global Security hub */
+.gs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 14px; margin-top: 14px; }
+.gs-card { display: flex; flex-direction: column; gap: 8px; align-items: stretch; text-align: left; cursor: pointer; margin: 0; border: 1px solid var(--stroke); transition: border-color .15s, transform .12s, box-shadow .15s; }
+.gs-card:hover { border-color: var(--stroke-strong); transform: translateY(-2px); box-shadow: 0 10px 26px -14px rgba(0,0,0,.6); }
+.gs-head { display: flex; align-items: center; gap: 10px; }
+.gs-ico { width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center; flex: none; color: var(--accent); background: var(--accent-soft); }
+.gs-desc { margin: 0; font-size: 13px; line-height: 1.5; flex: 1; }
+.gs-open { color: var(--accent); font-size: 13px; font-weight: 600; }
+.gs-status:empty { display: none; }
