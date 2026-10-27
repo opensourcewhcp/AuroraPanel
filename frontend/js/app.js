@@ -1909,7 +1909,17 @@
       body,
       el("div", { class: "fm-drop-overlay", text: "⬇ Drop files here to upload" }),
     ]);
-    root.append(pathBar, bar, crumb, zone);
+    const bulkBar = el("div", { class: "fm-bulkbar", id: "fm-bulk", hidden: "" }, [
+      el("span", { class: "fm-bulk-count", id: "fm-bulk-count", text: "0 selected" }),
+      el("span", { class: "fm-bulk-actions" }, [
+        el("button", { class: "btn btn-sm", text: "➜ Move", onclick: () => fmMoveCopy("move") }),
+        el("button", { class: "btn btn-sm", text: "⧉ Copy", onclick: () => fmMoveCopy("copy") }),
+        el("button", { class: "btn btn-sm", text: "🗜 Zip", onclick: fmZipSelected }),
+        el("button", { class: "btn btn-sm btn-danger", text: "🗑 Delete", onclick: fmDeleteSelected }),
+        el("button", { class: "btn btn-sm btn-ghost", text: "✕ Clear", onclick: fmClearSel }),
+      ]),
+    ]);
+    root.append(pathBar, bar, bulkBar, crumb, zone);
 
     // Drag-and-drop upload.
     let dragDepth = 0;
@@ -1966,7 +1976,10 @@
       if (!fmState.showHidden) entries = entries.filter((e) => !e.is_hidden);
       if (!entries.length) { body.append(el("p", { class: "empty", text: fmState.showHidden ? "Empty folder" : "Empty (or only hidden files, tick “Show hidden”)" })); return; }
       const rows = entries.map((e) => {
-        const cb = el("input", { type: "checkbox", style: "width:auto", onchange: (ev) => { ev.target.checked ? fmState.selected.add(e.name) : fmState.selected.delete(e.name); } });
+        const cb = el("input", { type: "checkbox", class: "fm-row-cb", style: "width:auto",
+          onchange: (ev) => { ev.target.checked ? fmState.selected.add(e.name) : fmState.selected.delete(e.name); fmSelChanged(); } });
+        cb.dataset.name = e.name;
+        if (fmState.selected.has(e.name)) cb.checked = true;
         const nameCell = el("td", {}, el("span", { class: `fm-name ${e.is_dir ? "dir" : ""}`,
           onclick: () => e.is_dir ? fmLoad(e.path) : fmOpenFile(e) }, [
           el("span", { class: "fm-ico" }, icon(e.is_dir ? "folder" : (/\.zip$/i.test(e.name) ? "backup" : "mime"), 15)),
@@ -1985,10 +1998,13 @@
           ]),
         ]);
       });
+      const selAll = el("input", { type: "checkbox", id: "fm-selall", title: "Select all", style: "width:auto",
+        onchange: (ev) => fmToggleAll(ev.target.checked) });
       body.append(el("div", { class: "table-wrap" }, el("table", {}, [
-        el("thead", {}, el("tr", {}, ["", "Name", "Size", "Mode", "Modified", ""].map((h) => el("th", { text: h })))),
+        el("thead", {}, el("tr", {}, [el("th", { style: "width:34px" }, selAll), ...["Name", "Size", "Mode", "Modified", ""].map((h) => el("th", { text: h }))])),
         el("tbody", {}, rows),
       ])));
+      fmSelChanged();
     });
   }
 
@@ -2006,6 +2022,104 @@
         catch (e) { toast(e.message, "bad"); }
       } else toast(err.message, "bad");
     }
+  }
+
+  // ---- multi-select + bulk actions ----
+  function fmSelChanged() {
+    const n = fmState.selected.size;
+    const bar = document.getElementById("fm-bulk");
+    if (bar) bar.hidden = n === 0;
+    const count = document.getElementById("fm-bulk-count");
+    if (count) count.textContent = `${n} selected`;
+    const all = document.getElementById("fm-selall");
+    if (all) {
+      const rows = [...document.querySelectorAll(".fm-row-cb")];
+      const checked = rows.filter((r) => r.checked).length;
+      all.checked = rows.length > 0 && checked === rows.length;
+      all.indeterminate = checked > 0 && checked < rows.length;
+    }
+  }
+  function fmToggleAll(check) {
+    document.querySelectorAll(".fm-row-cb").forEach((cb) => {
+      cb.checked = check;
+      check ? fmState.selected.add(cb.dataset.name) : fmState.selected.delete(cb.dataset.name);
+    });
+    fmSelChanged();
+  }
+  function fmClearSel() {
+    fmState.selected.clear();
+    document.querySelectorAll(".fm-row-cb").forEach((cb) => { cb.checked = false; });
+    fmSelChanged();
+  }
+  const fmJoin = (dir, name) => (dir === "/" ? "" : dir.replace(/\/+$/, "")) + "/" + name;
+  async function fmDeleteSelected() {
+    const names = [...fmState.selected];
+    if (!names.length) return;
+    if (!confirmInline(`Move ${names.length} item${names.length > 1 ? "s" : ""} to the Recycle Bin?`)) return;
+    let ok = 0;
+    for (const name of names) {
+      try { await API.filesDelete(fmJoin(fmState.cwd, name), false); ok++; }
+      catch (err) { toast(`${name}: ${err.message}`, "bad"); }
+    }
+    if (ok) toast(`Moved ${ok} item${ok > 1 ? "s" : ""} to the Recycle Bin`, "good");
+    fmClearSel();
+    fmLoad(fmState.cwd);
+  }
+  // Move / Copy, with a folder picker you can browse.
+  function fmMoveCopy(mode) {
+    const names = [...fmState.selected];
+    if (!names.length) return;
+    const verb = mode === "move" ? "Move" : "Copy";
+    let dest = fmState.cwd;
+    const crumb = el("div", { class: "fm-picker-path" });
+    const rootsRow = el("div", { class: "fm-picker-roots" });
+    const listBox = el("div", { class: "fm-picker-list" });
+    const note = el("span", { class: "muted", style: "font-size:12.5px" });
+    const goBtn = el("button", { class: "btn btn-primary" });
+    const run = async (overwrite) => {
+      goBtn.disabled = true;
+      try {
+        const r = mode === "move" ? await API.filesMove(fmState.cwd, names, dest, overwrite)
+                                  : await API.filesCopy(fmState.cwd, names, dest, overwrite);
+        const did = (r.moved || r.copied || []).length;
+        if (r.clashed && r.clashed.length) {
+          const msg = `${r.clashed.length} item${r.clashed.length > 1 ? "s" : ""} already exist in that folder. Overwrite ${r.clashed.length > 1 ? "them" : "it"}?`;
+          if (confirmInline(msg)) return run(true);
+        }
+        closeModal();
+        if (did) toast(`${mode === "move" ? "Moved" : "Copied"} ${did} item${did > 1 ? "s" : ""} to ${dest}`, "good");
+        fmClearSel();
+        fmLoad(fmState.cwd);
+      } catch (err) { toast(err.message, "bad"); goBtn.disabled = false; }
+    };
+    goBtn.onclick = () => run(false);
+    async function draw(path) {
+      listBox.innerHTML = ""; listBox.append(el("div", { class: "loading", text: "Loading…" }));
+      let data;
+      try { data = await API.filesList(path); }
+      catch (err) { listBox.innerHTML = ""; listBox.append(el("p", { class: "empty", text: err.message })); return; }
+      dest = data.cwd;
+      crumb.textContent = data.cwd;
+      const same = data.cwd === fmState.cwd;
+      goBtn.textContent = same ? `${verb} here` : `${verb} here`;
+      goBtn.disabled = same;
+      note.textContent = same ? `This is where the items already are, pick another folder`
+        : `${verb} ${names.length} item${names.length > 1 ? "s" : ""} into this folder`;
+      rootsRow.innerHTML = "";
+      (data.roots || []).forEach((r) => rootsRow.append(el("button", { class: `btn btn-sm btn-ghost${data.cwd === r ? " active" : ""}`, text: r, onclick: () => draw(r) })));
+      listBox.innerHTML = "";
+      if (data.parent != null) listBox.append(el("button", { class: "fm-picker-item up", onclick: () => draw(data.parent) }, [icon("folder", 15), el("span", { text: ".. (up one level)" })]));
+      const dirs = (data.entries || []).filter((e) => e.is_dir && (fmState.showHidden || !e.is_hidden));
+      dirs.forEach((e) => listBox.append(el("button", { class: "fm-picker-item", onclick: () => draw(e.path) }, [icon("folder", 15), el("span", { text: e.name })])));
+      if (!dirs.length && data.parent == null) listBox.append(el("p", { class: "empty", text: "No subfolders here" }));
+    }
+    const body = el("div", { class: "fm-picker" }, [
+      el("div", { class: "fm-picker-head" }, [el("span", { class: "muted", text: "Destination" }), crumb]),
+      rootsRow, listBox,
+      el("div", { class: "fm-picker-foot" }, [note]),
+    ]);
+    openModal(`${verb} ${names.length} item${names.length > 1 ? "s" : ""}`, body, [goBtn]);
+    draw(fmState.cwd);
   }
 
   async function fmUnzip(entry) {

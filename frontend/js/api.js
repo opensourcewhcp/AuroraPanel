@@ -72,6 +72,8 @@ const API = (() => {
     downloadUrl: (path) => `/api/files/download?path=${encodeURIComponent(path)}`,
     filesZip: (path, names, archive_name, overwrite) => request("POST", "/api/files/zip", { path, names, archive_name, overwrite: !!overwrite }),
     filesUnzip: (path, overwrite) => request("POST", "/api/files/unzip", { path, overwrite: !!overwrite }),
+    filesMove: (path, names, dest, overwrite) => request("POST", "/api/files/move", { path, names, dest, overwrite: !!overwrite }),
+    filesCopy: (path, names, dest, overwrite) => request("POST", "/api/files/copy", { path, names, dest, overwrite: !!overwrite }),
     trashList: () => request("GET", "/api/files/trash"),
     trashRestore: (id, overwrite) => request("POST", "/api/files/trash/restore", { id, overwrite: !!overwrite }),
     trashDelete: (id) => request("POST", "/api/files/trash/delete", { id }),

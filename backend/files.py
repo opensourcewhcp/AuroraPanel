@@ -439,6 +439,62 @@ def make_dir(rel_path: str, name: str) -> dict:
     return {"created": _rel(new_dir)}
 
 
+def _within(child: Path, parent: Path) -> bool:
+    """True if child is parent or lives inside it (blocks moving a folder into itself)."""
+    try:
+        child.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def transfer(rel_dir: str, names: list[str], dest: str, mode: str, overwrite: bool = False) -> dict:
+    """Move or copy the named entries from rel_dir into the dest folder. Both stay inside the allowed roots."""
+    if mode not in ("move", "copy"):
+        raise FileError("Unknown operation")
+    src_dir = _resolve(rel_dir)
+    dst_dir = _resolve(dest)
+    if not dst_dir.is_dir():
+        raise FileError("The destination is not a folder")
+    done, skipped, clashed = [], [], []
+    for raw in names:
+        name = os.path.basename(str(raw))
+        if not name or name in (".", ".."):
+            continue
+        src = _resolve(str(Path(_rel(src_dir)) / name))
+        if not src.exists() and not src.is_symlink():
+            skipped.append(name)
+            continue
+        if mode == "move" and _protected(src):
+            raise FileError(f"Refusing to move {name}, it's a system, home or website folder")
+        target = dst_dir / name
+        if src.resolve() == target.resolve():
+            skipped.append(name)
+            continue
+        if src.is_dir() and not src.is_symlink() and _within(dst_dir, src):
+            raise FileError(f"Can't {mode} {name} into itself")
+        if target.exists() or target.is_symlink():
+            if not overwrite:
+                clashed.append(name)
+                continue
+            _shadow(target)
+            if target.is_dir() and not target.is_symlink():
+                shutil.rmtree(target)
+            else:
+                target.unlink()
+        if mode == "move":
+            _shadow(src)
+            shutil.move(str(src), str(target))
+        elif src.is_dir() and not src.is_symlink():
+            shutil.copytree(src, target, symlinks=True)
+        else:
+            shutil.copy2(src, target, follow_symlinks=False)
+        _give_to_site(target)
+        done.append(name)
+    key = "moved" if mode == "move" else "copied"
+    return {"ok": True, "mode": mode, key: done, "skipped": skipped, "clashed": clashed, "dest": _rel(dst_dir)}
+
+
 def save_upload(rel_dir: str, filename: str, data: bytes) -> dict:
     parent = _resolve(rel_dir)
     if not parent.is_dir():

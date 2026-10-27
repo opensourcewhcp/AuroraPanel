@@ -645,6 +645,33 @@ class TrashActionBody(BaseModel):
     overwrite: bool = False
 
 
+class TransferBody(BaseModel):
+    path: str = ""
+    names: list[str]
+    dest: str
+    overwrite: bool = False
+
+
+@app.post("/api/files/move")
+def api_files_move(body: TransferBody, user: str = auth.CurrentUser):
+    try:
+        return files.transfer(body.path, body.names, body.dest, "move", body.overwrite)
+    except files.FileError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/files/copy")
+def api_files_copy(body: TransferBody, user: str = auth.CurrentUser):
+    try:
+        return files.transfer(body.path, body.names, body.dest, "copy", body.overwrite)
+    except files.FileError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @app.post("/api/files/delete")
 def api_files_delete(body: DeleteBody, user: str = auth.CurrentUser):
     try:

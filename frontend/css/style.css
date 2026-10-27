@@ -953,6 +953,21 @@ a.btn { text-decoration: none; }
 .fm-up-label { font-size: 13px; color: var(--text); margin-bottom: 9px; font-variant-numeric: tabular-nums; }
 .fm-upbar { height: 8px; border-radius: 6px; background: var(--w40); overflow: hidden; }
 .fm-upbar > span { display: block; height: 100%; width: 0; border-radius: 6px; background: linear-gradient(90deg, var(--accent), #ff9d4d); transition: width .15s ease; }
+/* Multi-select bulk action bar. */
+.fm-bulkbar { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; padding: 9px 14px; border-radius: var(--radius); background: rgba(255,122,26,0.1); border: 1px solid var(--accent); }
+.fm-bulkbar[hidden] { display: none; }
+.fm-bulk-count { font-weight: 650; color: var(--text); white-space: nowrap; }
+.fm-bulk-actions { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+/* Move / Copy folder picker. */
+.fm-picker { width: min(560px, 82vw); }
+.fm-picker-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+.fm-picker-path { font-family: "Cascadia Code", Consolas, ui-monospace, monospace; font-size: 13px; color: var(--text); word-break: break-all; }
+.fm-picker-roots { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.fm-picker-list { max-height: 46vh; overflow: auto; border: 1px solid var(--stroke); border-radius: 12px; padding: 6px; }
+.fm-picker-item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 9px 11px; border: 0; background: transparent; color: var(--text); border-radius: 9px; cursor: pointer; font-size: 14px; }
+.fm-picker-item:hover { background: var(--w40); }
+.fm-picker-item.up { color: var(--text-dim); }
+.fm-picker-foot { margin-top: 11px; }
 
 /* modal */
 /* Anchored near the top (not centred): a dialog whose height changes with its tabs then grows downwards instead of jumping. */

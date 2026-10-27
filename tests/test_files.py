@@ -64,6 +64,35 @@ def test_root_cannot_be_deleted(files_root):
         files.delete(str(files_root))
 
 
+def test_transfer_copy_then_move(files_root):
+    files.make_dir("", "src")
+    files.make_dir("", "dst")
+    files.save_upload("src", "f.txt", b"hi")
+    r = files.transfer("src", ["f.txt"], "dst", "copy")
+    assert r["copied"] == ["f.txt"] and r["clashed"] == []
+    assert (files_root / "src" / "f.txt").read_bytes() == b"hi"   # original stays
+    assert (files_root / "dst" / "f.txt").read_bytes() == b"hi"   # copy made
+    r2 = files.transfer("src", ["f.txt"], "dst", "move")          # dst already has it
+    assert r2["clashed"] == ["f.txt"] and r2["moved"] == []
+    assert (files_root / "src" / "f.txt").exists()                # untouched without overwrite
+    r3 = files.transfer("src", ["f.txt"], "dst", "move", overwrite=True)
+    assert r3["moved"] == ["f.txt"]
+    assert not (files_root / "src" / "f.txt").exists()            # moved out
+
+
+def test_transfer_folder_into_itself_refused(files_root):
+    files.make_dir("", "d")
+    files.make_dir("d", "inner")
+    with pytest.raises(files.FileError):
+        files.transfer("", ["d"], "d/inner", "move")
+
+
+def test_transfer_dest_must_be_folder(files_root):
+    files.save_upload("", "x.txt", b"z")
+    with pytest.raises(files.FileError):
+        files.transfer("", ["x.txt"], "x.txt", "move")
+
+
 def test_protected_folders():
     from pathlib import Path
     for p in ("/", "/etc", "/home", "/usr", "/var", "/var/www", "/var/lib", "/usr/bin", "/etc/apache2"):
