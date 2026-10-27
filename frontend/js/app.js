@@ -1145,9 +1145,33 @@
 
   // Pointer-based reorder — works with a real mouse AND touch, where native HTML5 drag doesn't.
   // A drag starts only after the pointer moves past a threshold, so plain clicks (navigate, collapse) still work.
+  // Flicker-free: the dragged element is lifted out of the layout (position: fixed, follows the pointer) and a
+  // same-size placeholder holds its spot. Nothing reflows under the pointer, so there's no swap-back jitter.
+  const LIFT_PROPS = ["position", "left", "top", "width", "height", "zIndex", "pointerEvents", "margin", "transform"];
   function enableReorder(container, { itemSel, handleSel, noDrag, onDrop }) {
-    let drag = null, swallowClick = false;
+    let drag = null, swallowClick = false, raf = 0, px = 0, py = 0;
     const THRESH = 5;
+
+    function frame() {
+      raf = 0;
+      if (!drag || !drag.moved) return;
+      drag.el.style.transform = `translate(${px - drag.x}px, ${py - drag.y}px)`;
+      // Nearest real sibling to the pointer (the placeholder and the lifted element are skipped).
+      let best = null, bestDist = Infinity, before = true;
+      for (const n of container.children) {
+        if (n === drag.el || n === drag.ph || !n.matches(itemSel)) continue;
+        const r = n.getBoundingClientRect();
+        const dx = px - (r.left + r.width / 2), dy = py - (r.top + r.height / 2);
+        const d = dx * dx + dy * dy;
+        if (d < bestDist) { bestDist = d; best = n; before = Math.abs(dx) > Math.abs(dy) ? dx < 0 : dy < 0; }
+      }
+      if (!best) return;
+      let ref = before ? best : best.nextElementSibling;
+      if (ref === drag.el) ref = drag.el.nextElementSibling;
+      // Move the placeholder only when its slot really changes — no churn, no flicker.
+      if (ref !== drag.ph && drag.ph.nextElementSibling !== ref) container.insertBefore(drag.ph, ref);
+    }
+
     container.addEventListener("pointerdown", (e) => {
       if (e.button != null && e.button !== 0) return;             // left button / primary touch only
       swallowClick = false;
@@ -1155,41 +1179,47 @@
       if (!item || !container.contains(item)) return;
       if (handleSel && !e.target.closest(handleSel)) return;      // must grab the handle (e.g. the panel header)
       if (noDrag && e.target.closest(noDrag)) return;             // not from a control inside the item
-      drag = { el: item, x: e.clientX, y: e.clientY, pid: e.pointerId, moved: false };
+      drag = { el: item, x: e.clientX, y: e.clientY, pid: e.pointerId, moved: false, ph: null };
+      px = e.clientX; py = e.clientY;
     });
+
     container.addEventListener("pointermove", (e) => {
       if (!drag) return;
+      px = e.clientX; py = e.clientY;
       if (!drag.moved) {
         if (Math.abs(e.clientX - drag.x) < THRESH && Math.abs(e.clientY - drag.y) < THRESH) return;
         drag.moved = true;
-        drag.el.classList.add("dragging");
-        document.body.classList.add("reordering");
         try { drag.el.setPointerCapture(drag.pid); } catch (_) {}
+        document.body.classList.add("reordering");
+        const r = drag.el.getBoundingClientRect();
+        // Placeholder carries the same classes (so the same grid span) and the exact size, to hold a stable gap.
+        const ph = document.createElement(drag.el.tagName);
+        ph.className = drag.el.className + " reorder-ph";
+        ph.style.cssText = `width:${r.width}px;height:${r.height}px;`;
+        drag.ph = ph;
+        drag.el.after(ph);
+        // Lift the element out of flow so it can't push its own neighbours around.
+        drag.el.classList.add("dragging");
+        Object.assign(drag.el.style, {
+          position: "fixed", left: r.left + "px", top: r.top + "px", width: r.width + "px",
+          height: r.height + "px", zIndex: "1000", pointerEvents: "none", margin: "0",
+        });
       }
       e.preventDefault();
-      // Insert next to whichever sibling's centre is nearest the pointer.
-      let best = null, bestDist = Infinity;
-      for (const n of container.querySelectorAll(itemSel)) {
-        if (n === drag.el) continue;
-        const r = n.getBoundingClientRect();
-        const dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
-        const d = dx * dx + dy * dy;
-        if (d < bestDist) { bestDist = d; best = { n, r, dx, dy }; }
-      }
-      if (!best) return;
-      // Place after the neighbour when the pointer is past its centre along the dominant axis.
-      const after = Math.abs(best.dx) > Math.abs(best.dy) ? best.dx > 0 : best.dy > 0;
-      container.insertBefore(drag.el, after ? best.n.nextElementSibling : best.n);
+      if (!raf) raf = requestAnimationFrame(frame);
     });
+
     const end = () => {
       if (!drag) return;
       const d = drag; drag = null;
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
       document.body.classList.remove("reordering");
-      if (d.moved) {
-        d.el.classList.remove("dragging");
-        swallowClick = true;                                      // eat the click this drag would otherwise fire
-        if (onDrop) onDrop();
-      }
+      if (!d.moved) return;
+      d.el.classList.remove("dragging");
+      LIFT_PROPS.forEach((p) => { d.el.style[p] = ""; });             // drop it back into flow
+      if (d.ph && d.ph.parentNode) { container.insertBefore(d.el, d.ph); d.ph.remove(); }
+      swallowClick = true;                                            // eat the click this drag would otherwise fire
+      if (onDrop) onDrop();
     };
     container.addEventListener("pointerup", end);
     container.addEventListener("pointercancel", end);
@@ -8089,6 +8119,7 @@
   }
   // ---- About & Updates ----
   const FORUM_URL = "https://forums.raspberrypi.com/viewtopic.php?p=2388892";
+  const GITHUB_URL = "https://github.com/opensourcewhcp/AuroraPanel";
   function viewAbout(root) {
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
     root.append(body);
@@ -8117,8 +8148,11 @@
           el("div", {}, [el("h2", { text: "AuroraPanel" }), el("div", { class: "about-ver" }, [pill(a.label, "warn"), el("span", { class: "muted", text: ` released ${a.released}` })])]),
         ]),
         el("p", { class: "muted", text: "A free, open-source (MIT) control panel for the Raspberry Pi and Ubuntu / Debian servers. Found something odd? Please report it." }),
-        kv([["Version", a.version], ["Installed in", a.install_dir], ["Website", el("a", { href: a.site, target: "_blank", rel: "noopener noreferrer", text: "aurora51.com ↗" })]]),
+        kv([["Version", a.version], ["Installed in", a.install_dir],
+          ["Website", el("a", { href: a.site, target: "_blank", rel: "noopener noreferrer", text: "aurora51.com ↗" })],
+          ["Source", el("a", { href: GITHUB_URL, target: "_blank", rel: "noopener noreferrer", text: "github.com/opensourcewhcp/AuroraPanel ↗" })]]),
         el("div", { class: "toolbar", style: "margin:16px 0 0" }, [check, viewChanges,
+          el("a", { class: "btn btn-sm btn-ghost", href: GITHUB_URL, target: "_blank", rel: "noopener noreferrer", text: "GitHub repository ↗" }),
           el("a", { class: "btn btn-sm btn-ghost", href: FORUM_URL, target: "_blank", rel: "noopener noreferrer", text: "Feedback on the Raspberry Pi Forums ↗" })]),
         el("div", { class: "about-privacy" }, [icon("lock", 14), el("span", { text: "The panel never contacts the internet on its own — it only asks aurora51.com for the latest version or the change log when you click one of these buttons." })]),
       ]), changes, result);

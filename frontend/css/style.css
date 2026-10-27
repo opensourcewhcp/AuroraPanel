@@ -249,15 +249,18 @@ select option { background: var(--glass-solid); }
 .bento .bcard { cursor: grab; }
 .bento .bcard:active { cursor: grabbing; }
 .bento .bcard button, .bento .bcard a, .bento .bcard .rbtn, .bento .bcard input, .bento .bcard [data-go] { cursor: pointer; }
-.bcard.dragging { opacity: .5; outline: 2px dashed rgba(255,255,255,.7); outline-offset: -3px; }
-:root[data-theme="light"] .bcard.dragging { outline-color: var(--accent); }
+/* The lifted element follows the pointer; a same-size placeholder holds its spot (no reflow, no flicker). */
+.bcard.dragging, .tile-group.dragging { opacity: .97; box-shadow: 0 26px 60px -14px rgba(0,0,0,.6); cursor: grabbing; transition: none; }
+.reorder-ph { background: transparent !important; box-shadow: none !important; outline: 2px dashed var(--stroke-strong); outline-offset: -3px; }
+.reorder-ph > * { visibility: hidden !important; }
+.reorder-ph::before, .reorder-ph::after { display: none !important; }
+:root[data-theme="light"] .reorder-ph { outline-color: var(--accent); }
 .dash-tools { display: flex; justify-content: flex-end; min-height: 0; margin-bottom: -8px; }
 .dash-reset[hidden] { display: none; }
 /* "All tools" panels: the title bar is the drag grip; the tiles inside stay clickable. */
 .tile-group-head { cursor: grab; }
 .tile-group-head:active { cursor: grabbing; }
-.tile-group.dragging { opacity: .5; outline: 2px dashed rgba(255,255,255,.7); outline-offset: -3px; }
-:root[data-theme="light"] .tile-group.dragging { outline-color: var(--accent); }
+/* .tile-group.dragging shares the carried look defined above. */
 /* While a reorder is in progress, don't let the drag select text; let touch drag the panel by its header. */
 body.reordering, body.reordering * { user-select: none; -webkit-user-select: none; }
 body.reordering { cursor: grabbing; }
@@ -2021,7 +2024,12 @@ button.mx-rank-row:hover { background: var(--w40); }
 .mx-level.on { border-color: var(--accent); background: var(--accent-soft); }
 .mx-events { display: grid; gap: 8px; }
 .mx-ev { display: grid; grid-template-columns: minmax(0, 1fr) auto; border: 1px solid var(--stroke); border-radius: 14px; overflow: hidden; }
-.mx-ev-main { display: grid; grid-template-columns: 76px minmax(150px, 1fr) minmax(0, 1.6fr) auto 70px; align-items: center; gap: 12px; padding: 10px 12px; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; min-width: 0; }
+.mx-ev-main { display: grid; grid-template-columns: 76px minmax(150px, 1fr) minmax(0, 1.6fr) auto auto 70px; align-items: center; gap: 12px; padding: 10px 12px; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; min-width: 0; }
+.mx-ev-code { justify-self: center; min-width: 38px; text-align: center; padding: 1px 7px; border-radius: 6px; font-family: "Cascadia Code", Consolas, ui-monospace, monospace; font-size: 12px; font-weight: 650; border: 1px solid var(--stroke); color: var(--text-dim); background: var(--w40); }
+.mx-ev-code.code-bad { color: #ff6b6b; border-color: rgba(255,107,107,.35); background: rgba(255,107,107,.10); }
+.mx-ev-code.code-warn { color: #e2a33c; border-color: rgba(226,163,60,.35); background: rgba(226,163,60,.10); }
+.mx-ev-code.code-ok { color: #46c08a; border-color: rgba(70,192,138,.3); background: rgba(70,192,138,.10); }
+.mx-ev-code.code-dim { color: var(--text-dim); }
 .mx-ev-main > .pill { text-align: center; }
 .mx-ev-main:hover { background: var(--w30); }
 .mx-ev-what { display: flex; flex-direction: column; min-width: 0; }
@@ -2115,7 +2123,7 @@ button.mx-rank-row:hover { background: var(--w40); }
 @media (max-width: 1100px) {
   .mx-grid3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .mx-ev-main { grid-template-columns: 76px minmax(0, 1fr) auto; }
-  .mx-ev-req, .mx-ev-main .mx-ev-t { display: none; }
+  .mx-ev-req, .mx-ev-code, .mx-ev-main .mx-ev-t { display: none; }
 }
 @media (max-width: 800px) {
   .mx-grid2, .mx-grid3, .mx-bw-month, .mx-res-grid { grid-template-columns: minmax(0, 1fr); }

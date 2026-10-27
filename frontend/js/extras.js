@@ -429,10 +429,12 @@ window.AuroraExtras = (ui) => {
       const rows = events.filter((e) => (evFilter === "all" || (evFilter === "blocked") === e.blocked) &&
         (!evQ || `${e.ip} ${e.host} ${e.request} ${e.rules.map((r) => r.id + " " + r.msg).join(" ")}`.toLowerCase().includes(evQ)));
       if (!rows.length) { evBox.append(empty("shield", events.length ? "No matching events" : "No attacks in this period", events.length ? "Try another filter." : "When the WAF stops or logs a request, it shows up here with the reason.")); return; }
+      const codeTone = (s) => s >= 500 ? "bad" : s >= 400 ? (s === 404 ? "warn" : "bad") : s >= 300 ? "dim" : "ok";
       evBox.append(el("div", { class: "mx-events" }, rows.slice(0, 300).map((e) => {
         const r0 = e.rules[0];
         const more = el("div", { class: "mx-ev-more", hidden: "" }, [
           el("div", { class: "mx-kv" }, [el("span", { text: "Request" }), el("code", { text: e.request })]),
+          (e.status != null && e.status !== "") ? el("div", { class: "mx-kv" }, [el("span", { text: "Server replied" }), el("code", { text: "HTTP " + e.status })]) : null,
           e.ua ? el("div", { class: "mx-kv" }, [el("span", { text: "User agent" }), el("code", { text: e.ua })]) : null,
           el("div", { class: "mx-ev-rules" }, e.rules.map((r) => el("div", { class: "mx-ev-rule" }, [el("code", { text: r.id }), el("span", { class: "grow", text: r.msg }),
             r.severity ? pill(r.severity.toLowerCase(), r.severity === "CRITICAL" ? "bad" : "warn") : null,
@@ -446,7 +448,8 @@ window.AuroraExtras = (ui) => {
             pill(e.blocked ? "Blocked" : "Logged", e.blocked ? "bad" : "warn"),
             el("div", { class: "mx-ev-what" }, [el("b", { text: r0.category }), el("span", { class: "muted mx-ell", text: r0.msg })]),
             el("div", { class: "mx-ev-req mx-ell", title: e.request }, [el("span", { class: "muted", text: e.host || "" }), " ", el("code", { text: e.request.replace(/ HTTP\/[\d.]+$/, "") })]),
-            el("span", { class: "mx-ev-ipw" }, [el("span", { class: `mx-ev-ip mx-ip ${ipCls(ipst[e.ip], reportedIps[e.ip])}`, role: "link", text: e.ip, title: "Who is this?", onclick: (ev) => { ev.stopPropagation(); ipCard(e.ip, loadEvents); } })]),
+            (e.status != null && e.status !== "") ? el("span", { class: "mx-ev-code code-" + codeTone(e.status), title: `Server replied with HTTP ${e.status}`, text: String(e.status) }) : null,
+            el("span", { class: "mx-ev-ipw" },[el("span", { class: `mx-ev-ip mx-ip ${ipCls(ipst[e.ip], reportedIps[e.ip])}`, role: "link", text: e.ip, title: "Who is this?", onclick: (ev) => { ev.stopPropagation(); ipCard(e.ip, loadEvents); } })]),
             el("span", { class: "muted mx-ev-t", text: ago(e.ts) }),
           ]),
           ipRowActions(e, r0),
