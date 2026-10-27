@@ -158,28 +158,42 @@ def networks() -> dict:
     return {"interfaces": interfaces}
 
 
-def processes(limit: int = 40, sort_by: str = "cpu") -> list[dict]:
+# psutil states → the group the page sorts them into
+PROC_GROUP = {"running": "busy", "sleeping": "sleeping", "idle": "idle", "disk-sleep": "attention", "stopped": "attention",
+              "zombie": "attention", "tracing-stop": "attention", "dead": "attention", "wake-kill": "attention", "waking": "sleeping", "parked": "idle"}
+
+
+def processes_full(limit: int = 500, sort_by: str = "cpu") -> tuple[list[dict], dict]:
+    """Every process with what the page needs to group and sort it, plus counts per group (over all of them)."""
     procs = []
-    for p in psutil.process_iter(
-        ["pid", "name", "username", "cpu_percent", "memory_percent", "status"]
-    ):
+    counts = {"busy": 0, "sleeping": 0, "idle": 0, "attention": 0, "kernel": 0, "total": 0}
+    for p in psutil.process_iter(["pid", "ppid", "name", "username", "cpu_percent", "memory_percent", "status", "cmdline", "memory_info", "num_threads", "create_time"]):
         try:
             info = p.info
-            procs.append(
-                {
-                    "pid": info["pid"],
-                    "name": info["name"] or "?",
-                    "username": info.get("username") or "?",
-                    "cpu_percent": round(info.get("cpu_percent") or 0.0, 1),
-                    "memory_percent": round(info.get("memory_percent") or 0.0, 1),
-                    "status": info.get("status") or "?",
-                }
-            )
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            cmd = " ".join(info.get("cmdline") or [])
+            kernel = not cmd and (info["pid"] == 2 or info.get("ppid") == 2)
+            status = info.get("status") or "?"
+            group = PROC_GROUP.get(status, "sleeping")
+            mem = info.get("memory_info")
+            procs.append({
+                "pid": info["pid"], "ppid": info.get("ppid"), "name": info["name"] or "?", "username": info.get("username") or "?",
+                "cpu_percent": round(info.get("cpu_percent") or 0.0, 1), "memory_percent": round(info.get("memory_percent") or 0.0, 1),
+                "status": status, "group": group, "kernel": kernel, "cmd": cmd[:200], "rss": getattr(mem, "rss", 0) if mem else 0,
+                "threads": info.get("num_threads") or 0, "started": info.get("create_time") or 0,
+            })
+            counts["total"] += 1
+            counts[group] += 1
+            if kernel:
+                counts["kernel"] += 1
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue
     key = "memory_percent" if sort_by == "memory" else "cpu_percent"
-    procs.sort(key=lambda x: x[key], reverse=True)
-    return procs[:limit]
+    procs.sort(key=lambda x: (x[key], x["rss"]), reverse=True)
+    return procs[:limit], counts
+
+
+def processes(limit: int = 40, sort_by: str = "cpu") -> list[dict]:
+    return processes_full(limit, sort_by)[0]
 
 
 def kill_process(pid: int) -> None:

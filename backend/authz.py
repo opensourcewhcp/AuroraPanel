@@ -24,17 +24,6 @@ SITE_ALLOW = [
     ("GET", r"/api/mail/accounts(/device|/mobileconfig)?"),
     ("POST", r"/api/mail/accounts/(create|update|delete)"),
     ("GET", r"/api/metrics/(sites|visitors|analytics|errors)"),
-    # a hosting account: its plan and usage, and its own <user>_ databases (hosting.py checks it's an account)
-    ("GET", r"/api/hosting/me(/db)?"),
-    ("POST", r"/api/hosting/me/db/(create|drop|password)"),
-]
-# Resellers: their own hosting accounts (hosting.py limits every call to accounts they created).
-RESELLER_ALLOW = [
-    ("GET", r"/api/(me|status|requires)"),
-    ("GET", r"/api/jobs/[\w-]+"),
-    ("POST", r"/api/(logout|me/password)"),
-    ("GET", r"/api/hosting"),
-    ("POST", r"/api/hosting/accounts/(create|domain|plan|password|suspend|terminate)"),
 ]
 # Viewers can read every page, but not these (secrets, file contents, downloads, a shell).
 VIEWER_DENY_GET = re.compile(r"^/api/(files/(read|download)|backups/[^/]+/download|backups/download|metrics/download|"
@@ -67,8 +56,6 @@ def scope() -> dict | None:
             for n in [st["server_name"]] + list(st.get("aliases", [])):
                 n = n.lower()
                 domains.add(n[4:] if n.startswith("www.") else n)
-        if u.get("account"):  # a hosting account's files: its whole home (public_html, other domains, logs)
-            roots.insert(0, Path("/home") / u["account"])
         u["_scope"] = {"sites": list(u.get("sites", [])), "roots": roots, "domains": sorted(domains)}
     return u["_scope"]
 
@@ -102,11 +89,6 @@ def _decide(user: dict | None, method: str, path: str) -> str | None:
             if m == method and re.fullmatch(rx, path):
                 return None
         return "This account manages only its own websites"
-    if user["role"] == "reseller":
-        for m, rx in RESELLER_ALLOW:
-            if m == method and re.fullmatch(rx, path):
-                return None
-        return "A reseller manages only their own hosting accounts"
     return "Unknown role"
 
 

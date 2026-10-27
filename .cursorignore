@@ -1,0 +1,13 @@
+﻿# Local Python env (large; not project source)
+.venv/
+__pycache__/
+*.pyc
+
+# Secrets / local-only
+aurora_config.json
+*.tmp
+
+# Bundled / deploy artifacts
+aurorahomepage/
+deploy/
+frontend/vendor/

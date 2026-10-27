@@ -110,7 +110,11 @@ APACHE_SCHEMA = [
         {"key": "ServerSignature", "label": "Signature on error pages", "type": "select", "options": [["Off", "Off (recommended)"], ["On", "On"], ["EMail", "On + admin e-mail"]]},
         {"key": "TraceEnable", "label": "Allow HTTP TRACE", "type": "bool", "help": "Off is safer."},
         {"key": "security_headers", "label": "Add security headers", "type": "bool",
-         "help": "X-Content-Type-Options, X-Frame-Options (SAMEORIGIN), Referrer-Policy on every response (needs mod_headers)."},
+         "help": "X-Content-Type-Options, X-Frame-Options (SAMEORIGIN), Referrer-Policy and a Content-Security-Policy that only stops framing "
+                 "(frame-ancestors 'self', never overriding a policy a site sets itself) on every response (needs mod_headers)."},
+        {"key": "tls_modern", "label": "Modern TLS only", "type": "bool",
+         "help": "TLS 1.2 and 1.3 with strong cipher suites only (Mozilla's intermediate list): no CBC / SHA-1 suites that scanners call weak. "
+                 "Works with every browser and phone from the last ten years."},
         {"key": "ServerAdmin", "label": "Admin e-mail", "type": "text", "placeholder": "webmaster@localhost"},
     ]},
     {"title": "Connections & limits", "fields": [
@@ -122,6 +126,62 @@ APACHE_SCHEMA = [
          "help": "Largest upload/POST Apache accepts. 0 = unlimited. PHP has its own limit (PHP Settings)."},
     ]},
 ]
+# Mozilla "intermediate" TLS 1.2 suites (TLS 1.3 suites are always on)
+TLS_CIPHERS = ("ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:"
+               "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:"
+               "DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-CHACHA20-POLY1305")
+HARDENED = {"ServerTokens": "Prod", "ServerSignature": "Off", "TraceEnable": "Off", "security_headers": "On", "tls_modern": "On"}
+
+
+def strip_vhost_tls(conf: str) -> dict:
+    """Disable a site's own SSLCipherSuite / SSLProtocol / SSLHonorCipherOrder lines (commented out, marked) so the
+    server-wide "Modern TLS only" block applies to it too — a VirtualHost's own lines always win over it.
+    The file is backed up first and put back if Apache rejects the result; the server-wide block is made sure of."""
+    name = Path(conf or "").name
+    if not name.endswith(".conf") or name != conf:
+        raise AppConfigError("Pick a site configuration file")
+    live = Path("/etc/apache2/sites-enabled") / name
+    if live.is_symlink():
+        live = live.resolve()
+    if not live.is_file():
+        raise AppConfigError(f"{name} is not enabled")
+    text = live.read_text(errors="replace")
+    new, n = re.subn(r"(?im)^([ \t]*)(SSL(?:CipherSuite|Protocol|HonorCipherOrder)\s[^\n]*)$", r"\1# aurora-tls-modern: \2", text)
+    if n:
+        bak = Path("/var/lib/aurora/site-backups")
+        bak.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(live, bak / f"{name}.{int(time.time())}")
+        live.write_text(new, encoding="utf-8")
+        test = subprocess.run(["apache2ctl", "configtest"], capture_output=True, text=True, timeout=60)
+        if test.returncode != 0:
+            live.write_text(text, encoding="utf-8")
+            err = "\n".join(l for l in (test.stderr + test.stdout).splitlines() if "AH00558" not in l).strip()
+            raise AppConfigError("Apache rejected the config, nothing was changed:\n" + err[:1500])
+    h = apache_hardening()
+    if h.get("available") and h["ok"] < h["total"]:
+        apache_harden()  # writes the server-wide block and reloads
+    elif n:
+        if subprocess.run(["systemctl", "reload", "apache2"], capture_output=True, timeout=60).returncode != 0:
+            subprocess.run(["systemctl", "restart", "apache2"], capture_output=True, timeout=120)
+    return {"ok": True, "changed": n, "file": str(live)}
+
+
+def apache_hardening() -> dict:
+    """Which of the recommended web-server settings are on (for Global Security)."""
+    if not Path("/etc/apache2/apache2.conf").exists():
+        return {"available": False, "items": [], "ok": 0, "total": 0}
+    v = apache_settings()["values"]
+    labels = {"ServerTokens": "Server header hides the Apache version", "ServerSignature": "No server signature on error pages",
+              "TraceEnable": "HTTP TRACE off", "security_headers": "Security headers on every site", "tls_modern": "Modern TLS only"}
+    items = [{"key": k, "label": labels[k], "ok": v.get(k) == want, "value": v.get(k)} for k, want in HARDENED.items()]
+    return {"available": True, "items": items, "ok": sum(1 for i in items if i["ok"]), "total": len(items)}
+
+
+def apache_harden() -> dict:
+    """Apply every recommended setting at once (validated and rolled back like any Apache save)."""
+    return apache_save(dict(HARDENED))
+
+
 _APACHE_DIRECTIVES = ["ServerTokens", "ServerSignature", "TraceEnable", "ServerAdmin", "Timeout", "KeepAlive",
                       "MaxKeepAliveRequests", "KeepAliveTimeout", "LimitRequestBody"]
 APACHE_PROTECTED = {"authz_core", "authz_host", "dir", "mime", "alias", "env", "setenvif", "filter", "deflate",
@@ -169,6 +229,7 @@ def apache_settings() -> dict:
         "MaxKeepAliveRequests": v.get("MaxKeepAliveRequests", "100"), "KeepAliveTimeout": v.get("KeepAliveTimeout", "5"),
         "LimitRequestBody_mb": str(int(v.get("LimitRequestBody", "0") or 0) // 1048576),
         "security_headers": "On" if "aurora-security-headers" in t else "Off",
+        "tls_modern": "On" if "aurora-tls-modern" in t else "Off",
     }
     return {"schema": APACHE_SCHEMA, "values": values, "bool_values": ["On", "Off"]}
 
@@ -206,7 +267,13 @@ def apache_save(changes: dict) -> dict:
         lines += ["# aurora-security-headers", "<IfModule mod_headers.c>",
                   '    Header always set X-Content-Type-Options "nosniff"',
                   '    Header always set X-Frame-Options "SAMEORIGIN"',
-                  '    Header always set Referrer-Policy "strict-origin-when-cross-origin"', "</IfModule>"]
+                  '    Header always set Referrer-Policy "strict-origin-when-cross-origin"',
+                  "    Header always setifempty Content-Security-Policy \"frame-ancestors 'self'\"", "</IfModule>"]
+    if new["tls_modern"] == "On":
+        lines += ["# aurora-tls-modern", "<IfModule mod_ssl.c>",
+                  "    SSLProtocol -all +TLSv1.2 +TLSv1.3",
+                  f"    SSLCipherSuite {TLS_CIPHERS}",
+                  "    SSLHonorCipherOrder off", "    SSLSessionTickets off", "</IfModule>"]
     enabled_link = Path("/etc/apache2/conf-enabled") / APACHE_TUNING.name
 
     def enable():

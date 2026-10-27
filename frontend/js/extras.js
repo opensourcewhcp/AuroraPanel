@@ -164,7 +164,7 @@ window.AuroraExtras = (ui) => {
     const max = Math.max(...rows.map((r) => r.n)) || 1;
     return el("div", { class: "mx-rank" }, rows.slice(0, opts.limit || 10).map((r) => el(r.onclick ? "button" : "div", { class: "mx-rank-row", type: r.onclick ? "button" : null, onclick: r.onclick, title: r.title || r.label }, [
       el("div", { class: "mx-rank-bar", style: `width:${(r.n / max) * 100}%` }),
-      el("span", { class: "mx-rank-l mx-ell", text: r.label }), r.extra || null,
+      el("span", { class: `mx-rank-l mx-ell ${r.cls || ""}`, text: r.label }), r.extra || null,
       el("span", { class: "mx-rank-n", text: opts.fmt ? opts.fmt(r.n) : num(r.n) }),
     ])));
   }
@@ -184,6 +184,7 @@ window.AuroraExtras = (ui) => {
     draw();
     return wrap;
   }
+  const ipCls = (st, rep) => (st === "banned" ? "ip-banned" : st === "trusted" ? "ip-trusted" : rep ? "ip-reported" : "");
   async function banIp(ip, reason) {
     return call(() => API.guardBan(ip, reason, 24 * 3600, document.title.split(" · ")[0]), `${ip} banned for 24 hours`);
   }
@@ -210,7 +211,7 @@ window.AuroraExtras = (ui) => {
         : st.status === "trusted" ? `Trusted${st.cidr && st.cidr !== ip && st.cidr !== ip + "/32" ? ` (via ${st.cidr})` : ""}${st.reason ? ` — “${st.reason}”` : ""}: it is never banned.` : "";
       body.append(el("div", { class: "mx-ip-head" }, [
         el("div", { class: "mx-ip-flag", text: FLAG(o.country) || "🌐" }),
-        el("div", { class: "mx-ip-id" }, [el("div", { class: "mx-ip-addr" }, [el("code", { text: ip }), stPill]),
+        el("div", { class: "mx-ip-id" }, [el("div", { class: "mx-ip-addr" }, [el("code", { class: ipCls(st.status, d.reported), text: ip }), stPill, d.reported ? pill("reported", "warn") : null]),
           el("div", { class: "muted", text: [o.network, o.country, d.ptr].filter(Boolean).join(" · ") || (d.private ? "A private / local network address" : "No owner information") })]),
         seg([[1, "24 h"], [7, "7 days"], [30, "30 days"]], days, (v) => { days = v; load(); }),
       ]));
@@ -260,7 +261,7 @@ window.AuroraExtras = (ui) => {
       }
       if (st.status === "trusted") foot.append(btn("Remove from trusted", () => act(() => API.guardUntrust(st.cidr || ip), `${ip} no longer trusted`), "btn-ghost"));
       else if (st.status !== "banned") foot.append(btn("Trust", () => act(() => API.guardTrust(ip, "Trusted from the IP card"), `${ip} trusted — it will never be banned`), "btn-ghost"));
-      if (!d.private) foot.append(btn(d.reported ? "Reported · read / send again" : "Report abuse", () => reportIp(ip, () => load()), d.reported ? "btn-ghost" : "btn-ghost"));
+      if (!d.private) foot.append(btn(d.reported ? "Reported · read / send again" : "Report abuse", () => reportIp(ip, onChange), "btn-ghost"));
       foot.append(btn("Copy IP", async () => toast(await copyText(ip) ? "Copied" : "Copy failed", "good"), "btn-ghost"));
       if (allSrv && st.status !== "trusted") foot.append(allSrv);
     }
@@ -289,7 +290,7 @@ window.AuroraExtras = (ui) => {
       send.disabled = true;
       try {
         const r = await API.abuseReport({ ip, sender: from.value, to: dest, note: note.value.trim(), force: !!p.reported });
-        toast(`Reported ${ip} to ${r.to.join(", ")}`, "good"); closeModal(); if (done) setTimeout(() => ipCard(ip), 150);
+        toast(`Reported ${ip} to ${r.to.join(", ")}`, "good"); closeModal(); if (done) done();
       } catch (err) { toast(err.message, "bad"); send.disabled = false; }
     } });
     openModal(`Report ${ip}`, el("div", { class: "em-form" }, [
@@ -403,10 +404,24 @@ window.AuroraExtras = (ui) => {
         seg([[1, "1 h"], [24, "24 h"], [168, "7 days"], [720, "30 days"]], hours, (v) => { hours = v; loadEvents(); })]), evBox], "", [btn("Refresh", () => loadEvents(), "btn-ghost")]));
       loadEvents();
     }
-    let evBox, events = [], ipst = {};
+    let evBox, events = [], ipst = {}, reportedIps = {};
     async function loadEvents() {
       try { const r = await API.wafEvents(hours); events = r.events; ipst = r.ip_status || {}; } catch (e) { evBox.innerHTML = ""; evBox.append(el("p", { class: "empty", text: e.message })); return; }
+      try { reportedIps = (await API.abuseReported()) || {}; } catch (e) { reportedIps = {}; }
       drawEvents();
+    }
+    // Ban / Unban / Report straight from a row, with the address's state shown next to the buttons.
+    function ipRowActions(e, r0) {
+      const ip = e.ip, st = ipst[ip], rep = reportedIps[ip];
+      return el("div", { class: "mx-ev-act" }, [
+        st === "banned" ? pill("banned", "bad") : st === "trusted" ? pill("trusted", "good") : null,
+        rep ? el("span", { class: "pill warn", title: `Reported to ${(rep.to || []).join(", ")} ${ago(rep.ts)}`, text: "reported" }) : null,
+        btn("Lookup", () => ipCard(ip, loadEvents), "btn-ghost"),
+        st === "banned" ? btn("Unban", () => call(() => API.guardUnban(ip), `${ip} unbanned`, loadEvents), "btn-ghost")
+          : st === "trusted" ? null
+          : armed("Ban", "Click again · 24 h", () => call(() => API.guardBan(ip, `WAF: ${r0.category} — ${r0.msg}`, 86400, "WAF Firewall"), `${ip} banned for 24 hours`, loadEvents), "btn-danger"),
+        btn(rep ? "Report again" : "Report", () => reportIp(ip, loadEvents), "btn-ghost"),
+      ].filter(Boolean));
     }
     function drawEvents() {
       if (!evBox) return;
@@ -426,16 +441,15 @@ window.AuroraExtras = (ui) => {
               call(() => API.wafAllow(r.id, r.msg), `Rule ${r.id} switched off`, load);
             }, "btn-ghost")]))),
         ]);
-        return el("div", { class: "mx-ev" }, [
+        return el("div", { class: `mx-ev${ipst[e.ip] === "banned" ? " is-banned" : ""}` }, [
           el("button", { type: "button", class: "mx-ev-main", onclick: () => { more.hidden = !more.hidden; } }, [
             pill(e.blocked ? "Blocked" : "Logged", e.blocked ? "bad" : "warn"),
             el("div", { class: "mx-ev-what" }, [el("b", { text: r0.category }), el("span", { class: "muted mx-ell", text: r0.msg })]),
             el("div", { class: "mx-ev-req mx-ell", title: e.request }, [el("span", { class: "muted", text: e.host || "" }), " ", el("code", { text: e.request.replace(/ HTTP\/[\d.]+$/, "") })]),
-            el("span", { class: "mx-ev-ipw" }, [el("span", { class: "mx-ev-ip mx-ip", role: "link", text: e.ip, title: "Who is this?", onclick: (ev) => { ev.stopPropagation(); ipCard(e.ip, load); } }),
-              ipst[e.ip] ? el("span", { class: `mx-ipdot ${ipst[e.ip]}`, title: ipst[e.ip] === "banned" ? "Banned from the whole server" : "Trusted" }) : null]),
+            el("span", { class: "mx-ev-ipw" }, [el("span", { class: `mx-ev-ip mx-ip ${ipCls(ipst[e.ip], reportedIps[e.ip])}`, role: "link", text: e.ip, title: "Who is this?", onclick: (ev) => { ev.stopPropagation(); ipCard(e.ip, loadEvents); } })]),
             el("span", { class: "muted mx-ev-t", text: ago(e.ts) }),
           ]),
-          el("div", { class: "mx-ev-act" }, [btn("IP…", () => ipCard(e.ip, load), "btn-ghost")]),
+          ipRowActions(e, r0),
           more,
         ]);
       })));
@@ -600,7 +614,7 @@ window.AuroraExtras = (ui) => {
     let sw0;
     try { sw0 = await siteSwitcher("visitors", sid); } catch (e) { root.append(el("p", { class: "empty", text: e.message })); return; }
     const cols = new Set(LS.get("vis.cols", ["ip", "url", "ts", "size", "status", "method", "ref", "client"]));
-    let d = null, q = "", stat = "all", who = "all", ipF = "", per = LS.get("vis.per", 100), page = 0, sortK = "ts", dir = -1, limit = 1000, live = false, liveT = null;
+    let d = null, q = "", stat = "all", who = "all", ipF = "", per = LS.get("vis.per", 100), page = 0, sortK = "ts", dir = -1, limit = 1000, live = false, liveT = null, reportedIps = {};
     const head = pageHead("Visitors", "", [sw0.sel, btn("Analytics", () => navigate("analytics", { arg: sid }), "btn-ghost"), btn("Errors", () => navigate("errors", { arg: sid }), "btn-ghost")]);
     const sumBox = el("div", {}), facets = el("div", {}), tblBox = el("div", {}, el("div", { class: "loading", text: "Reading the log…" }));
     const search = el("input", { type: "search", class: "em-search", placeholder: "Search IP, URL, referrer, browser…", oninput: () => { q = search.value.toLowerCase(); page = 0; drawTable(); } });
@@ -625,6 +639,7 @@ window.AuroraExtras = (ui) => {
     root.append(head, sumBox, facets, el("div", { class: "card em-pad0 mx-vis" }, [toolbar, ipBar, tblBox, pager]));
     async function load() {
       try { d = await API.metVisitors(sid, limit); } catch (e) { tblBox.innerHTML = ""; tblBox.append(el("p", { class: "empty", text: e.message })); return; }
+      try { reportedIps = (await API.abuseReported()) || {}; } catch (e) { reportedIps = {}; }
       d.rows.forEach((r) => { r.client = r.bot ? `🤖 ${r.browser}` : `${r.browser} · ${r.os}${r.device !== "desktop" ? " · " + r.device : ""}`; });
       drawSummary(); drawTable();
     }
@@ -644,7 +659,7 @@ window.AuroraExtras = (ui) => {
       const top = (key, f = (r) => true) => { const c = new Map(); d.rows.filter(f).forEach((r) => c.set(r[key], (c.get(r[key]) || 0) + 1)); return [...c.entries()].sort((a, b) => b[1] - a[1]); };
       facets.innerHTML = "";
       facets.append(el("div", { class: "mx-grid3" }, [
-        card("Top visitors", [rank(top("ip").slice(0, 8).map(([ip, n]) => ({ label: ip, n, onclick: () => setIp(ip), extra: d.ip_status[ip] ? pill(d.ip_status[ip], d.ip_status[ip] === "trusted" ? "good" : "bad") : null })))]),
+        card("Top visitors", [rank(top("ip").slice(0, 8).map(([ip, n]) => ({ label: ip, n, onclick: () => setIp(ip), extra: d.ip_status[ip] ? pill(d.ip_status[ip], d.ip_status[ip] === "trusted" ? "good" : "bad") : reportedIps[ip] ? pill("reported", "warn") : null, cls: ipCls(d.ip_status[ip], reportedIps[ip]) })))]),
         card("Top pages", [rank(top("url", (r) => !r.bot && r.page).slice(0, 8).map(([u, n]) => ({ label: u, n, onclick: () => { search.value = u; q = u.toLowerCase(); drawTable(); } })))]),
         card("Top referrers", [rank(top("ref", (r) => r.ref && !r.bot && !own.has(refHost(r.ref))).slice(0, 8).map(([u, n]) => ({ label: u.replace(/^https?:\/\//, ""), n })), { empty: "No links from other websites — visitors typed the address, used a bookmark or came from your own pages." })]),
       ]));
@@ -656,8 +671,9 @@ window.AuroraExtras = (ui) => {
     }
     function cell(c, r) {
       switch (c) {
-        case "ip": return el("span", { class: "mx-ev-ipw" }, [el("button", { type: "button", class: "mx-ip", text: r.ip, title: "Show only this visitor", onclick: () => setIp(r.ip) }),
-          d.ip_status[r.ip] ? el("span", { class: `mx-ipdot ${d.ip_status[r.ip]}`, title: d.ip_status[r.ip] === "banned" ? "Banned from the whole server" : "Trusted" }) : null]);
+        case "ip": return el("span", { class: "mx-ev-ipw" }, [el("button", { type: "button", class: `mx-ip ${ipCls(d.ip_status[r.ip], reportedIps[r.ip])}`, text: r.ip, title: "Show only this visitor", onclick: () => setIp(r.ip) }),
+          d.ip_status[r.ip] ? el("span", { class: `mx-ipdot ${d.ip_status[r.ip]}`, title: d.ip_status[r.ip] === "banned" ? "Banned from the whole server" : "Trusted" }) : null,
+          reportedIps[r.ip] ? el("span", { class: "mx-ipdot reported", title: `Reported to ${(reportedIps[r.ip].to || []).join(", ")} ${ago(reportedIps[r.ip].ts)}` }) : null]);
         case "url": return el("span", { class: "mx-url", title: r.url, text: r.url });
         case "ts": return el("span", { class: "mx-time", text: t2s(r.ts, { month: "numeric", day: "numeric", year: "2-digit", hour: "numeric", minute: "2-digit", second: "2-digit" }) });
         case "size": return document.createTextNode(fmtBytes(r.size));
@@ -683,12 +699,14 @@ window.AuroraExtras = (ui) => {
         const btns = [btn("Who is this?", () => ipCard(ipF, load), "btn-primary")];
         // Context-aware: show the reverse action when already banned/trusted. Ban/Trust ask once (click again).
         if (st === "banned") btns.push(btn("Unban", run(() => API.guardUnban(ipF), `${ipF} unbanned`), "btn-ghost"));
-        else btns.push(armed("Ban", "Click again to ban", run(() => API.guardBan(ipF, "Visitors", null, "Visitors"), `${ipF} banned`), "btn-ghost"));
+        else btns.push(armed("Ban", "Click again · 24 h", run(() => API.guardBan(ipF, `${rows.length} requests on ${d.site.label || "this site"}`, 86400, "Visitors"), `${ipF} banned for 24 hours`), "btn-danger"));
         if (st === "trusted") btns.push(btn("Untrust", run(() => API.guardUntrust(ipF), `${ipF} no longer trusted`), "btn-ghost"));
         else btns.push(armed("Trust", "Click again to trust", run(() => API.guardTrust(ipF, "Visitors"), `${ipF} trusted`), "btn-ghost"));
-        btns.push(btn("Report", () => reportIp(ipF, load), "btn-ghost"));
+        const rep = reportedIps[ipF];
+        btns.push(btn(rep ? "Report again" : "Report", () => reportIp(ipF, load), "btn-ghost"));
         btns.push(btn("Show everyone", () => setIp(""), "btn-ghost"));
-        ipBar.append(el("div", { class: "mx-ipbar" }, [icon("users", 16), el("span", {}, ["Only ", el("b", { text: ipF }), ` · ${num(rows.length)} requests`]), st ? pill(st, st === "trusted" ? "good" : "bad") : null,
+        ipBar.append(el("div", { class: "mx-ipbar" }, [icon("users", 16), el("span", {}, ["Only ", el("b", { class: ipCls(st, rep), text: ipF }), ` · ${num(rows.length)} requests`]), st ? pill(st, st === "trusted" ? "good" : "bad") : null,
+          rep ? el("span", { class: "pill warn", title: `Reported to ${(rep.to || []).join(", ")} on ${new Date(rep.ts * 1000).toLocaleString()}`, text: `reported ${ago(rep.ts)}` }) : null,
           el("span", { class: "grow" }), ...btns]));
       }
       const shown = VCOLS.filter((c) => cols.has(c.k));
@@ -1154,6 +1172,6 @@ window.AuroraExtras = (ui) => {
   return {
     modsec: viewWaf, ddnshosts: viewDdnsHosts, visitors: viewVisitors, errors: viewErrors, bandwidth: viewBandwidth,
     rawaccess: viewRawAccess, analytics: viewAnalytics, resources: viewResources,
-    _ui: { el, pageHead, empty, call, armed, seg, tile, card, chart, rank, donut, sortableTable, ipCard, t2s, num, dur, LS, niceMax },
+    _ui: { el, pageHead, empty, call, armed, seg, tile, card, chart, rank, donut, sortableTable, ipCard, reportIp, t2s, num, dur, LS, niceMax },
   };
 };

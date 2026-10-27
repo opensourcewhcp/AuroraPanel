@@ -763,7 +763,7 @@ window.AuroraMail = (ui) => {
       table.innerHTML = "";
       if (!data.events.length) { table.append(empty("pin", "No email in this period", "Send a test email and it shows up here within seconds.", btn("Send a test email", () => testMail(), "btn-primary"))); return; }
       if (!rows.length) { table.append(empty("search", "Nothing matches", "Clear the search or pick another tile.")); return; }
-      table.append(el("div", { class: "em-trk-list" }, rows.slice(0, 500).map((x) => {
+      table.append(...[el("div", { class: "em-trk-list" }, rows.slice(0, 500).map((x) => {
         const s = ST[x.status] || [x.status, "dim", "?"], e = x._e;
         return el("button", { type: "button", class: `em-trk-row ${s[1]}`, onclick: () => detail(x) }, [
           el("span", { class: `em-ev ${s[1]}`, title: s[0], text: s[2] }),
@@ -773,7 +773,7 @@ window.AuroraMail = (ui) => {
           x.spam != null ? el("span", { class: `em-trk-spam ${x.spam >= 5 ? "hi" : ""}`, title: "Spam score (5 or more = likely spam)", text: x.spam.toFixed(1) }) : el("span"),
           el("span", { class: "muted em-nowrap em-trk-time", text: new Date(x.time).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) }),
         ]);
-      })), rows.length > 500 ? el("p", { class: "muted", style: "padding:10px 16px", text: `Showing the newest 500 of ${rows.length}.` }) : null);
+      })), rows.length > 500 ? el("p", { class: "muted", style: "padding:10px 16px", text: `Showing the newest 500 of ${rows.length}.` }) : null].filter(Boolean));
     }
     function detail(x) {
       const s = ST[x.status] || [x.status, "dim"], e = x._e;

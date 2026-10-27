@@ -26,10 +26,10 @@ from starlette.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
 
 from . import (
-    abuse, alerts, slackbot, hosting, antivirus, audit, authz, autossl, dockerapps, isolate, migrate, panelusers, servers, wptoolkit, schedules, tasks, updates, apache, apitokens, appmanager, auth, backups, config, cron,
+    abuse, alerts, slackbot, antivirus, audit, authz, autossl, dockerapps, isolate, migrate, panelusers, servers, wptoolkit, schedules, tasks, updates, apache, apitokens, appmanager, auth, backups, config, cron,
     apps, databases, diskusage, dnszones, domains, fail2ban, netmgr, sites, files, firewall, ipblocker, jobs,
     metrics, modsecurity, netdiag, waf, packages, perms, phpmgr, services, sslcerts, sshaccess,
-    sysapps, system_info, terminal, twofa, users,
+    secreport, shadow, sysapps, system_info, terminal, twofa, users,
     appconfig, ddns, ddnshosts, ftp, gitvc, guard, images, ipsec, webaccess, netmon, openvpn, mail, panelhttps, phpsettings, portcheck, requires, version, vpncommon, wireguard,
 )
 
@@ -273,7 +273,6 @@ def api_me(user: str = auth.CurrentUser):
     full = me["role"] == "admin"  # limited users don't need to know the server's Linux account
     return {"username": user, "role": me["role"], "sites": me.get("sites", []), "owner": bool(me.get("owner")),
             "must_change_password": bool(me.get("owner")) and config.must_change_password(),
-            "account": me.get("account", ""),
             "system_user": owner.pw_name if owner and full else None,
             "home": owner.pw_dir if owner and full else None}
 
@@ -553,7 +552,9 @@ def api_apps2_password(user: str = auth.CurrentUser):
 
 @app.get("/api/system/processes")
 def api_processes(sort_by: str = "cpu", limit: int = 40, user: str = auth.CurrentUser):
-    return {"processes": system_info.processes(limit=limit, sort_by=sort_by)}
+    import psutil
+    procs, counts = system_info.processes_full(limit=max(1, min(2000, limit)), sort_by=sort_by)
+    return {"processes": procs, "counts": counts, "cpus": psutil.cpu_count() or 1, "mem_total": psutil.virtual_memory().total}
 
 
 @app.post("/api/system/processes/{pid}/kill")
@@ -1138,17 +1139,18 @@ def api_2fa_disable(body: OtpBody, user: str = auth.CurrentUser):
 class PanelHttpsBody(BaseModel):
     source: str = "self"
     regenerate: bool = False
+    host: str = ""  # what the browser's address bar shows: goes into a regenerated self-signed certificate
 
 
 @app.get("/api/panel/https")
 def api_panel_https(request: Request, user: str = auth.CurrentUser):
-    return panelhttps.status(request.url.scheme)
+    return panelhttps.status(request.url.scheme, request.url.hostname or "")
 
 
 @app.post("/api/panel/https/enable")
-def api_panel_https_enable(body: PanelHttpsBody, user: str = auth.CurrentUser):
+def api_panel_https_enable(body: PanelHttpsBody, request: Request, user: str = auth.CurrentUser):
     try:
-        return panelhttps.enable(body.source, body.regenerate)
+        return panelhttps.enable(body.source, body.regenerate, body.host or request.url.hostname or "")
     except panelhttps.PanelHttpsError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1164,6 +1166,138 @@ def api_panel_https_confirm(request: Request, user: str = auth.CurrentUser):
 @app.post("/api/panel/https/disable")
 def api_panel_https_disable(user: str = auth.CurrentUser):
     return panelhttps.disable()
+
+
+@app.post("/api/panel/https/harden")
+def api_panel_https_harden(user: str = auth.CurrentUser):
+    try:
+        return panelhttps.harden()
+    except panelhttps.PanelHttpsError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/panel/https/redirect")
+def api_panel_https_redirect(user: str = auth.CurrentUser):
+    try:
+        return panelhttps.harden()
+    except panelhttps.PanelHttpsError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# Web server hardening (Apache: version hidden, security headers, modern TLS) — see appconfig.py
+@app.get("/api/apache/hardening")
+def api_apache_hardening(user: str = auth.CurrentUser):
+    return appconfig.apache_hardening()
+
+
+@app.post("/api/apache/harden")
+def api_apache_harden(user: str = auth.CurrentUser):
+    try:
+        return appconfig.apache_harden()
+    except appconfig.AppConfigError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# Shadow Copies: version history of a site's files (see shadow.py)
+class ShadowBody(BaseModel):
+    id: str
+    on: bool | None = None
+    path: str = ""
+    ts: int | None = None
+    keep_days: int | None = None
+    max_versions: int | None = None
+    max_mb: int | None = None
+    max_file_mb: int | None = None
+
+
+def _shadow_call(fn, *a, **kw):
+    try:
+        return fn(*a, **kw)
+    except shadow.ShadowError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/shadow")
+def api_shadow(user: str = auth.CurrentUser):
+    return shadow.overview()
+
+
+@app.get("/api/shadow/files")
+def api_shadow_files(id: str, q: str = "", only: str = "", user: str = auth.CurrentUser):
+    return _shadow_call(shadow.files, id, q, only)
+
+
+@app.post("/api/shadow/enable")
+def api_shadow_enable(body: ShadowBody, user: str = auth.CurrentUser):
+    return _shadow_call(shadow.set_enabled, body.id, bool(body.on))
+
+
+@app.post("/api/shadow/settings")
+def api_shadow_settings(body: ShadowBody, user: str = auth.CurrentUser):
+    return _shadow_call(shadow.set_settings, body.id, body.keep_days, body.max_versions, body.max_mb, body.max_file_mb)
+
+
+@app.post("/api/shadow/snapshot")
+def api_shadow_snapshot(body: ShadowBody, user: str = auth.CurrentUser):
+    if body.id == "*":
+        return {"ok": True, "sites": shadow.snapshot_all()}
+    return _shadow_call(shadow.snapshot, body.id)
+
+
+@app.post("/api/shadow/restore")
+def api_shadow_restore(body: ShadowBody, user: str = auth.CurrentUser):
+    return _shadow_call(shadow.restore, body.id, body.path, int(body.ts or 0))
+
+
+@app.post("/api/shadow/forget")
+def api_shadow_forget(body: ShadowBody, user: str = auth.CurrentUser):
+    return _shadow_call(shadow.forget, body.id, body.path, body.ts)
+
+
+@app.get("/api/shadow/download")
+def api_shadow_download(id: str, path: str, ts: int, user: str = auth.CurrentUser):
+    p = _shadow_call(shadow.version_path, id, path, ts)
+    return FileResponse(str(p), filename=Path(path).name, media_type="application/octet-stream")
+
+
+# Security Report: scan what this server owns, score it (see secreport.py)
+class SecReportBody(BaseModel):
+    targets: list[str] = []
+
+
+@app.get("/api/secreport")
+def api_secreport(user: str = auth.CurrentUser):
+    return secreport.overview()
+
+
+@app.post("/api/secreport/run")
+def api_secreport_run(body: SecReportBody, user: str = auth.CurrentUser):
+    try:
+        return secreport.run(body.targets or None)
+    except secreport.SecReportError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class SecFixBody(BaseModel):
+    action: str
+
+
+@app.post("/api/secreport/fix")
+def api_secreport_fix(body: SecFixBody, user: str = auth.CurrentUser):
+    """One-click fix offered next to a finding (see secreport.fix)."""
+    try:
+        return secreport.fix(body.action)
+    except secreport.SecReportError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/secreport/html")
+def api_secreport_html(user: str = auth.CurrentUser):
+    rep = secreport.last()
+    if not rep:
+        raise HTTPException(status_code=404, detail="Run a report first")
+    name = f"security-report-{rep['hostname']}-{time.strftime('%Y-%m-%d', time.localtime(rep['ts']))}.html"
+    return HTMLResponse(secreport.report_html(rep), headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 # --------------------------------------------------------------------------- #
@@ -1182,6 +1316,7 @@ class MimeAddBody(BaseModel):
 
 
 class ErrorSetBody(BaseModel):
+    create: str = ""  # file name to write a starter page to, if missing
     dir: str = ""
     code: str
     document: str
@@ -1249,7 +1384,7 @@ def api_apache_errors(dir: str = "", user: str = auth.CurrentUser):
 @app.post("/api/apache/errors")
 def api_apache_set_error(body: ErrorSetBody, user: str = auth.CurrentUser):
     try:
-        return apache.set_error(body.dir, body.code, body.document)
+        return apache.set_error(body.dir, body.code, body.document, body.create)
     except apache.ApacheError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -1270,6 +1405,28 @@ def api_apache_add_handler(body: HandlerAddBody, user: str = auth.CurrentUser):
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@app.get("/api/apache/options")
+def api_apache_options(dir: str = "", user: str = auth.CurrentUser):
+    try:
+        return apache.list_options(dir)
+    except apache.ApacheError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+class ApacheOptionBody(BaseModel):
+    dir: str = ""
+    name: str
+    on: bool
+
+
+@app.post("/api/apache/options")
+def api_apache_set_option(body: ApacheOptionBody, user: str = auth.CurrentUser):
+    try:
+        return apache.set_option(body.dir, body.name, body.on)
+    except apache.ApacheError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @app.post("/api/apache/remove")
 def api_apache_remove(body: ApacheRemoveBody, user: str = auth.CurrentUser):
     try:
@@ -1282,9 +1439,41 @@ def api_apache_remove(body: ApacheRemoveBody, user: str = auth.CurrentUser):
 # Advanced: Track DNS
 # --------------------------------------------------------------------------- #
 @app.get("/api/dns/records")
-def api_dns_records(host: str, user: str = auth.CurrentUser):
+def api_dns_records(host: str, types: str = "", server: str = "", user: str = auth.CurrentUser):
     try:
-        return netdiag.dns_records(host)
+        return netdiag.dns_records(host, [t for t in types.upper().split(",") if t], server)
+    except netdiag.NetDiagError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/dns/propagation")
+def api_dns_propagation(host: str, type: str = "A", user: str = auth.CurrentUser):
+    try:
+        return netdiag.propagation(host, type.upper())
+    except netdiag.NetDiagError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/dns/mailcheck")
+def api_dns_mailcheck(domain: str, user: str = auth.CurrentUser):
+    try:
+        return netdiag.mail_check(domain)
+    except netdiag.NetDiagError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/dns/nscheck")
+def api_dns_nscheck(domain: str, user: str = auth.CurrentUser):
+    try:
+        return netdiag.ns_check(domain)
+    except netdiag.NetDiagError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/dns/whois")
+def api_dns_whois(host: str, user: str = auth.CurrentUser):
+    try:
+        return netdiag.whois(host)
     except netdiag.NetDiagError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -1730,6 +1919,16 @@ def api_site_system_ssl(body: SystemSslBody, user: str = auth.CurrentUser):
     return _site_call(sites.set_system_ssl, body.conf, body.ssl, body.cert, body.key, body.chain)
 
 
+class SystemAdoptBody(BaseModel):
+    conf: str
+
+
+@app.post("/api/sites/system-adopt")
+def api_site_system_adopt(body: SystemAdoptBody, user: str = auth.CurrentUser):
+    """A hand-copied sites-enabled/<conf> becomes the normal sites-available file + link (contents kept, both backed up)."""
+    return _site_call(sites.adopt_system_conf, body.conf)
+
+
 class FolderIndexesBody(BaseModel):
     name: str
     on: bool
@@ -1768,6 +1967,8 @@ def api_site_remove(body: DomainNameBody, user: str = auth.CurrentUser):
 class FolderSiteBody(BaseModel):
     name: str
     path: str = ""
+    delete_files: bool = False  # remove: also delete the folder
+    backup: bool = False        # remove: back the folder up (Backups) before deleting it
 
 
 @app.get("/api/sites/folders")
@@ -1782,7 +1983,7 @@ def api_folder_site_create(body: FolderSiteBody, user: str = auth.CurrentUser):
 
 @app.post("/api/sites/folders/remove")
 def api_folder_site_remove(body: FolderSiteBody, user: str = auth.CurrentUser):
-    return _site_call(sites.remove_folder_site, body.name)
+    return _site_call(sites.remove_folder_site, body.name, body.delete_files, body.backup)
 
 
 @app.post("/api/sites/certbot/install")
@@ -2444,11 +2645,6 @@ def api_mail_accounts(user: str = auth.CurrentUser):
 
 @app.post("/api/mail/accounts/create")
 def api_mail_account_create(body: MailAccountBody, user: str = auth.CurrentUser):
-    if (authz.current() or {}).get("role") in ("site", "reseller"):  # an admin may go over a plan on purpose
-        try:
-            hosting.check_mailbox_limit(body.address)
-        except hosting.HostingError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
     return _mail(mail.create_account, body.address, body.password or "", body.quota_mb if body.quota_mb is not None else 1024, body.name or "")
 
 
@@ -3066,6 +3262,12 @@ def api_fail2ban_logs(lines: int = 200, user: str = auth.CurrentUser):
     return {"text": fail2ban.logs(max(20, min(lines, 2000)))}
 
 
+@app.get("/api/fail2ban/events")
+def api_fail2ban_events(limit: int = 400, user: str = auth.CurrentUser):
+    """Recent failed attempts, bans and unbans from fail2ban's log."""
+    return fail2ban.events(max(20, min(limit, 2000)))
+
+
 # --------------------------------------------------------------------------- #
 # Files section: Images, Web Disk, Directory Privacy, Git, Backup Wizard, Inodes
 # --------------------------------------------------------------------------- #
@@ -3528,112 +3730,6 @@ def api_alerts_test(user: str = auth.CurrentUser):
     return _alert_call(alerts.test)
 
 
-# Hosting: WHM-style plans, accounts (separate Linux users), resellers (see hosting.py)
-def _host_call(fn):
-    try:
-        return fn()
-    except (hosting.HostingError, panelusers.PanelUserError, databases.DatabaseError, isolate.IsolateError, sites.SiteError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-
-@app.get("/api/hosting")
-def api_hosting(user: str = auth.CurrentUser):
-    return _host_call(hosting.listing)
-
-
-@app.post("/api/hosting/plans/save")
-async def api_hosting_plan_save(request: Request, user: str = auth.CurrentUser):
-    b = await request.json()
-    return _host_call(lambda: hosting.save_plan(str(b.get("name", "")), b.get("limits") or {}, str(b.get("original") or "")))
-
-
-@app.post("/api/hosting/plans/delete")
-async def api_hosting_plan_delete(request: Request, user: str = auth.CurrentUser):
-    b = await request.json()
-    return _host_call(lambda: hosting.delete_plan(str(b.get("name", ""))))
-
-
-@app.post("/api/hosting/resellers/save")
-async def api_hosting_reseller(request: Request, user: str = auth.CurrentUser):
-    b = await request.json()
-    return _host_call(lambda: hosting.set_reseller(str(b.get("username", "")), list(b.get("plans") or []), int(b.get("max_accounts") or 0)))
-
-
-@app.post("/api/hosting/accounts/create")
-async def api_hosting_create(request: Request, user: str = auth.CurrentUser):
-    b = await request.json()
-    def go():
-        # Checks first (fast, clear errors), then the slow part as a job with a progress log.
-        hosting.validate_new(str(b.get("user", "")), str(b.get("domain", "")), str(b.get("plan", "")), str(b.get("password", "")), str(b.get("email", "")))
-        return {"job": hosting.create_account_job(str(b.get("user", "")), str(b.get("domain", "")), str(b.get("plan", "")),
-                                                  str(b.get("password", "")), str(b.get("email", ""))).id}
-    return _host_call(go)
-
-
-@app.post("/api/hosting/accounts/domain")
-async def api_hosting_domain(request: Request, user: str = auth.CurrentUser):
-    b = await request.json()
-    return _host_call(lambda: hosting.add_domain(str(b.get("user", "")), str(b.get("domain", ""))))
-
-
-@app.post("/api/hosting/accounts/plan")
-async def api_hosting_plan(request: Request, user: str = auth.CurrentUser):
-    b = await request.json()
-    return _host_call(lambda: hosting.change_plan(str(b.get("user", "")), str(b.get("plan", ""))))
-
-
-@app.post("/api/hosting/accounts/password")
-async def api_hosting_password(request: Request, user: str = auth.CurrentUser):
-    b = await request.json()
-    return _host_call(lambda: hosting.set_password(str(b.get("user", "")), str(b.get("password", ""))))
-
-
-@app.post("/api/hosting/accounts/suspend")
-async def api_hosting_suspend(request: Request, user: str = auth.CurrentUser):
-    b = await request.json()
-    return _host_call(lambda: hosting.suspend(str(b.get("user", "")), bool(b.get("on")), str(b.get("reason", ""))))
-
-
-@app.post("/api/hosting/accounts/terminate")
-async def api_hosting_terminate(request: Request, user: str = auth.CurrentUser):
-    b = await request.json()
-    return _host_call(lambda: hosting.terminate(str(b.get("user", "")), bool(b.get("keep_files")), bool(b.get("delete_mail", True)),
-                                                bool(b.get("delete_databases", True))))
-
-
-@app.post("/api/hosting/measure")
-def api_hosting_measure(user: str = auth.CurrentUser):
-    return _host_call(hosting.measure)
-
-
-@app.get("/api/hosting/me")
-def api_hosting_me(user: str = auth.CurrentUser):
-    return _host_call(hosting.me)
-
-
-@app.get("/api/hosting/me/db")
-def api_hosting_me_db(user: str = auth.CurrentUser):
-    return _host_call(lambda: hosting.my_databases())
-
-
-@app.post("/api/hosting/me/db/create")
-async def api_hosting_me_db_create(request: Request, user: str = auth.CurrentUser):
-    b = await request.json()
-    return _host_call(lambda: hosting.db_create(str(b.get("name", "")), str(b.get("password", ""))))
-
-
-@app.post("/api/hosting/me/db/drop")
-async def api_hosting_me_db_drop(request: Request, user: str = auth.CurrentUser):
-    b = await request.json()
-    return _host_call(lambda: hosting.db_drop(hosting._me(), str(b.get("name", ""))))
-
-
-@app.post("/api/hosting/me/db/password")
-async def api_hosting_me_db_pw(request: Request, user: str = auth.CurrentUser):
-    b = await request.json()
-    return _host_call(lambda: hosting.db_password(str(b.get("name", "")), str(b.get("password", ""))))
-
-
 # Slack app: alerts with buttons, attack reports, /aurora (see slackbot.py)
 def _slack_call(fn):
     try:
@@ -4007,6 +4103,143 @@ def api_dk_remove(name: str, data: bool = False, user: str = auth.CurrentUser):
     return _dk_call(lambda: dockerapps.remove(name, data))
 
 
+# ---- every container (panel apps, custom containers, ones made elsewhere) ----
+class DockerSettingsBody(BaseModel):
+    ports: list | None = None
+    path: str | None = None
+    keep_alive: bool | None = None
+    env: list | None = None
+    restart: str = ""
+    mem_limit: str = ""
+    cpus: str = ""
+    access: str = ""
+    domain: str = ""
+
+
+class DockerCustomBody(BaseModel):
+    name: str
+    image: str
+    title: str = ""
+    uid: str = ""
+    access: str = "lan"
+    domain: str = ""
+    restart: str = "unless-stopped"
+    ports: list = []
+    volumes: list = []
+    env: list = []
+    devices: list = []
+    command: str = ""
+    mem_limit: str = ""
+    cpus: str = ""
+    host_network: bool = False
+    privileged: bool = False
+    https_only: bool = False
+    note: str = ""
+    path: str = ""
+    keep_alive: bool = False
+
+
+class DockerExecBody(BaseModel):
+    cmd: str
+    user: str = ""
+    workdir: str = ""
+
+
+class DockerImageBody(BaseModel):
+    image: str
+
+
+def _dk_admin(user: str) -> None:
+    me = panelusers.get(user) if not user.startswith("token:") else None
+    if not me or me.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="A shell inside a container is for administrators")
+
+
+@app.get("/api/docker/catalog")
+def api_dk_catalog(user: str = auth.CurrentUser):
+    return dockerapps.catalog()
+
+
+@app.get("/api/docker/overview")
+def api_dk_overview(user: str = auth.CurrentUser):
+    me = panelusers.get(user) if not user.startswith("token:") else None
+    return {**dockerapps.overview(), "lan_ip": dockerapps._lan_ip(), "arch": dockerapps.arch(), "admin": bool(me and me.get("role") == "admin")}
+
+
+@app.post("/api/docker/memcgroup")
+def api_dk_memcgroup(user: str = auth.CurrentUser):
+    return _dk_call(dockerapps.enable_mem_cgroup)
+
+
+@app.get("/api/docker/containers")
+def api_dk_containers(user: str = auth.CurrentUser):
+    return dockerapps.containers()
+
+
+@app.post("/api/docker/custom")
+def api_dk_custom(body: DockerCustomBody, user: str = auth.CurrentUser):
+    return _dk_call(lambda: dockerapps.create_custom(body.model_dump()))
+
+
+@app.get("/api/docker/containers/{ref}")
+def api_dk_inspect(ref: str, user: str = auth.CurrentUser):
+    return _dk_call(lambda: dockerapps.inspect(ref))
+
+
+@app.post("/api/docker/containers/{ref}/action/{action}")
+def api_dk_container_action(ref: str, action: str, user: str = auth.CurrentUser):
+    return _dk_call(lambda: dockerapps.container_action(ref, action))
+
+
+@app.get("/api/docker/containers/{ref}/logs")
+def api_dk_container_logs(ref: str, lines: int = 400, user: str = auth.CurrentUser):
+    return _dk_call(lambda: dockerapps.container_logs(ref, lines))
+
+
+@app.get("/api/docker/containers/{ref}/top")
+def api_dk_container_top(ref: str, user: str = auth.CurrentUser):
+    return _dk_call(lambda: dockerapps.container_top(ref))
+
+
+@app.post("/api/docker/containers/{ref}/exec")
+def api_dk_container_exec(ref: str, body: DockerExecBody, user: str = auth.CurrentUser):
+    _dk_admin(user)
+    return _dk_call(lambda: dockerapps.exec_cmd(ref, body.cmd, body.user, body.workdir))
+
+
+@app.put("/api/docker/containers/{ref}/settings")
+def api_dk_container_settings(ref: str, body: DockerSettingsBody, user: str = auth.CurrentUser):
+    data = body.model_dump()
+    if ref in dockerapps._state()["apps"]:
+        return _dk_call(lambda: dockerapps.update_settings(ref, data))
+    return _dk_call(lambda: dockerapps.recreate_external(ref, data))
+
+
+@app.delete("/api/docker/containers/{ref}")
+def api_dk_container_remove(ref: str, data: bool = False, user: str = auth.CurrentUser):
+    return _dk_call(lambda: dockerapps.container_remove(ref, data))
+
+
+@app.get("/api/docker/images")
+def api_dk_images(user: str = auth.CurrentUser):
+    return dockerapps.images()
+
+
+@app.post("/api/docker/images/pull")
+def api_dk_image_pull(body: DockerImageBody, user: str = auth.CurrentUser):
+    return _dk_call(lambda: dockerapps.image_pull(body.image))
+
+
+@app.get("/api/docker/images/{ref:path}")
+def api_dk_image_inspect(ref: str, user: str = auth.CurrentUser):
+    return _dk_call(lambda: dockerapps.image_inspect(ref))
+
+
+@app.delete("/api/docker/images/{ref:path}")
+def api_dk_image_remove(ref: str, user: str = auth.CurrentUser):
+    return _dk_call(lambda: dockerapps.image_remove(ref))
+
+
 # --------------------------------------------------------------------------- #
 # Site isolation (PHP-FPM pool + Linux user per site)
 # --------------------------------------------------------------------------- #
@@ -4268,6 +4501,32 @@ async def api_terminal(websocket: WebSocket):
     await websocket.accept()
     try:
         await terminal.run(websocket)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+@app.websocket("/api/docker/containers/{ref}/shell")
+async def api_docker_shell(websocket: WebSocket, ref: str, user: str = ""):
+    """A shell inside a container (docker exec), as root unless ?user= says otherwise. Administrators only."""
+    token = websocket.cookies.get(auth.COOKIE_NAME)
+    name = auth.verify_token(token) if token else None
+    me = panelusers.get(name) if name else None
+    if not me or me["role"] != "admin":
+        await websocket.close(code=1008)
+        return
+    try:
+        argv = dockerapps.shell_argv(ref, user)
+    except dockerapps.DockerError:
+        await websocket.close(code=1008)
+        return
+    await websocket.accept()
+    try:
+        await terminal.run(websocket, argv)
     except WebSocketDisconnect:
         pass
     finally:

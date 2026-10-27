@@ -41,7 +41,7 @@ def _have(*pkgs: str) -> bool:
 
 
 def _apache_php() -> bool:
-    """PHP for Apache: mod_php, or PHP-FPM (what Site Isolation and hosting accounts use)."""
+    """PHP for Apache: mod_php, or PHP-FPM (what Site Isolation uses)."""
     return any(Path("/etc/apache2/mods-enabled").glob("php*.load")) or bool(list(Path("/usr/sbin").glob("php-fpm*")))
 
 
@@ -162,7 +162,7 @@ def _post_certbot() -> list[str]:
 
 COMPONENTS: dict[str, dict] = {
     # Websites, domains, redirects, SSL and stats need only the web server; PHP only for PHP pages
-    # (App Installer, WordPress, PHP settings, hosting accounts) — a static site never needs it.
+    # (App Installer, WordPress, PHP settings) — a static site never needs it.
     "apache": {
         "name": "Apache", "icon": "globe", "size": "about 10 MB",
         "desc": "The web server your websites, domains, redirects and certificates run on.",
@@ -299,8 +299,10 @@ COMPONENTS: dict[str, dict] = {
     },
     "docker": {
         "name": "Docker", "icon": "packages", "size": "about 120 MB",
-        "desc": "Runs self-hosted apps in containers: Home Assistant, Jellyfin, Vaultwarden, Pi-hole, Uptime Kuma and more, one click each.",
-        "pkgs": lambda: ["docker.io", "docker-compose-v2" if _candidate("docker-compose-v2") else "docker-compose"],
+        "desc": "Runs apps in containers: one-click Home Assistant, Jellyfin, Vaultwarden, Pi-hole and more, plus your own custom containers from any image — with ports, settings and a root shell for each.",
+        # Debian 13 (and Pi OS trixie) split the client out of docker.io into docker-cli; Ubuntu keeps it inside.
+        "pkgs": lambda: ["docker.io"] + (["docker-cli"] if _candidate("docker-cli") else [])
+                        + ["docker-compose-v2" if _candidate("docker-compose-v2") else "docker-compose"],
         "check": lambda: _docker().installed(),
         "post": lambda: _docker().post_install(),
     },

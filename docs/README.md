@@ -7,7 +7,6 @@ also explains itself, so start there; come here for the details.
 | ----- | -------------- |
 | [Getting started](getting-started.md) | Installing, first login, HTTPS, installing as an app, updating |
 | [Users and roles](users-and-roles.md) | Administrators, viewers and website managers; what each can see and do |
-| [Hosting accounts](hosting.md) | WHM-style plans, separate hosting accounts, resellers |
 | [Backups](backups.md) | One-off backups, the Backup Wizard and scheduled, encrypted, off-site backups |
 | [Alerts and the activity log](alerts-and-activity.md) | Email / Telegram / webhook alerts, what is watched, the audit trail |
 | [Slack](slack.md) | Alerts and attack reports with Ban / Trust / Allow buttons, the /aurora command |

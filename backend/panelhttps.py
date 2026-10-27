@@ -10,7 +10,9 @@ browser confirms within REVERT_SECONDS that it reached the panel over HTTPS.
 """
 from __future__ import annotations
 
+import ipaddress
 import os
+import re
 import shutil
 import socket
 import ssl
@@ -22,10 +24,17 @@ import psutil
 
 SERVICE = "aurorapanel"
 DROPIN = Path(f"/etc/systemd/system/{SERVICE}.service.d/aurora-https.conf")
+UNIT = Path(f"/etc/systemd/system/{SERVICE}.service")
 TLS_DIR = Path("/var/lib/aurora/panel-tls")
 SELF_CRT = TLS_DIR / "panel.crt"
 SELF_KEY = TLS_DIR / "panel.key"
 PENDING = TLS_DIR / "pending"
+NAMES = TLS_DIR / "names"  # extra host names / IPs the owner opened the panel with (kept across regenerations)
+# TLS 1.2 cipher suites for the panel (Mozilla "intermediate"); TLS 1.3 suites are always on. Nothing with
+# CBC or SHA-1, which scanners flag as weak. TLS 1.0/1.1 can't use any of these, so they are off too.
+CIPHERS = ("ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:"
+           "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305")
+_HOST = re.compile(r"^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$")
 LE_LIVE = Path("/etc/letsencrypt/live")
 LE_HOOK = Path(f"/etc/letsencrypt/renewal-hooks/deploy/{SERVICE}-restart")
 REVERT_UNIT = f"{SERVICE}-https-revert"
@@ -51,12 +60,87 @@ def _port() -> int:
 
 
 def _local_ips() -> list[str]:
+    """IPv4 addresses people reach this machine by — not Docker / bridge / VPN-tunnel internals."""
     ips = []
-    for addrs in psutil.net_if_addrs().values():
+    for name, addrs in psutil.net_if_addrs().items():
+        if name.startswith(("docker", "br-", "veth", "virbr", "lo", "wg", "tun", "tap", "ipsec")):
+            continue
         for a in addrs:
             if a.family == socket.AF_INET and not a.address.startswith(("127.", "169.254.")):
                 ips.append(a.address)
     return sorted(set(ips))
+
+
+def clean_name(name: str) -> str:
+    """A host name or IP address as it may appear in a certificate, else ''."""
+    n = (name or "").strip().lower().strip("[]")
+    if not n or n == "localhost":
+        return ""
+    try:
+        return str(ipaddress.ip_address(n))
+    except ValueError:
+        return n if _HOST.match(n) else ""
+
+
+def covers(names: list[str], host: str) -> bool:
+    """Does a certificate valid for `names` (DNS and IP entries) cover `host`? Wildcards match one label."""
+    h = clean_name(host)
+    if not h:
+        return False
+    for n in names:
+        n = (n or "").strip().lower()
+        if n == h:
+            return True
+        if n.startswith("*.") and "." in h and h.split(".", 1)[1] == n[2:]:
+            return True
+    return False
+
+
+def _saved_names() -> list[str]:
+    try:
+        return [x for x in (clean_name(l) for l in NAMES.read_text(encoding="utf-8").splitlines()) if x]
+    except OSError:
+        return []
+
+
+def remember_name(host: str) -> None:
+    """Keep a name the owner reaches the panel by, so every regenerated certificate includes it."""
+    h = clean_name(host)
+    if not h or h in _local_ips() or h in ("127.0.0.1", socket.gethostname().lower()):
+        return
+    names = _saved_names()
+    if h not in names:
+        TLS_DIR.mkdir(parents=True, exist_ok=True)
+        NAMES.write_text("\n".join(names + [h]) + "\n", encoding="utf-8")
+
+
+def _known_names() -> list[str]:
+    """Everything this server is likely to be opened as: host name, .local, FQDN, mail host, Dynamic DNS
+    names, the public IP, every local IP, and names the owner used before."""
+    host = socket.gethostname().lower()
+    out = [host, f"{host}.local", "localhost", "127.0.0.1"] + _local_ips()
+    for fn in (lambda: socket.getfqdn(),
+               lambda: __import__("backend.mail", fromlist=["hostname"]).hostname(),
+               lambda: __import__("backend.mail", fromlist=["_public_ip"])._public_ip(),
+               lambda: __import__("backend.ddns", fromlist=["hostname"]).hostname()):
+        try:
+            v = fn()
+            if v:
+                out.append(str(v))
+        except Exception:
+            pass
+    try:
+        from . import ddnshosts
+        out += [f"{h['host']}.{h['domain']}" for h in ddnshosts._load().get("hosts", []) if h.get("host") and h.get("domain")]
+    except Exception:
+        pass
+    out += _saved_names()
+    seen, names = set(), []
+    for n in out:
+        c = clean_name(n) or ("localhost" if n == "localhost" else "")
+        if c and c not in seen:
+            seen.add(c); names.append(c)
+    return names
 
 
 def _dropin_paths() -> tuple[str, str] | None:
@@ -102,32 +186,44 @@ def _pending_deadline() -> float | None:
     return deadline if deadline > time.time() else None
 
 
-def status(scheme: str) -> dict:
+def status(scheme: str, host: str = "") -> dict:
     paths = _dropin_paths()
     deadline = _pending_deadline()
     source = None
     if paths:
         source = "self" if paths[0] == str(SELF_CRT) else Path(paths[0]).parent.name
+    cert = _cert_info(paths[0]) if paths else None
     return {
         "enabled": bool(paths),
         "active": scheme == "https",
         "source": source,
-        "cert": _cert_info(paths[0]) if paths else None,
+        "cert": cert,
         "pending": bool(deadline),
         "revert_in": int(deadline - time.time()) if deadline else 0,
         "letsencrypt": _le_certs(),
         "port": _port(),
         "hostname": socket.gethostname(),
         "ips": _local_ips(),
+        # the name in the browser's address bar, and whether the certificate is valid for it
+        "host": clean_name(host),
+        "covers": covers(cert["names"], host) if cert else None,
+        "hardened": bool(paths) and "UVICORN_SSL_CIPHERS" in (DROPIN.read_text(encoding="utf-8") if DROPIN.is_file() else ""),
+        # plain http://…:port answers with a redirect to https (backend.serve is the entry point)
+        "redirect": bool(paths) and os.environ.get("AURORA_FRONT") == "1",
     }
 
 
 def _make_self_signed():
-    """A self-signed cert valid for this Pi's hostname, hostname.local and every
-    local IPv4 address (825 days: the longest Apple devices accept)."""
+    """A self-signed cert valid for every name this server is opened as (see _known_names):
+    825 days, the longest Apple devices accept."""
     host = socket.gethostname()
-    names = [f"DNS:{host}", f"DNS:{host}.local", "DNS:localhost", "IP:127.0.0.1"]
-    names += [f"IP:{ip}" for ip in _local_ips()]
+    names = []
+    for n in _known_names():
+        try:
+            ipaddress.ip_address(n)
+            names.append(f"IP:{n}")
+        except ValueError:
+            names.append(f"DNS:{n}")
     TLS_DIR.mkdir(parents=True, exist_ok=True)
     os.chmod(TLS_DIR, 0o700)
     tmp_key, tmp_crt = TLS_DIR / "panel.key.new", TLS_DIR / "panel.crt.new"
@@ -181,6 +277,19 @@ def _restart_soon():
         raise PanelHttpsError(r.stderr.strip() or "Couldn't schedule the panel restart")
 
 
+def _exec_override() -> str:
+    """Drop-in lines that swap `-m uvicorn` for `-m backend.serve` (uvicorn plus the http → https
+    redirect on the same port) on units written before that entry point existed. New units from
+    install.sh already use it, so nothing is added for them."""
+    try:
+        for line in UNIT.read_text(encoding="utf-8").splitlines():
+            if line.startswith("ExecStart=") and " -m uvicorn " in line:
+                return "ExecStart=\n" + line.replace(" -m uvicorn ", " -m backend.serve ", 1) + "\n"
+    except OSError:
+        pass
+    return ""
+
+
 def _write_dropin(crt: str, key: str):
     DROPIN.parent.mkdir(parents=True, exist_ok=True)
     DROPIN.write_text(
@@ -188,7 +297,11 @@ def _write_dropin(crt: str, key: str):
         f"# 'systemctl daemon-reload && systemctl restart {SERVICE}' to go back to HTTP.\n"
         "[Service]\n"
         f"Environment=UVICORN_SSL_CERTFILE={crt}\n"
-        f"Environment=UVICORN_SSL_KEYFILE={key}\n", encoding="utf-8")
+        f"Environment=UVICORN_SSL_KEYFILE={key}\n"
+        # modern ciphers only (no CBC / SHA-1 suites), and no "server: uvicorn" header
+        f"Environment=UVICORN_SSL_CIPHERS={CIPHERS}\n"
+        "Environment=UVICORN_SERVER_HEADER=false\n"
+        + _exec_override(), encoding="utf-8")
 
 
 def install_default():
@@ -200,10 +313,13 @@ def install_default():
     _write_dropin(str(SELF_CRT), str(SELF_KEY))
 
 
-def enable(source: str, regenerate: bool = False) -> dict:
+def enable(source: str, regenerate: bool = False, host: str = "") -> dict:
+    """host: the name in the browser's address bar — a regenerated self-signed certificate includes it."""
     if not shutil.which("systemd-run"):
         raise PanelHttpsError("systemd is required")
     if source == "self":
+        if host:
+            remember_name(host)
         if regenerate or not (SELF_CRT.is_file() and SELF_KEY.is_file()):
             _make_self_signed()
         crt, key = str(SELF_CRT), str(SELF_KEY)
@@ -232,6 +348,19 @@ def enable(source: str, regenerate: bool = False) -> dict:
     _restart_soon()
     return {"ok": True, "revert_in": REVERT_SECONDS,
             "host": source if source != "self" else None, "port": _port()}
+
+
+def harden() -> dict:
+    """Rewrite the drop-in for the certificate in use with strong ciphers only, no Server header and
+    the http → https redirect, then restart. No revert timer: this can't lock anyone out (every browser since 2014 speaks TLS 1.2
+    with these suites)."""
+    paths = _dropin_paths()
+    if not paths:
+        raise PanelHttpsError("Turn on Panel HTTPS first")
+    _write_dropin(*paths)
+    _run(["systemctl", "daemon-reload"])
+    _restart_soon()
+    return {"ok": True}
 
 
 def confirm(scheme: str) -> dict:

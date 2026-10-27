@@ -405,11 +405,6 @@ def collect(s: dict) -> dict[str, tuple]:
                                     "System → Updates installs them in one click (or turn on automatic security updates).")
         except Exception:
             pass
-    try:
-        from . import hosting
-        found.update(hosting.over_limits())
-    except Exception:
-        pass
     if r["reboot"] and Path("/var/run/reboot-required").exists():
         pk = ""
         try:

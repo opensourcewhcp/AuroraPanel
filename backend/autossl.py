@@ -223,7 +223,7 @@ def status() -> dict:
         pass
     return {"enabled": s["enabled"], "agreed": s["agreed"], "email": s["email"] or contact, "exclude": s["exclude"],
             "certbot": bool(shutil.which("certbot", path=PATH)), "last_run": s.get("last_run"), "results": s["results"],
-            "plan": _plan(), "wildcards": s["wildcards"], "zones": zones, "certs": _trusted_certs(),
+            "plan": _plan(), "wildcards": s["wildcards"], "zones": zones, "certs": _trusted_certs(), "port80": s.get("port80"),
             "running": _run(["systemctl", "is-active", "aurora-autossl"], 10).stdout.strip() in ("active", "activating")}
 
 
@@ -243,6 +243,20 @@ def _certbot_base(s: dict) -> list[str]:
     return base
 
 
+def _port80() -> dict:
+    """Can the internet reach TCP 80 here? Let's Encrypt proves a name by fetching http://<name>/.well-known/…,
+    so a shut port means every request would fail (and count against its limits). portcheck asks from outside
+    and knows the router steps."""
+    try:
+        from . import portcheck
+        r = portcheck.check(80, "tcp")
+        return {"ts": int(time.time()), "verdict": r["verdict"], "steps": r.get("steps") or [], "router_url": r.get("router_url"),
+                "public_ip": r.get("public_ip"), "lan_ip": r.get("lan_ip"), "evidence": r.get("evidence"),
+                "upnp": bool((r.get("upnp") or {}).get("available"))}
+    except Exception as e:
+        return {"ts": int(time.time()), "verdict": "unverified", "steps": [], "error": str(e)[:200]}
+
+
 def run(force: bool = False, only: str = "") -> dict:
     """One AutoSSL pass. Returns what happened per site."""
     from . import sites
@@ -251,6 +265,7 @@ def run(force: bool = False, only: str = "") -> dict:
         return {"skipped": "AutoSSL is off"}
     now = time.time()
     out = {}
+    gate = None  # the port-80 check, done once per pass and only when something needs a certificate
     for item in _plan():
         if only and item["site"] != only:
             continue
@@ -261,6 +276,15 @@ def run(force: bool = False, only: str = "") -> dict:
         prev = s["results"].get(key, {})
         if not force and prev.get("ok") is False and now - prev.get("ts", 0) < RETRY_HOURS * 3600:
             continue  # failed recently: Let's Encrypt limits failures, try again tomorrow
+        if gate is None:
+            gate = s["port80"] = _port80()
+            _save(s)
+        if gate["verdict"] == "closed":
+            steps = " ".join(gate["steps"]) or "Forward TCP port 80 on your router to this Pi."
+            out[key] = s["results"][key] = {"ts": int(now), "ok": False, "port80": True, "names": need,
+                                           "error": f"Not requested: port 80 isn't reachable from the internet (checked from outside just now), so Let's Encrypt couldn't verify the name. {steps}"}
+            _save(s)
+            continue
         # everything of this site that points here goes on one certificate
         names = [r["name"] for r in item["names"] if r["state"] in ("ok", "missing", "renew")]
         if item.get("mail"):

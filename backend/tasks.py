@@ -63,6 +63,14 @@ def run() -> dict:
                     done[f"backup:{pid}"] = str(e)
         except Exception as e:
             done["backups"] = f"error: {e}"
+        if _every(s, "shadow", 600):
+            try:  # Shadow Copies: new versions of changed files for every site that has it on
+                from . import shadow
+                r = shadow.snapshot_all()
+                if r:
+                    done["shadow"] = r
+            except Exception as e:
+                done["shadow"] = f"error: {e}"
         if _every(s, "updates", 6 * 3600):
             try:
                 from . import updates
@@ -70,14 +78,6 @@ def run() -> dict:
                 done["updates"] = "refreshed"
             except Exception as e:
                 done["updates"] = f"error: {e}"
-        if _every(s, "hosting", 3600):
-            try:  # hosting accounts' disk and bandwidth, for their usage bars and over-limit alerts
-                from . import hosting
-                if hosting.load()["accounts"]:
-                    hosting.measure()
-                    done["hosting"] = "measured"
-            except Exception as e:
-                done["hosting"] = f"error: {e}"
         hour = datetime.now().hour
         if hour == 3 and _every(s, "autossl", 20 * 3600):
             try:

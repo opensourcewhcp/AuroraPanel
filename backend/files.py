@@ -229,11 +229,22 @@ def read_text(rel_path: str) -> dict:
     return {"path": _rel(target), "content": content}
 
 
+def _shadow(p: Path) -> None:
+    """Shadow Copies: keep what's there now before it changes (no-op unless the site has it on)."""
+    try:
+        from . import shadow
+        shadow.before_change(p)
+    except Exception:
+        pass
+
+
 def write_text(rel_path: str, content: str) -> dict:
     target = _resolve(rel_path)
     if target.is_dir():
         raise FileError("Cannot write to a directory")
     new = not target.exists()
+    if not new:
+        _shadow(target)
     target.write_text(content, encoding="utf-8")
     if new:
         _give_to_site(target)
@@ -248,6 +259,7 @@ def delete(rel_path: str, permanent: bool = False) -> dict:
         raise FileError("Refusing to delete the recycle bin")
     if not target.exists() and not target.is_symlink():
         raise FileError("No such path")
+    _shadow(target)
     if permanent:
         if target.is_dir() and not target.is_symlink():
             shutil.rmtree(target)
@@ -435,6 +447,8 @@ def save_upload(rel_dir: str, filename: str, data: bytes) -> dict:
     if not safe_name or safe_name in (".", ".."):
         raise FileError("Invalid filename")
     dest = _resolve(str(Path(_rel(parent)) / safe_name))
+    if dest.exists():
+        _shadow(dest)
     with open(dest, "wb") as fh:
         fh.write(data)
     _give_to_site(dest)

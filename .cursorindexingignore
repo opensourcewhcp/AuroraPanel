@@ -1,0 +1,13 @@
+# Keep codebase indexing fast — do not index local venv or caches.
+.venv/
+__pycache__/
+*.pyc
+aurorahomepage/
+deploy/
+*.tmp
+aurora_config.json
+frontend/vendor/
+
+# .gitignore hides .claude/ from git; still allow @-search and codebase index.
+!.claude/
+!.claude/**

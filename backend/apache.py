@@ -172,12 +172,44 @@ def list_errors(rel: str) -> dict:
     return {"entries": entries}
 
 
-def set_error(rel: str, code: str, document: str) -> dict:
+ERROR_TITLES = {"400": "Bad request", "401": "Sign-in required", "403": "Forbidden", "404": "Page not found", "429": "Too many requests",
+                "500": "Something went wrong on the server", "502": "Bad gateway", "503": "Down for maintenance — back soon"}
+_ERROR_HTML = """<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{code} — {title}</title>
+<style>body{{margin:0;min-height:100vh;display:grid;place-items:center;font-family:system-ui,sans-serif;background:#0b0a0a;color:#f4efeb}}
+main{{text-align:center;padding:32px}}h1{{font-size:72px;margin:0;color:#ff8a33;letter-spacing:-.03em}}p{{color:#b9b1aa;font-size:18px}}a{{color:#ff8a33}}</style>
+<main><h1>{code}</h1><p>{title}</p><p><a href="/">Back to the start page</a></p></main></html>
+"""
+
+
+def create_error_page(rel: str, code: str, filename: str) -> dict:
+    """A simple styled page for an ErrorDocument, written into the folder unless it already exists."""
+    _no_newline(filename)
+    name = (filename or "").strip().lstrip("/")
+    if not name or ".." in name.split("/") or not re.match(r"^[\w./-]+$", name):
+        raise ApacheError("Invalid page name")
+    base = _resolve_dir(rel)
+    target = (base / name).resolve()
+    if base != target and base not in target.parents:
+        raise ApacheError("The page must live inside this folder")
+    if target.exists():
+        return {"ok": True, "created": False, "path": str(target)}
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(_ERROR_HTML.format(code=code, title=ERROR_TITLES.get(str(code), "Error")), encoding="utf-8")
+    except OSError as exc:
+        raise ApacheError(f"Cannot write {target}: {exc}") from exc
+    return {"ok": True, "created": True, "path": str(target)}
+
+
+def set_error(rel: str, code: str, document: str, create: str = "") -> dict:
     _no_newline(code, document)
     if not re.match(r"^\d{3}$", str(code)):
         raise ApacheError("Invalid HTTP status code")
     if not document.strip():
         raise ApacheError("Document/URL required")
+    if create:
+        create_error_page(rel, code, create)
     lines = [ln for ln in _read_lines(rel)
              if not re.match(rf"(?i)^\s*ErrorDocument\s+{code}\s+", ln)]
     lines.append(f"ErrorDocument {code} {document.strip()}")
@@ -193,14 +225,49 @@ def list_handlers(rel: str) -> dict:
 
 
 def add_handler(rel: str, handler: str, extensions: str) -> dict:
+    """AddHandler for the given extensions — or, with none, SetHandler for every file in the folder."""
     _no_newline(handler, extensions)
     if not re.match(r"^[\w.+/-]+$", handler or ""):
         raise ApacheError("Invalid handler name")
     exts = " ".join(e.lstrip(".") for e in (extensions or "").split())
-    if not re.match(r"^[\w. -]+$", exts):
-        raise ApacheError("Invalid extensions")
     lines = _read_lines(rel)
-    lines.append(f"AddHandler {handler} {exts}")
+    if not exts:
+        lines = [ln for ln in lines if not re.match(r"(?i)^\s*SetHandler\s", ln)]
+        lines.append(f"SetHandler {handler}")
+    else:
+        if not re.match(r"^[\w. -]+$", exts):
+            raise ApacheError("Invalid extensions")
+        lines.append(f"AddHandler {handler} {exts}")
+    _write_lines(rel, lines)
+    return {"ok": True}
+
+
+# Per-folder Options a .htaccess may switch (one line each, the way the panel writes them).
+OPTION_NAMES = ("ExecCGI", "Includes", "IncludesNOEXEC", "FollowSymLinks", "SymLinksIfOwnerMatch", "MultiViews")
+
+
+def list_options(rel: str) -> dict:
+    out: dict[str, bool | None] = {n: None for n in OPTION_NAMES}
+    for ln in _read_lines(rel):
+        m = re.match(r"(?i)^\s*Options\s+(.+?)\s*$", ln)
+        if not m:
+            continue
+        for tok in m.group(1).split():
+            name = tok.lstrip("+-")
+            for n in OPTION_NAMES:
+                if n.lower() == name.lower():
+                    out[n] = not tok.startswith("-")
+    return {"options": out}
+
+
+def set_option(rel: str, name: str, on: bool) -> dict:
+    """Turn one Option on (Options +Name) or back to the server default (line removed)."""
+    real = next((n for n in OPTION_NAMES if n.lower() == (name or "").strip().lower()), None)
+    if not real:
+        raise ApacheError("Unknown option")
+    lines = [ln for ln in _read_lines(rel) if not re.match(rf"(?i)^\s*Options\s+[+-]?{real}\s*$", ln)]
+    if on:
+        lines.append(f"Options +{real}")
     _write_lines(rel, lines)
     return {"ok": True}
 

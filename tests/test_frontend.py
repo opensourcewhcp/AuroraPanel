@@ -28,3 +28,14 @@ def test_api_js_routes_exist():
             used.add(path)
     missing = sorted(p for p in used if not any(rx.match(p) for rx in routes))
     assert not missing, f"api.js calls routes the backend doesn't have: {missing}"
+
+
+def test_login_401_detail_reaches_the_login_form():
+    """2FA sign-in: /api/login answers 401 "otp_required" to ask for the code. The fetch wrapper must pass
+    that detail on as the error message (1.0.4–1.1.7 replaced every 401 with "Not authenticated", so the
+    code field never appeared and owners with 2FA were locked out)."""
+    api = (Path(__file__).resolve().parent.parent / "frontend" / "js" / "api.js").read_text(encoding="utf-8")
+    block = api[api.index("res.status === 401"):api.index("err.status = 401")]
+    assert "detail" in block and "res.json()" in block
+    login = (Path(__file__).resolve().parent.parent / "frontend" / "js" / "app.js").read_text(encoding="utf-8")
+    assert 'err.message === "otp_required"' in login

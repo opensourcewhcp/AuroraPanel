@@ -327,6 +327,12 @@ if [ -f "$DROPIN" ]; then
     rm -f "$DROPIN"
     rmdir "$(dirname "$DROPIN")" 2>/dev/null || true
     warn "Panel HTTPS was on but its certificate is missing or broken — switched back to HTTP (turn it on again under Security → Panel HTTPS)"
+  elif ! grep -q '^Environment=UVICORN_SSL_CIPHERS=' "$DROPIN"; then
+    # 1.1.9+: strong TLS 1.2 ciphers only and no "server:" header (what a regenerated drop-in gets)
+    CIPHERS="$(.venv/bin/python -c 'from backend import panelhttps; print(panelhttps.CIPHERS)' 2>/dev/null || true)"
+    if [ -n "$CIPHERS" ]; then
+      printf 'Environment=UVICORN_SSL_CIPHERS=%s\nEnvironment=UVICORN_SERVER_HEADER=false\n' "$CIPHERS" >> "$DROPIN"
+    fi
   fi
 fi
 # Dynamic DNS runs this folder's Python; point it here if the panel was installed elsewhere before.
@@ -372,7 +378,7 @@ Environment=HOST=0.0.0.0
 Environment=PORT=${PORT}
 ${PANEL_USER:+Environment=AURORA_USER=${PANEL_USER}}
 ${EXTRA_ENV}
-ExecStart=${APP_DIR}/.venv/bin/python -m uvicorn backend.app:app --host 0.0.0.0 --port ${PORT}
+ExecStart=${APP_DIR}/.venv/bin/python -m backend.serve backend.app:app --host 0.0.0.0 --port ${PORT}
 Restart=on-failure
 RestartSec=3
 

@@ -1,0 +1,23 @@
+{
+  "search.exclude": {
+    "**/.venv": true,
+    "**/__pycache__": true,
+    "**/node_modules": true,
+    "**/frontend/vendor": true,
+    "**/aurorahomepage": true
+  },
+  "files.watcherExclude": {
+    "**/.venv/**": true,
+    "**/__pycache__/**": true,
+    "**/frontend/vendor/**": true
+  },
+  "files.exclude": {
+    "**/.venv": true,
+    "**/__pycache__": true,
+    "**/aurorahomepage": true,
+    "**/deploy": true,
+    "**/frontend/vendor": true,
+    "**/aurora_config.json": true
+  },
+  "explorer.excludeGitIgnore": false
+}

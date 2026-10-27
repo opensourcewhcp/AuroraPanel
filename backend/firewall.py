@@ -44,15 +44,46 @@ def status() -> dict:
     return {"available": True, "active": active, "rules": rules}
 
 
+# UDP services worth keeping reachable when the firewall goes up (DNS, IPsec, OpenVPN, WireGuard).
+_UDP_KNOWN = {53, 500, 4500, 1194, 51820}
+
+
+def listening_ports() -> list[str]:
+    """What this server offers to the network right now: TCP ports listening on every address, plus the
+    well-known UDP services. Allowing these before `ufw enable` means switching the firewall on blocks
+    nothing that works today — only what nobody opened on purpose — and the list can be trimmed afterwards."""
+    try:
+        import psutil
+    except ImportError:
+        return []
+    out: set[str] = set()
+    try:
+        conns = psutil.net_connections(kind="inet")
+    except (psutil.Error, OSError):
+        return []
+    for c in conns:
+        if not c.laddr or c.laddr.ip not in ("0.0.0.0", "::", ""):
+            continue  # bound to one address (loopback, a VPN, docker's bridge): not public
+        if c.type == 1 and c.status == "LISTEN":  # SOCK_STREAM
+            out.add(f"{c.laddr.port}/tcp")
+        elif c.type == 2 and c.laddr.port in _UDP_KNOWN:  # SOCK_DGRAM
+            out.add(f"{c.laddr.port}/udp")
+    return sorted(out, key=lambda x: (int(x.split("/")[0]), x))
+
+
 def set_enabled(enabled: bool) -> dict:
     ufw = _ufw()
     preallowed = []
     if enabled:
         # CRITICAL: allow SSH + the panel port BEFORE enabling, so a one-click
-        # enable can never lock the admin out of the box (or the panel).
-        for port in _safe_ports():
-            subprocess.run([ufw, "allow", f"{port}/tcp"], capture_output=True, text=True, timeout=15)
-            preallowed.append(f"{port}/tcp")
+        # enable can never lock the admin out of the box (or the panel) — and
+        # everything that already serves the network, so no site, mail or VPN
+        # goes dark the moment the firewall comes up. Trim the rules afterwards.
+        wanted = [f"{port}/tcp" for port in _safe_ports()]
+        wanted += [p for p in listening_ports() if p not in wanted]
+        for rule in wanted:
+            subprocess.run([ufw, "allow", rule], capture_output=True, text=True, timeout=15)
+            preallowed.append(rule)
     # --force avoids the interactive y/n prompt on enable.
     argv = [ufw, "--force", "enable"] if enabled else [ufw, "disable"]
     out = subprocess.run(argv, capture_output=True, text=True, timeout=15)

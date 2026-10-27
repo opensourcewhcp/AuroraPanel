@@ -7,7 +7,7 @@ databases, fail2ban, FTP, backups, Git and more — all from your browser.
 Built with **FastAPI** (Python) + a dependency-free **vanilla JS** frontend, so
 there's nothing to compile on the Pi.
 
-**Version: v1.1.6** (`1.1.6`) — a free, open-source hobby project (MIT License). Website: https://aurora51.com
+**Version: v1.1.11** (`1.1.11`) — a free, open-source hobby project (MIT License). Website: https://aurora51.com
 
 To update, open **Preferences → About & Updates → Check for updates** in the panel (it only contacts
 aurora51.com when you click), or re-download the zip, unzip it over your install and re-run `sudo bash install.sh`.
@@ -21,7 +21,6 @@ Guides for the bigger features are in [`docs/`](docs/README.md).
 
 | Section | What it does |
 | ------- | ------------ |
-| **Hosting** | WHM-style **plans** (disk, bandwidth, websites, databases, mailboxes, PHP workers and memory), **accounts** that are each a separate Linux user with their own home, website(s), panel login, mailboxes and `user_` databases, PHP running as the account within its plan, suspend / unsuspend / terminate, hourly usage with over-limit alerts, and **resellers** who manage only their own accounts. See [docs/hosting.md](docs/hosting.md). |
 | **System** | Live dashboard (CPU, per-core load, temperature, throttling, memory, disks, uptime), `systemd` services grouped by state, processes, `apt` packages, `ufw` firewall (with lock-out protection), Linux users. **Updates** (security fixes marked, one-click install, automatic security or full updates with an optional restart time). **Alerts** by email, Telegram, webhook (Discord, Slack, ntfy) or the **Slack app** — alerts and per-attacker reports with Ban / Trust / Allow-rule buttons that can always be undone, plus `/aurora` (works behind a home router; [docs/slack.md](docs/slack.md)) for disk, memory, temperature, power, stopped services, expiring certificates, attack bursts, failed logins, failed backups, waiting updates and restarts. **Servers**: every AuroraPanel you run on one page, with pinned certificates and ban-everywhere. **Panel Users** with roles: administrator, read-only viewer and website manager. |
 | **Network** | VPN servers — **WireGuard** (QR codes), **OpenVPN** (per-user logins: certificate + password, password only or certificate only) and **IPsec/IKEv2** (native on iPhone/Mac/Windows) — each with an end-to-end self-test. Dynamic DNS (DuckDNS, No-IP, Dynu, deSEC, Cloudflare, FreeDNS, custom). Port Checker (outside probe, double-NAT/CGNAT detection, router instructions, UPnP). Network Monitor (who tried to connect). IP Blocker & Trust (ban IPs/ranges with expiry, trusted list). Fail2ban. Interfaces & Wi-Fi with confirm-or-revert. |
 | **Databases** | MariaDB and PostgreSQL databases and users, wizards, phpMyAdmin link. |

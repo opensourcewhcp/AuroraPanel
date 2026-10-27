@@ -511,6 +511,18 @@ window.AuroraOps = (ui) => {
         el("div", { class: "mx-hero-act" }, [d.enabled ? btn(d.running ? "Running…" : "Run now", (e) => { e.target.disabled = true; call(() => API.autosslRun(""), "AutoSSL started", () => setTimeout(load, 2000)); }, "btn-primary") : null,
           d.enabled ? btn("Turn off", () => call(() => API.autosslSave({ enabled: false }), "AutoSSL off", (r) => { d = r; draw(); }), "btn-ghost") : null]),
       ]));
+      const p80 = d.port80;
+      if (d.enabled && p80 && p80.verdict === "closed") body.append(el("div", { class: "card", style: "border-color:rgba(255,179,71,.35)" }, [
+        el("h3", { text: "Port 80 is closed from the internet" }),
+        el("p", { class: "muted", text: `Let's Encrypt proves you own a name by fetching http://<name>/.well-known/… from the internet, so TCP port 80 must reach this Pi${p80.lan_ip ? ` (${p80.lan_ip})` : ""}. Checked from outside ${ago(p80.ts)}: closed${p80.public_ip ? ` at ${p80.public_ip}` : ""}. Nothing was requested — a failed try only counts against Let's Encrypt's limits.` }),
+        p80.steps && p80.steps.length ? el("ol", { style: "margin:0 0 12px 18px;padding:0;display:grid;gap:6px;font-size:13px" }, p80.steps.map((t) => el("li", { text: t }))) : null,
+        el("div", { class: "toolbar", style: "margin:0" }, [
+          btn("Check port 80 again", (e) => { e.target.disabled = true; call(() => API.portCheck(80, "tcp"), null, (r) => { toast(r.verdict === "open" ? "Port 80 is open from the internet — click Run now" : r.verdict === "closed" ? "Still closed from the internet" : "Couldn't verify from outside — try Run now", r.verdict === "open" ? "good" : "bad"); e.target.disabled = false; if (r.verdict === "open") { d.port80 = { ...p80, verdict: "open", ts: Date.now() / 1000 }; draw(); } }).then((ok) => { if (!ok) e.target.disabled = false; }); }, "btn-primary"),
+          p80.upnp ? btn("Open it with UPnP", () => call(() => API.upnpOpen(80, "tcp"), "Asked the router to forward port 80 — check again in a few seconds"), "btn-ghost") : null,
+          p80.router_url ? el("a", { class: "btn btn-ghost", href: p80.router_url, target: "_blank", rel: "noopener", text: "Open the router" }) : null,
+          btn("Port check tool", () => navigate("portcheck"), "btn-ghost"),
+        ].filter(Boolean)),
+      ]));
       if (!d.enabled) body.append(card("Turn on AutoSSL", [
         field("Email for expiry notices", email, "Let's Encrypt writes here only if a certificate is about to expire and renewal keeps failing."),
         el("label", { class: "dm-check" }, [agree, el("span", {}, ["I agree to the ", el("a", { href: "https://letsencrypt.org/repository/", target: "_blank", rel: "noopener noreferrer", text: "Let's Encrypt Subscriber Agreement" })])]),
@@ -581,97 +593,529 @@ window.AuroraOps = (ui) => {
   }
 
   // ======================================================================
-  //  Applications → Docker Apps
+  //  Applications → Docker (every container: the catalog apps, custom ones, and any made elsewhere)
   // ======================================================================
   const APP_HUE = (s) => { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
+  // Original artwork: a cargo boat carrying containers (no third-party logo).
+  const DK_ART = `<svg viewBox="0 0 260 150" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <defs><linearGradient id="dkh" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2aa7e8"/><stop offset="1" stop-color="#0e5c95"/></linearGradient>
+    <linearGradient id="dkw1" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#7fd0ff"/><stop offset="1" stop-color="#3fb3f0"/></linearGradient></defs>
+    <g stroke="#0a3a5c" stroke-width="2.2" stroke-linejoin="round">
+      <g><rect x="80" y="34" width="34" height="20" rx="2" fill="#ff8a3d"/><path d="M89 34v20M97 34v20M105 34v20" stroke-opacity=".45"/></g>
+      <g><rect x="62" y="56" width="34" height="20" rx="2" fill="#4fc3f7"/><path d="M71 56v20M79 56v20M87 56v20" stroke-opacity=".45"/></g>
+      <g><rect x="98" y="56" width="34" height="20" rx="2" fill="#ffd166"/><path d="M107 56v20M115 56v20M123 56v20" stroke-opacity=".45"/></g>
+      <g><rect x="134" y="56" width="34" height="20" rx="2" fill="#8be28f"/><path d="M143 56v20M151 56v20M159 56v20" stroke-opacity=".45"/></g>
+      <g><rect x="44" y="78" width="34" height="20" rx="2" fill="#ffd166"/><path d="M53 78v20M61 78v20M69 78v20" stroke-opacity=".45"/></g>
+      <g><rect x="80" y="78" width="34" height="20" rx="2" fill="#8be28f"/><path d="M89 78v20M97 78v20M105 78v20" stroke-opacity=".45"/></g>
+      <g><rect x="116" y="78" width="34" height="20" rx="2" fill="#ff8a3d"/><path d="M125 78v20M133 78v20M141 78v20" stroke-opacity=".45"/></g>
+      <g><rect x="152" y="78" width="34" height="20" rx="2" fill="#4fc3f7"/><path d="M161 78v20M169 78v20M177 78v20" stroke-opacity=".45"/></g>
+      <rect x="192" y="66" width="26" height="32" rx="3" fill="#e9f6ff"/><rect x="198" y="72" width="14" height="8" rx="1.5" fill="#2aa7e8"/><path d="M205 56v10" stroke-width="3"/>
+      <path d="M26 98h206l-12 24a10 10 0 0 1-9 6H54a10 10 0 0 1-9-6z" fill="url(#dkh)"/>
+      <path d="M38 110h184" stroke="#e9f6ff" stroke-opacity=".55" stroke-width="3"/>
+    </g>
+    <path d="M22 44c4-4 8-4 12 0M40 36c4-4 8-4 12 0" fill="none" stroke="#e9f6ff" stroke-width="2" stroke-linecap="round" opacity=".8"/>
+    <path d="M0 126c20-10 40-10 60 0s40 10 60 0 40-10 60 0 40 10 60 0 20-6 20-6v30H0z" fill="url(#dkw1)" opacity=".9"/>
+    <path d="M0 136c20-8 40-8 60 0s40 8 60 0 40-8 60 0 40 8 60 0 20-5 20-5v19H0z" fill="#1d8fd1"/>
+  </svg>`;
+  const DK_WAVES = `<svg viewBox="0 0 1200 60" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path d="M0 30c60-20 120-20 180 0s120 20 180 0 120-20 180 0 120 20 180 0 120-20 180 0 120 20 180 0 120-20 120-20v50H0z" fill="#3fb3f0" opacity=".35"/>
+    <path d="M0 42c60-16 120-16 180 0s120 16 180 0 120-16 180 0 120 16 180 0 120-16 180 0 120 16 180 0 120-16 120-16v34H0z" fill="#1d8fd1" opacity=".55"/>
+  </svg>`;
+  const DK_TONE = { running: "good", paused: "warn", restarting: "warn", exited: "dim", created: "dim", dead: "bad", missing: "bad" };
+  const dkIB = (ico, label, onclick, cls, disabled) => el("button", { type: "button", class: `dk-ib ${cls || ""}`, title: label, "aria-label": label, onclick, disabled: disabled ? "" : null }, icon(ico, 15));
+  const dkPort = (p) => el("span", { class: `dk-port ${p.bind === "127.0.0.1" ? "lo" : ""}`, title: p.bind === "127.0.0.1" ? "Only reachable from this server (behind the web address)" : p.bind ? `Listens on ${p.bind}` : "Listens on every address",
+    text: `${p.host}→${p.container}/${p.proto}` });
+  const dkRows = (kind) => { const box = el("div", { class: "dk-rows" }); box.dataset.kind = kind; return box; };
+  const dkMem = (s) => { const m = /^([\d.]+)\s*([KMG]i?B)/.exec(s || ""); return m && !/^0B/.test(s) ? `${m[1]} ${m[2].replace("iB", "B")}` : ""; };
+
   async function viewDockerApps(root) {
-    root.append(pageHead("Docker Apps", "Self-hosted apps in one click — smart home, media server, password manager, ad blocking, monitoring. Each runs in its own container, kept apart from the rest of the server, and is reached at its own web address with HTTPS."));
+    const hero = el("div", { class: "dk-hero" });
     const prog = progressBox();
     const log = el("pre", { class: "log op-log", hidden: "" });
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
-    root.append(prog.node, log, body);
-    let d, cat = "All";
-    async function load() {
-      try { d = await API.docker(); } catch (e) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); return; }
-      draw();
+    root.append(hero, prog.node, log, body);
+    let cat = "All", filt = LS.get("dk.filt", "all"), catalogData = null, ov = null, cs = [], imgs = [];
+    const hostOf = (u) => u.replace("{host}", location.hostname);
+    const connHost = (bind) => (!bind || bind === "0.0.0.0" || bind === "::") ? location.hostname : bind;
+    // For a service with no web page (a broker, a database…), show where to point clients instead of a dead blank.
+    const connAddrs = (c) => {
+      if (c.url) return [];
+      const seen = new Set(), out = [];
+      (c.ports || []).forEach((p) => {
+        if (p.bind === "127.0.0.1" || !p.host) return;  // loopback = behind the web address, not for clients
+        const a = `${connHost(p.bind)}:${p.host}`;
+        if (!seen.has(a)) { seen.add(a); out.push({ addr: a, proto: p.proto }); }
+      });
+      return out;
+    };
+
+    function drawHero() {
+      hero.innerHTML = "";
+      const running = ov ? ov.containers_running || 0 : 0;
+      hero.append(
+        el("div", { class: "dk-hero-art", html: DK_ART, raw: true }),
+        el("div", { class: "dk-hero-txt" }, [
+          el("h2", { text: "Docker" }),
+          el("p", { text: "Every container on this server in one place — the one-click apps from the catalog, your own custom containers, and anything started outside the panel. Start, pause, open a root shell, change ports and settings, or remove them." }),
+          el("div", { class: "dk-hero-act" }, [
+            btn("＋ Custom container", () => customDlg(), "btn-primary"),
+            btn("Pull an image", () => pullDlg(), ""),
+            btn("Clean up", () => call(() => API.dockerPrune(), "").then((r) => { if (r) { toast(`Freed ${r.reclaimed}`, "good"); load(true); } }), ""),
+          ]),
+        ]),
+        el("div", { class: "dk-hero-stat" }, [
+          ov && ov.running ? pill(`${running} running · Docker ${ov.version}`, "good") : ov && ov.installed ? pill("Docker is not running", "bad") : pill("Docker is not installed", "dim"),
+          el("span", { class: "dk-hero-sub", text: ov && ov.installed ? `${ov.arch} · ${ov.root || "/var/lib/docker"}` : "System Applications → Docker → Install" }),
+        ]),
+        el("div", { class: "dk-waves", html: DK_WAVES, raw: true }),
+      );
+    }
+    async function load(quiet) {
+      try {
+        const [o, c, i, k] = await Promise.all([API.dockerOverview(), API.dockerContainers(), API.dockerImages(), catalogData ? Promise.resolve(catalogData) : API.dockerCatalog()]);
+        ov = o; cs = c.containers; imgs = i.images; catalogData = k;
+      } catch (e) { if (!quiet) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); } return; }
+      drawHero(); draw();
     }
     async function watch(id, label) {
       log.hidden = false; prog.node.scrollIntoView({ block: "nearest" });
       const j = await waitJob(id, (j) => { prog.set(j); log.textContent = j.output || ""; log.scrollTop = 1e9; });
       if (j) toast(j.status === "done" ? label : "Something went wrong — see the log", j.status === "done" ? "good" : "bad");
-      load();
+      load(true);
     }
-    const host = (u) => u.replace("{host}", location.hostname);
-    function appCard(a) {
-      const up = a.state === "running";
-      const url = a.url ? host(a.url) : "";
-      return el("div", { class: "op-dapp" }, [
-        el("div", { class: "op-dapp-h" }, [el("span", { class: "op-dapp-ico", style: `--h:${APP_HUE(a.app)}`, text: a.title[0] }),
-          el("div", { class: "grow" }, [el("b", { text: a.title }), el("p", { class: "muted mx-small", text: `${a.name}${a.cpu ? ` · CPU ${a.cpu}` : ""}${a.mem && !a.mem.startsWith("0B") ? ` · ${a.mem.split("/")[0].trim()}` : ""}` })]),
-          pill(up ? "running" : a.state, up ? "good" : a.state === "missing" ? "bad" : "dim")]),
-        url ? el("a", { class: "op-dapp-url", href: url, target: "_blank", rel: "noopener", text: url.replace(/\/$/, "") + " ↗" }) : el("p", { class: "muted mx-small", text: "No web page (service only)" }),
-        a.note ? el("p", { class: "muted mx-small", text: a.note }) : null,
-        el("div", { class: "op-dapp-act" }, [
-          up ? btn("Stop", () => call(() => API.dockerCtl(a.name, "stop"), `${a.title} stopped`, load), "btn-ghost") : btn("Start", () => call(() => API.dockerCtl(a.name, "start"), `${a.title} started`, load), "btn-primary"),
-          btn("Restart", () => call(() => API.dockerCtl(a.name, "restart"), "Restarted", load), "btn-ghost"),
-          btn("Update", () => call(() => API.dockerCtl(a.name, "update"), "Updating…", (r) => watch(r.job, `${a.title} is up to date`)), "btn-ghost"),
-          btn("Logs", async () => {
-            const r = await call(() => API.dockerLogs(a.name));
-            if (!r) return;
-            openModal(`${a.title} — logs`, el("pre", { class: "mx-pre", style: "max-height:65vh", text: r.text || "(empty)" }), []); modalWide();
-            const pre = document.querySelector("#modal pre"); if (pre) pre.scrollTop = 1e9;
-          }, "btn-ghost"),
-          a.secrets.length ? btn("Passwords", async () => {
-            const rows = [];
-            for (const k of a.secrets) {
-              const r = await call(() => API.dockerSecret(a.name, k));
-              if (r) rows.push(el("div", { class: "em-copy" }, [el("span", { class: "em-copy-k", text: k }), el("code", { class: "em-mono", text: r.value }),
-                el("button", { type: "button", class: "bk-mini", text: "Copy", onclick: async () => toast(await copyText(r.value) ? "Copied" : "Copy failed", "good") })]));
-            }
-            openModal(`${a.title} — generated passwords`, el("div", { class: "em-form" }, rows), []); modalWide();
-          }, "btn-ghost") : null,
-          btn("Remove…", () => removeApp(a), "btn-ghost"),
+    const act = (c, action, label) => call(() => API.dockerAction(c.name, action), label, () => load(true));
+
+    function row(c) {
+      const tone = DK_TONE[c.state] || "dim";
+      const url = c.url ? hostOf(c.url) : "";
+      const running = c.state === "running", paused = c.state === "paused";
+      const memPct = parseFloat(c.mem_pct) || 0, cpu = parseFloat(c.cpu) || 0;
+      return el("div", { class: `dk-row ${c.state}` }, [
+        el("span", { class: "dk-ico", style: `--h:${APP_HUE(c.app || c.image)}`, text: (c.title || c.name)[0].toUpperCase() }),
+        el("div", { class: "dk-name" }, [
+          el("div", { class: "dk-name-t" }, [el("b", { text: c.title || c.name }),
+            c.origin === "app" ? pill("catalog app", "dim") : c.origin === "custom" ? pill("custom", "dim") : c.origin === "compose" ? pill(`compose · ${c.project}`, "dim") : pill("made outside the panel", "dim")]),
+          el("p", { class: "muted mx-small mx-ell", title: c.image, text: `${c.name} · ${c.image}` }),
+          url ? el("a", { class: "dk-url", href: url, target: "_blank", rel: "noopener", text: url.replace(/\/$/, "") + " ↗" }) : null,
+          ...(url ? [] : connAddrs(c).map((e) => el("button", { type: "button", class: "dk-conn", title: "Copy this address", onclick: async () => toast((await copyText(e.addr)) ? "Address copied" : "Copy failed", "good") },
+            [icon("copy", 12), el("span", {}, [el("b", { text: e.addr }), el("span", { class: "muted", text: ` · connect your ${e.proto === "udp" ? "UDP" : ""} clients here` })])]))),
+          c.tls_port ? el("p", { class: "muted mx-small", text: `HTTPS front on port ${c.tls_port} (self-signed certificate) → the app` }) : null,
+        ]),
+        el("div", { class: "dk-state" }, [pill(c.state || "?", tone), el("span", { class: "muted mx-small", text: c.status })]),
+        el("div", { class: "dk-ports" }, c.ports.length ? c.ports.map(dkPort) : [el("span", { class: "muted mx-small", text: c.state === "running" && !c.ports.length ? "no published ports" : "" })]),
+        el("div", { class: "dk-res" }, running ? [
+          el("div", { class: "dk-res-l" }, [el("span", { text: "CPU" }), el("b", { text: c.cpu || "—" })]), el("div", { class: "dk-bar" }, el("span", { style: `width:${Math.min(100, cpu)}%` })),
+          el("div", { class: "dk-res-l", title: dkMem(c.mem) ? "" : "RAM figures need memory accounting (see the note above)" }, [el("span", { text: "RAM" }), el("b", { text: dkMem(c.mem) || "—" })]), el("div", { class: "dk-bar" }, el("span", { style: `width:${Math.min(100, memPct)}%` })),
+        ] : [el("span", { class: "muted mx-small", text: paused ? "paused — frozen in memory" : "not running" })]),
+        el("div", { class: "dk-acts" }, [
+          running ? dkIB("square", "Stop", () => act(c, "stop", `${c.name} stopped`), "bad") : paused ? dkIB("play", "Resume", () => act(c, "unpause", `${c.name} resumed`), "good") : dkIB("play", "Start", () => act(c, "start", `${c.name} started`), "good"),
+          dkIB("refresh", "Restart", () => act(c, "restart", `${c.name} restarted`), "", !running && !paused),
+          dkIB("pause", "Pause", () => act(c, "pause", `${c.name} paused`), "", !running),
+          dkIB("listing", "Logs", () => detailDlg(c, "logs")),
+          ov && ov.admin ? dkIB("terminal", "Shell (root)", () => shellDlg(c), "", !running) : null,
+          dkIB("gear", "Settings & details", () => detailDlg(c, "overview")),
         ]),
       ]);
     }
     function draw() {
       body.innerHTML = "";
-      if (!d.running) body.append(el("div", { class: "mx-note" }, [icon("warning", 16), el("span", { text: "Docker is installed but not running — System Applications → Docker → Start." })]));
-      if (d.apps.length) {
-        body.append(card(`Your apps (${d.apps.length})`, [el("div", { class: "op-dapps" }, d.apps.map(appCard))], "",
-          [d.disk && d.disk.Images ? el("span", { class: "muted mx-small", text: `Images use ${d.disk.Images.size}` }) : null,
-            btn("Clean up", () => call(() => API.dockerPrune(), "").then((r) => r && toast(`Freed ${r.reclaimed}`, "good")), "btn-ghost")]));
+      if (ov && ov.installed && !ov.running) body.append(el("div", { class: "mx-note" }, [icon("warning", 16), el("span", { text: "Docker is installed but not running — System Applications → Docker → Start." })]));
+      const mc = ov && ov.mem_cgroup;
+      if (mc && !mc.active) body.append(el("div", { class: "mx-note mx-note-dim" }, [icon("info", 16), el("span", { class: "grow", text: mc.pending
+        ? "Memory accounting for containers is switched on — RAM figures and RAM limits start working after the next reboot."
+        : "This system boots without memory accounting for containers (the Raspberry Pi default), so RAM figures show — and RAM limits don't apply. One click adds cgroup_enable=memory to the boot line; it takes effect after a reboot." }),
+        mc.can_enable ? btn("Turn on", () => call(() => API.dockerMemCgroup(), "Done — reboot when convenient", () => load(true)), "btn-primary") : null]));
+      if (ov && ov.installed) {
+        const dImg = ov.disk && ov.disk.Images, dVol = ov.disk && ov.disk["Local Volumes"];
+        body.append(el("div", { class: "mx-tiles mx-tiles-6" }, [
+          tile("Running", String(ov.containers_running || 0), `of ${ov.containers || 0} containers`, "play", ov.containers_running ? "accent" : "", () => setFilt("running")),
+          tile("Paused", String(ov.containers_paused || 0), "frozen in memory", "pause", "", () => setFilt("paused")),
+          tile("Stopped", String(ov.containers_stopped || 0), "not running", "square", ov.containers_stopped ? "warnt" : "", () => setFilt("stopped")),
+          tile("Images", String(ov.images || 0), dImg ? `${dImg.size} · ${dImg.reclaimable} unused` : "", "t_layers"),
+          tile("Volumes", String(ov.volumes || 0), dVol ? `${dVol.size} on disk` : "", "disk"),
+          tile("Docker", (ov.version || "—").split("+")[0], ov.arch, "t_ship"),
+        ]));
       }
-      const cats = ["All", ...new Set(d.catalog.map((x) => x.cat))];
-      const grid = el("div", { class: "op-cat" });
-      const drawGrid = () => {
-        grid.innerHTML = "";
-        d.catalog.filter((x) => cat === "All" || x.cat === cat).forEach((x) => grid.append(el("div", { class: "op-capp" }, [
-          el("div", { class: "op-dapp-h" }, [el("span", { class: "op-dapp-ico", style: `--h:${APP_HUE(x.id)}`, text: x.name[0] }),
-            el("div", { class: "grow" }, [el("b", { text: x.name }), el("p", { class: "muted mx-small", text: `${x.cat} · ${x.ram}` })])]),
-          el("p", { class: "op-capp-d", text: x.desc }),
-          el("div", { class: "op-dapp-act" }, [btn("Install", () => installDlg(x), "btn-primary"),
-            x.home ? el("a", { class: "btn btn-sm btn-ghost", href: x.home, target: "_blank", rel: "noopener noreferrer", text: "Website ↗" }) : null]),
-        ])));
+      const shown = cs.filter((c) => filt === "all" || (filt === "running" ? c.state === "running" : filt === "paused" ? c.state === "paused" : filt === "stopped" ? !["running", "paused"].includes(c.state)
+        : filt === "panel" ? c.managed : !c.managed));
+      const segBar = seg([["all", `All (${cs.length})`], ["running", "Running"], ["paused", "Paused"], ["stopped", "Stopped"], ["panel", "Panel's"], ["other", "Other"]], filt, (v) => setFilt(v));
+      body.append(card("Containers", [
+        cs.length ? (shown.length ? el("div", { class: "dk-list" }, shown.map(row)) : empty("t_ship", "Nothing here", "No container matches this filter."))
+          : empty("t_ship", "No containers yet", ov && ov.installed ? "Install an app from the catalog below, or create a custom container from any image." : "Install Docker first (System Applications)."),
+      ], "", [segBar, btn("↻", () => load(true), "btn-ghost")]));
+      if (imgs.length) body.append(card(`Images (${imgs.length})`, [el("div", { class: "table-wrap" }, el("table", { class: "dk-table" }, [
+        el("thead", {}, el("tr", {}, ["Image", "Size", "Downloaded", "Used by", ""].map((h) => el("th", { text: h })))),
+        el("tbody", {}, imgs.map((i) => el("tr", {}, [
+          el("td", {}, [el("b", { text: i.repo }), el("span", { class: "muted", text: `:${i.tag}` })]), el("td", { text: i.size }), el("td", { class: "muted", text: i.created }),
+          el("td", {}, i.used_by.length ? i.used_by.map((n) => pill(n, "dim")) : el("span", { class: "muted", text: "nothing — safe to remove" })),
+          el("td", { class: "dk-td-act" }, el("div", { class: "dk-td-btns" }, [
+            btn("Run", () => runImage(i), "btn-primary"), btn("Details", () => imageDlg(i), "btn-ghost"),
+            btn("Update", () => call(() => API.dockerPull(i.ref), "Downloading…", (r) => watch(r.job, `${i.ref} is up to date${i.used_by.length ? " — re-create its container (Settings → Save) to use it" : ""}`)), "btn-ghost"),
+            i.used_by.length ? null : armed("Remove", "Sure?", () => call(() => API.dockerImageRemove(i.id), `${i.repo} removed`, () => load(true)), "btn-ghost"),
+          ].filter(Boolean))),
+        ]))),
+      ]))], "", [el("span", { class: "muted mx-small", text: ov && ov.disk && ov.disk.Images ? `${ov.disk.Images.reclaimable} reclaimable` : "" }), btn("Pull an image", () => pullDlg(), "btn-ghost")]));
+      if (catalogData) {
+        const cats = ["All", ...new Set(catalogData.catalog.map((x) => x.cat))];
+        const grid = el("div", { class: "op-cat" });
+        const drawGrid = () => {
+          grid.innerHTML = "";
+          catalogData.catalog.filter((x) => cat === "All" || x.cat === cat).forEach((x) => grid.append(el("div", { class: "op-capp" }, [
+            el("div", { class: "op-dapp-h" }, [el("span", { class: "op-dapp-ico", style: `--h:${APP_HUE(x.id)}`, text: x.name[0] }),
+              el("div", { class: "grow" }, [el("b", { text: x.name }), el("p", { class: "muted mx-small", text: `${x.cat} · ${x.ram}` })])]),
+            el("p", { class: "op-capp-d", text: x.desc }),
+            el("div", { class: "op-dapp-act" }, [btn("Install", () => installDlg(x), "btn-primary"),
+              x.home ? el("a", { class: "btn btn-sm btn-ghost", href: x.home, target: "_blank", rel: "noopener noreferrer", text: "Website ↗" }) : null]),
+          ])));
+        };
+        body.append(card("App catalog", [el("div", { class: "op-catbar" }, seg(cats.map((c) => [c, c]), cat, (v) => { cat = v; drawGrid(); })), grid],
+          "", [el("span", { class: "muted mx-small", text: `${catalogData.arch} · images match this processor` })]));
+        drawGrid();
+      }
+    }
+    function setFilt(v) { filt = v; LS.set("dk.filt", v); draw(); }
+
+    // ---- details + settings ------------------------------------------------------------------
+    async function detailDlg(c, tab) {
+      const info = await call(() => API.dockerInspect(c.name));
+      if (!info) return;
+      const tabs = [["overview", "Overview"], ["settings", "Settings"], ["logs", "Logs"], ["top", "Processes"], ...(ov && ov.admin ? [["exec", "Run a command"]] : [])];
+      const pane = el("div", { class: "dk-pane" });
+      const foot = el("div", { class: "dk-foot" });
+      const segBar = seg(tabs, tab || "overview", (v) => show(v));
+      const stateTone = DK_TONE[info.state] || "dim";
+      openModal(`${c.title || c.name}`, el("div", { class: "em-form" }, [
+        el("div", { class: "dk-dhead" }, [el("span", { class: "dk-ico", style: `--h:${APP_HUE(c.app || c.image)}`, text: (c.title || c.name)[0].toUpperCase() }),
+          el("div", { class: "grow" }, [el("b", { text: info.name }), el("p", { class: "muted mx-small mx-ell", text: `${info.image} · ${info.id}` })]), pill(info.state, stateTone)]),
+        segBar, pane]), [foot]);
+      modalWide();
+      function kv(pairs) { return el("div", { class: "net-kv" }, pairs.filter(Boolean).map(([k, v]) => el("div", {}, [el("span", { class: "net-k", text: k }), typeof v === "object" && v ? v : el("span", { class: "net-v", text: v == null || v === "" ? "—" : String(v) })]))); }
+      async function show(v) {
+        pane.innerHTML = ""; foot.innerHTML = "";
+        if (v === "overview") {
+          pane.append(kv([
+            ["Status", `${info.status || info.state}${info.health ? ` · health ${info.health}` : ""}${info.exit_code ? ` · last exit code ${info.exit_code}` : ""}`],
+            info.error ? ["Last error", info.error] : null,
+            ["Image", `${info.image} (${info.image_id})`],
+            ["Created", info.created ? new Date(info.created).toLocaleString() : "—"],
+            info.started && info.running ? ["Started", new Date(info.started).toLocaleString()] : null,
+            ["Restart policy", info.restart],
+            ["Network", `${info.network_mode}${Object.entries(info.networks).map(([n, x]) => ` · ${n}${x.ip ? ` ${x.ip}` : ""}`).join("")}`],
+            ["Ports", info.ports.length ? el("div", { class: "dk-ports" }, info.ports.map((p) => p.host ? dkPort(p) : el("span", { class: "dk-port lo", text: `${p.container}/${p.proto} (not published)` }))) : "none"],
+            ["Command", `${info.entrypoint ? info.entrypoint + " " : ""}${info.cmd}`.trim() || "—"],
+            info.user ? ["Runs as", info.user] : null,
+            ["Limits", `${info.memory ? fmtBytes(info.memory) + " RAM" : "no RAM limit"} · ${info.cpus ? info.cpus + " CPUs" : "all CPUs"}`],
+            ["Privileged", info.privileged ? "yes — full access to the host's devices" : "no"],
+            ["Storage", info.mounts.length ? el("div", { class: "dk-mounts" }, info.mounts.map((m) => el("div", { class: "dk-mount" }, [el("code", { text: m.source }), el("span", { class: "muted", text: " → " }), el("code", { text: m.dest }), m.rw ? null : pill("read-only", "dim")]))) : "none (everything inside is lost when the container is removed)"],
+            ["Environment", info.env.length ? el("details", { class: "dk-env" }, [el("summary", { text: `${info.env.length} variables` }), el("div", { class: "dk-envlist" }, info.env.map((e) => el("div", {}, [el("code", { text: e.key }), el("span", { text: "=" }), el("code", { class: e.secret ? "muted" : "", text: e.value })])))]) : "none"],
+            info.managed ? ["Panel", info.custom ? "custom container — its compose file lives in /opt/aurora-apps/" + info.name : `catalog app (${info.app}) — compose file in /opt/aurora-apps/${info.name}`] : ["Panel", "not created by the panel — changes re-create it from the same image, volumes and networks"],
+          ]));
+          if (c.secrets && c.secrets.length) foot.append(btn("Generated passwords", async () => {
+            const rows = [];
+            for (const k of c.secrets) {
+              const r = await call(() => API.dockerSecret(c.name, k));
+              if (r) rows.push(el("div", { class: "em-copy" }, [el("span", { class: "em-copy-k", text: k }), el("code", { class: "em-mono", text: r.value }),
+                el("button", { type: "button", class: "bk-mini", text: "Copy", onclick: async () => toast(await copyText(r.value) ? "Copied" : "Copy failed", "good") })]));
+            }
+            openModal(`${c.title} — generated passwords`, el("div", { class: "em-form" }, rows), []); modalWide();
+          }, "btn-ghost"));
+          if (info.managed && !info.custom) foot.append(btn("Update to the latest version", () => call(() => API.dockerCtl(c.name, "update"), "Updating…", (r) => { closeModal(); watch(r.job, `${c.title} is up to date`); }), "btn-ghost"));
+          foot.append(btn("Remove…", () => removeDlg(c), "btn-danger"));
+        } else if (v === "settings") settingsPane(c, info, pane, foot);
+        else if (v === "logs") {
+          const pre = el("pre", { class: "mx-pre dk-log", text: "Loading…" });
+          const lines = el("select", { class: "em-select mx-narrow" }, [200, 400, 1000, 3000].map((n) => el("option", { value: n, text: `last ${n} lines` })));
+          lines.value = "400";
+          const refresh = async () => { const r = await call(() => API.dockerCLogs(c.name, lines.value)); if (r) { pre.textContent = r.text || "(empty)"; pre.scrollTop = 1e9; } };
+          lines.onchange = refresh;
+          pane.append(el("div", { class: "mx-toolbar mx-toolbar-top" }, [lines, el("span", { class: "grow" }), btn("Refresh", refresh, "btn-ghost"), btn("Download", () => downloadText(`${c.name}.log`, pre.textContent, "text/plain"), "btn-ghost")]), pre);
+          refresh();
+        } else if (v === "top") {
+          const pre = el("pre", { class: "mx-pre dk-log", text: "Loading…" });
+          pane.append(pre);
+          const r = await call(() => API.dockerTop(c.name));
+          pre.textContent = r ? r.text : "Not running";
+        } else if (v === "exec") {
+          const cmd = el("input", { type: "text", placeholder: "e.g.  ls -la /config   or   cat /etc/os-release", class: "em-mono" });
+          const user = el("input", { type: "text", placeholder: "root", style: "max-width:140px" });
+          const out = el("pre", { class: "mx-pre dk-log", text: "" });
+          const run = async () => {
+            out.textContent = "Running…";
+            const r = await call(() => API.dockerExec(c.name, { cmd: cmd.value, user: user.value.trim() }));
+            out.textContent = r ? `${r.output || "(no output)"}\n\n[exit code ${r.code}]` : "Failed";
+          };
+          cmd.onkeydown = (e) => { if (e.key === "Enter") run(); };
+          pane.append(el("p", { class: "muted mx-small", text: "Runs one command inside the container through docker exec and shows what it printed. For an interactive session use Shell (the terminal icon)." }),
+            el("div", { class: "dk-execbar" }, [field("Command", cmd), field("As user", user, "empty = root")]), el("div", {}, btn("Run", run, "btn-primary")), out);
+          setTimeout(() => cmd.focus(), 50);
+        }
+      }
+      show(tab || "overview");
+    }
+
+    function portsEditor(list, opts) {
+      const box = el("div", { class: "dk-edit" });
+      const rows = [];
+      const head = el("div", { class: "dk-edit-r dk-edit-h" }, [el("span", { text: "In the container" }), el("span", { text: "Proto" }), el("span", { text: "On this server" }),
+        opts.bind ? el("span", { text: "Listen on" }) : el("span", { text: "Role" }), el("span")]);
+      const add = (p) => {
+        const cport = el("input", { type: "number", min: 1, max: 65535, value: p.container || "", placeholder: "8080", disabled: opts.fixed ? "" : null });
+        const proto = el("select", {}, [["tcp", "tcp"], ["udp", "udp"]].map(([v, t]) => el("option", { value: v, text: t })));
+        proto.value = p.proto || "tcp"; if (opts.fixed) proto.disabled = true;
+        const hport = el("input", { type: "number", min: 0, max: 65535, value: p.host || "", placeholder: opts.auto ? "auto" : "e.g. 10080" });
+        let extra;
+        if (opts.bind) { extra = el("select", {}, [["", "Every address (public)"], ["127.0.0.1", "This server only"], ...(ov && ov.lan_ip ? [[ov.lan_ip, `Local network (${ov.lan_ip})`]] : [])].map(([v, t]) => el("option", { value: v, text: t }))); extra.value = p.bind || ""; }
+        else { extra = el("select", {}, [["tcp", "Other"], ["web", "Web page"], ["dns", "DNS"]].map(([v, t]) => el("option", { value: v, text: t }))); extra.value = p.kind || "tcp"; if (opts.fixed) extra.disabled = true; }
+        const r = { cport, proto, hport, extra };
+        const node = el("div", { class: "dk-edit-r" }, [cport, proto, hport, extra, opts.fixed ? el("span") : el("button", { type: "button", class: "bk-mini", text: "✕", title: "Remove", onclick: () => { rows.splice(rows.indexOf(r), 1); node.remove(); } })]);
+        rows.push(r); box.insertBefore(node, addBtn);
       };
-      body.append(card("App catalog", [el("div", { class: "op-catbar" }, seg(cats.map((c) => [c, c]), cat, (v) => { cat = v; drawGrid(); })), grid],
-        "", [el("span", { class: "muted mx-small", text: `${d.arch} · images match this processor` })]));
-      drawGrid();
+      const addBtn = opts.fixed ? el("span") : el("button", { type: "button", class: "btn btn-sm btn-ghost", text: "＋ Add a port", onclick: () => add({}) });
+      box.append(head, addBtn);
+      list.forEach(add);
+      box.value = () => rows.map((r) => ({ container: Number(r.cport.value), proto: r.proto.value, host: Number(r.hport.value || 0), ...(opts.bind ? { bind: r.extra.value } : { kind: r.extra.value }) })).filter((p) => p.container);
+      return box;
     }
-    function removeApp(a) {
+    function kvEditor(list, placeholderK, placeholderV) {
+      const box = el("div", { class: "dk-edit" });
+      const rows = [];
+      const add = (e) => {
+        const k = el("input", { type: "text", value: e.key || "", placeholder: placeholderK, class: "em-mono" });
+        const v = el("input", { type: e.secret ? "password" : "text", value: e.value || "", placeholder: e.secret ? "unchanged" : placeholderV, class: "em-mono" });
+        const r = { k, v };
+        const node = el("div", { class: "dk-edit-r dk-edit-kv" }, [k, v, el("button", { type: "button", class: "bk-mini", text: "✕", title: "Remove", onclick: () => { rows.splice(rows.indexOf(r), 1); node.remove(); } })]);
+        rows.push(r); box.insertBefore(node, addBtn);
+      };
+      const addBtn = el("button", { type: "button", class: "btn btn-sm btn-ghost", text: "＋ Add", onclick: () => add({}) });
+      box.append(addBtn);
+      list.forEach(add);
+      box.value = () => rows.map((r) => ({ key: r.k.value.trim(), value: r.v.value })).filter((e) => e.key);
+      return box;
+    }
+    const restartSel = (cur) => { const s = el("select", {}, [["unless-stopped", "Always, unless I stop it (recommended)"], ["always", "Always, even after I stop it"], ["on-failure", "Only after a crash"], ["no", "Never"]].map(([v, t]) => el("option", { value: v, text: t }))); s.value = cur || "unless-stopped"; return s; };
+
+    function settingsPane(c, info, pane, foot) {
+      const managed = info.managed, hostNet = info.network_mode === "host";
+      const kinds = info.port_kinds || {};
+      const ports = hostNet ? null : portsEditor(info.ports.filter((p) => p.host || managed).map((p) => ({ ...p, kind: kinds[`${p.container}/${p.proto}`] || p.kind })), { bind: !managed, fixed: managed && !info.custom, auto: false });
+      const env = kvEditor(info.env, "NAME", "value");
+      const pagePath = el("input", { type: "text", value: info.path || "", placeholder: "/ — or e.g. /admin", class: "em-mono", style: "max-width:320px" });
+      const keepAlive = sw(!!info.tty, () => {});
+      const restart = restartSel(info.restart);
+      const mem = el("input", { type: "text", value: info.memory ? fmtBytes(info.memory).replace(/\s/g, "").toLowerCase().replace("ib", "") : "", placeholder: "none — e.g. 512m or 2g", style: "max-width:200px" });
+      const cpus = el("input", { type: "text", value: info.cpus || "", placeholder: "all — e.g. 1 or 0.5", style: "max-width:200px" });
+      let access = info.access || "public";
+      const domain = el("input", { type: "text", value: info.domain || "", placeholder: `${c.name}.example.com` });
+      const domWrap = el("div", {}, field("Web address", domain, "A name whose DNS points to this server. AutoSSL gives it HTTPS; the WAF and ban list protect it."));
+      const hasWeb = managed && Object.values(kinds).includes("web");
+      const accessBox = el("div", { class: "em-rcards" });
+      if (managed && !hostNet) {
+        const opts = [];
+        if (hasWeb) opts.push({ value: "proxy", label: "At a web address (recommended)", icon: "globe", desc: "https://app.yourdomain — the web port listens on this server only; everything else on the local network." });
+        if (ov.lan_ip) opts.push({ value: "lan", label: "On my local network only", icon: "wifi", desc: `Ports listen on ${ov.lan_ip} — reachable at home, not from the internet.` });
+        opts.push({ value: "public", label: "On public ports", icon: "warning", desc: "Ports listen on every address — Docker skips the firewall for them, so the internet can reach the container directly.", tone: "warn" });
+        opts.forEach((o) => {
+          const r = el("input", { type: "radio", name: "dkacc", value: o.value }); r.checked = o.value === access;
+          r.onchange = () => { access = o.value; domWrap.hidden = access !== "proxy"; };
+          accessBox.append(el("label", { class: `em-rcard ${o.tone || ""}` }, [r, el("span", { class: "em-rcard-ico" }, icon(o.icon, 18)), el("div", {}, [el("div", { class: "em-rcard-t" }, el("b", { text: o.label })), el("p", { class: "muted", text: o.desc })])]));
+        });
+        domWrap.hidden = access !== "proxy";
+      }
+      pane.append(...[
+        managed ? null : el("div", { class: "mx-note mx-note-dim" }, [icon("info", 16), el("span", { text: "This container wasn't made by the panel. Docker can't change a container in place, so saving re-creates it from the same image, volumes and networks with the new settings — the old one is kept until the new one runs." })]),
+        hostNet ? el("div", { class: "mx-note mx-note-dim" }, [icon("info", 16), el("span", { text: "Uses the host network: it has every port of this server directly, so there's nothing to publish." })])
+          : el("div", {}, [el("div", { class: "mx-sub" }, "Ports"), el("p", { class: "muted mx-small", text: managed && !info.custom ? "The container side is fixed by the app; change the port on this server if it clashes with something else." : "Which port inside the container is reachable on which port of this server." }), ports,
+              info.custom && hasWeb ? field("Page path", pagePath, "Where the app's page is when it isn't the site root (Pi-hole: /admin). The Open button uses it.") : null].filter(Boolean)),
+        managed && !hostNet ? el("div", {}, [el("div", { class: "mx-sub" }, "How to reach it"), accessBox, domWrap]) : null,
+        el("div", {}, [el("div", { class: "mx-sub" }, "Environment variables"), el("p", { class: "muted mx-small", text: "The app's own settings (see its documentation). Generated passwords stay as they are unless you type a new one." }), env]),
+        el("div", {}, [el("div", { class: "mx-sub" }, "Behaviour"), el("div", { class: "dk-grid2" }, [field("Restart", restart), field("RAM limit", mem, "Protects the rest of the server if the app misbehaves."), field("CPUs", cpus)])]),
+        info.custom ? el("label", { class: "mx-live" }, [keepAlive, el("span", { text: "Keep it running — attach a terminal so an image that only starts a shell (kali, ubuntu, alpine) doesn't exit at once." })]) : null,
+      ].filter(Boolean));
+      foot.append(btn("Save & re-create", () => {
+        const data = { ports: ports ? ports.value() : null, env: env.value(), restart: restart.value, mem_limit: mem.value.trim(), cpus: cpus.value.trim(), access: managed ? access : "", domain: domain.value.trim(),
+          ...(info.custom ? { path: pagePath.value.trim(), keep_alive: swOn(keepAlive) } : {}) };
+        call(() => API.dockerSettings(c.name, data), "Applying…", (r) => { closeModal(); watch(r.job, `${c.title || c.name} re-created with the new settings`); });
+      }, "btn-primary"));
+    }
+    function removeDlg(c) {
       const del = el("input", { type: "checkbox" });
-      openModal(`Remove ${a.title}?`, el("div", { class: "em-form" }, [el("p", { text: `The container stops and is removed${a.domain ? `, and the web address ${a.domain} is taken down` : ""}.` }),
-        el("label", { class: "dm-check" }, [del, el("span", { text: "Also delete its data (settings, databases, uploads) — can't be undone" })])]),
-        [armed("Remove", "Click again to remove", () => call(() => API.dockerRemove(a.name, del.checked), `${a.title} removed`, () => { closeModal(); load(); }), "btn-danger")]);
+      openModal(`Remove ${c.title || c.name}?`, el("div", { class: "em-form" }, [el("p", { text: `The container stops and is removed${c.managed ? ", and its web address (if any) is taken down" : ""}.` }),
+        el("label", { class: "dm-check" }, [del, el("span", { text: c.managed ? "Also delete its data folder (settings, databases, uploads) — can't be undone" : "Also delete its anonymous volumes — can't be undone" })])]),
+        [armed("Remove", "Click again to remove", () => call(() => API.dockerCRemove(c.name, del.checked), `${c.title || c.name} removed`, () => { closeModal(); load(true); }), "btn-danger")]);
     }
+
+    // ---- shell inside a container (xterm over the panel's WebSocket terminal) -----------------
+    function shellDlg(c) {
+      const user = el("input", { type: "text", placeholder: "root", style: "max-width:120px" });
+      const host = el("div", { class: "dk-term" });
+      let term = null, ws = null, fit = null;
+      const start = () => {
+        if (ws) { try { ws.close(); } catch (e) {} }
+        if (term) { try { term.dispose(); } catch (e) {} }
+        host.innerHTML = "";
+        if (typeof Terminal === "undefined") { host.innerHTML = '<p class="empty">Terminal library failed to load.</p>'; return; }
+        term = new Terminal({ cursorBlink: true, fontSize: 13, fontFamily: '"Cascadia Code","Consolas",monospace', theme: { background: "#000000", foreground: "#e6edf3" } });
+        try { fit = new FitAddon.FitAddon(); term.loadAddon(fit); } catch (e) { fit = null; }
+        term.open(host);
+        const proto = location.protocol === "https:" ? "wss" : "ws";
+        ws = new WebSocket(`${proto}://${location.host}/api/docker/containers/${encodeURIComponent(c.name)}/shell?user=${encodeURIComponent(user.value.trim())}`);
+        const sendResize = () => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows })); };
+        ws.onopen = () => { term.focus(); if (fit) { try { fit.fit(); } catch (e) {} } sendResize(); };
+        ws.onmessage = (ev) => { try { const m = JSON.parse(ev.data); if (m.type === "output") term.write(m.data); else if (m.type === "exit") term.write("\r\n\x1b[90m[session ended]\x1b[0m\r\n"); } catch (e) {} };
+        ws.onclose = (ev) => { try { term.write(ev.code === 1008 ? "\r\n\x1b[91m[refused — administrators only]\x1b[0m\r\n" : "\r\n\x1b[90m[disconnected]\x1b[0m\r\n"); } catch (e) {} };
+        term.onData((d) => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "input", data: d })); });
+        setTimeout(() => { if (fit) { try { fit.fit(); } catch (e) {} } sendResize(); }, 80);
+      };
+      openModal(`Shell — ${c.name}`, el("div", { class: "em-form" }, [
+        el("div", { class: "mx-toolbar mx-toolbar-top" }, [el("span", { class: "muted mx-small", text: "A shell inside the container (docker exec), as root unless you pick another user. Type exit or close this window to end it." }),
+          el("span", { class: "grow" }), field("User", user), btn("Reconnect", start, "btn-ghost")]), host]), []);
+      modalWide();
+      start();
+      const t = setInterval(() => { if (!host.isConnected) { clearInterval(t); try { ws && ws.close(); } catch (e) {} try { term && term.dispose(); } catch (e) {} } }, 800);
+      state.cleanups.push(() => { clearInterval(t); try { ws && ws.close(); } catch (e) {} });
+    }
+
+    // ---- images: what's inside, and run one ---------------------------------------------------
+    const swOn = (s) => { const i = s.querySelector && s.querySelector("input"); return !!(i ? i.checked : s.checked); };
+    const slugName = (repo) => {
+      let s = (repo || "").split("/").pop().split(":")[0].toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 28) || "app";
+      if (!/^[a-z]/.test(s)) s = "app-" + s;
+      const taken = new Set(cs.map((c) => c.name));
+      let n = s, k = 2;
+      while (taken.has(n)) n = `${s}-${k++}`;
+      return n;
+    };
+    const prefillFrom = (i, info) => ({
+      image: i.ref, name: slugName(i.repo), cmd: [...(info.entrypoint || []), ...(info.cmd || [])].join(" "),
+      ports: info.ports.map((p) => ({ container: p.port, proto: p.proto, host: "", kind: p.kind })),
+      volumes: info.volumes.map((v) => ({ host: "", container: v })), keep_alive: info.shell, shell: info.shell,
+    });
+    async function runImage(i) {
+      const info = await call(() => API.dockerImageInspect(i.ref));
+      if (info) customDlg(prefillFrom(i, info));
+    }
+    async function imageDlg(i) {
+      const info = await call(() => API.dockerImageInspect(i.ref));
+      if (!info) return;
+      const kv = (pairs) => el("div", { class: "net-kv" }, pairs.filter(Boolean).map(([k, v]) => el("div", {}, [el("span", { class: "net-k", text: k }), typeof v === "object" && v ? v : el("span", { class: "net-v", text: v == null || v === "" ? "—" : String(v) })])));
+      const mono = (t) => el("code", { class: "dk-mono", text: t });
+      const defaults = [...(info.entrypoint || []), ...(info.cmd || [])].join(" ");
+      const tbl = (heads, rows) => el("div", { class: "table-wrap" }, el("table", { class: "dk-table dk-table-sm" }, [el("thead", {}, el("tr", {}, heads.map((h) => el("th", { text: h })))), el("tbody", {}, rows)]));
+      const labels = Object.entries(info.labels || {});
+      openModal(`${i.repo}:${i.tag}`, el("div", { class: "em-form" }, [
+        kv([["Tags", (info.tags || []).join(", ")], ["ID", `${info.id}${info.digests.length ? ` · digest ${info.digests[0]}…` : ""}`], ["Built", info.created], ["Size", fmtBytes(info.size)], ["Platform", `${info.os}/${info.arch}`],
+          ["Starts with", defaults ? mono(defaults) : "—"], ["Working dir", info.workdir], ["Runs as", info.user || "root"], ["Used by", info.used_by.length ? el("span", {}, info.used_by.map((n) => pill(n, "dim"))) : "no container"]]),
+        info.shell ? el("div", { class: "mx-note mx-note-dim" }, [icon("info", 16), el("span", { text: "This image starts a shell, not a service: without a terminal it exits at once. “Run” keeps it alive so you can open a shell inside it from the container list." })]) : null,
+        el("div", { class: "mx-sub" }, "Ports it listens on"),
+        info.ports.length ? el("div", { class: "dk-chips" }, info.ports.map((p) => pill(`${p.port}/${p.proto}${p.kind === "web" ? " · web page" : ""}`, p.kind === "web" ? "good" : "dim"))) : el("p", { class: "muted mx-small", text: "None declared — a command-line tool or a shell image, or the documentation names the port." }),
+        el("div", { class: "mx-sub" }, "Folders it keeps data in"),
+        info.volumes.length ? el("div", { class: "dk-chips" }, info.volumes.map((v) => pill(v, "dim"))) : el("p", { class: "muted mx-small", text: "None declared." }),
+        el("div", { class: "mx-sub" }, `Environment defaults (${info.env.length})`),
+        info.env.length ? tbl(["Variable", "Default"], info.env.map((e) => el("tr", {}, [el("td", {}, mono(e.key)), el("td", {}, mono(e.value))]))) : el("p", { class: "muted mx-small", text: "None." }),
+        el("details", { class: "dk-adv" }, [el("summary", { text: `Layers (${info.history.length})` }),
+          tbl(["Step", "Size"], info.history.map((h) => el("tr", {}, [el("td", {}, mono(h.by || "—")), el("td", { class: "muted", text: h.size })])))]),
+        labels.length ? el("details", { class: "dk-adv" }, [el("summary", { text: `Labels (${labels.length})` }),
+          tbl(["Label", "Value"], labels.map(([k, v]) => el("tr", {}, [el("td", {}, mono(k)), el("td", {}, mono(v))])))]) : null,
+      ].filter(Boolean)), [
+        btn("Run as a container", () => { closeModal(); customDlg(prefillFrom(i, info)); }, "btn-primary"),
+        btn("Update", () => call(() => API.dockerPull(i.ref), "Downloading…", (r) => { closeModal(); watch(r.job, `${i.ref} is up to date`); }), "btn-ghost"),
+        info.used_by.length ? null : armed("Remove", "Sure?", () => call(() => API.dockerImageRemove(info.id), `${i.repo} removed`, () => { closeModal(); load(true); }), "btn-ghost"),
+      ].filter(Boolean));
+      modalWide();
+    }
+
+    // ---- custom container --------------------------------------------------------------------
+    function customDlg(pre) {
+      pre = pre || {};
+      const name = el("input", { type: "text", placeholder: "my-app", maxlength: 31, value: pre.name || "" });
+      const title = el("input", { type: "text", placeholder: "Shown in the list (optional)" });
+      const image = el("input", { type: "text", placeholder: "nginx:latest · ghcr.io/owner/app:1.2 · lscr.io/linuxserver/…", class: "em-mono", value: pre.image || "" });
+      const ports = portsEditor(pre.ports && pre.ports.length ? pre.ports : [{ container: "", proto: "tcp", host: "", kind: "web" }], { auto: true });
+      const pagePath = el("input", { type: "text", placeholder: "/ — or e.g. /admin for Pi-hole", class: "em-mono", style: "max-width:320px" });
+      const vols = el("div", { class: "dk-edit" });
+      const vrows = [];
+      const addVol = (v) => {
+        const h = el("input", { type: "text", value: v.host || "", placeholder: "empty = a folder the panel keeps; or /srv/media; or a volume name" });
+        const cpath = el("input", { type: "text", value: v.container || "", placeholder: "/data" });
+        const r = { h, cpath };
+        const node = el("div", { class: "dk-edit-r dk-edit-kv" }, [h, cpath, el("button", { type: "button", class: "bk-mini", text: "✕", onclick: () => { vrows.splice(vrows.indexOf(r), 1); node.remove(); } })]);
+        vrows.push(r); vols.insertBefore(node, addV);
+      };
+      const addV = el("button", { type: "button", class: "btn btn-sm btn-ghost", text: "＋ Add storage", onclick: () => addVol({}) });
+      vols.append(el("div", { class: "dk-edit-r dk-edit-kv dk-edit-h" }, [el("span", { text: "On this server" }), el("span", { text: "In the container" }), el("span")]), addV);
+      (pre.volumes && pre.volumes.length ? pre.volumes : [{}]).forEach(addVol);
+      const env = kvEditor([], "NAME", "value");
+      const command = el("input", { type: "text", placeholder: pre.cmd ? `leave empty for the image's default: ${pre.cmd}` : "leave empty for the image's default", class: "em-mono" });
+      const keepAlive = sw(!!pre.keep_alive, () => {});
+      const devices = el("input", { type: "text", placeholder: "/dev/ttyUSB0, /dev/video0", class: "em-mono" });
+      const restart = restartSel("unless-stopped");
+      const mem = el("input", { type: "text", placeholder: "none — e.g. 512m" });
+      const cpus = el("input", { type: "text", placeholder: "all — e.g. 1" });
+      const uid = el("input", { type: "text", placeholder: "e.g. 1000 — if the image runs as a user, its data folder is given to that user", style: "max-width:320px" });
+      const hostNet = sw(false, (v) => { portsWrap.hidden = v; });
+      const priv = sw(false, () => {});
+      const httpsOnly = sw(false, () => {});
+      let access = ov && ov.lan_ip ? "lan" : "public";
+      const domain = el("input", { type: "text", placeholder: "app.example.com" });
+      const domWrap = el("div", {}, field("Web address", domain, "A name whose DNS points to this server. Mark the container's web port as “Web page” above."));
+      const rc = el("div", { class: "em-rcards" });
+      const opts = [];
+      if (ov && ov.lan_ip) opts.push({ value: "lan", label: "On my local network only", icon: "wifi", desc: `http://${ov.lan_ip}:<port> — reachable at home, not from the internet.` });
+      opts.push({ value: "proxy", label: "At a web address", icon: "globe", desc: "https://app.yourdomain — HTTPS from AutoSSL, protected by the WAF and your ban list." });
+      opts.push({ value: "public", label: "On public ports", icon: "warning", desc: "Anyone on the internet can reach it directly — Docker skips the firewall for published ports.", tone: "warn" });
+      opts.forEach((o) => {
+        const r = el("input", { type: "radio", name: "dkcacc", value: o.value }); r.checked = o.value === access;
+        r.onchange = () => { access = o.value; domWrap.hidden = access !== "proxy"; };
+        rc.append(el("label", { class: `em-rcard ${o.tone || ""}` }, [r, el("span", { class: "em-rcard-ico" }, icon(o.icon, 18)), el("div", {}, [el("div", { class: "em-rcard-t" }, el("b", { text: o.label })), el("p", { class: "muted", text: o.desc })])]));
+      });
+      domWrap.hidden = access !== "proxy";
+      const portsWrap = el("div", {}, [el("div", { class: "mx-sub" }, "Ports"), el("p", { class: "muted mx-small", text: "The port the app listens on inside the container (its documentation says). Leave the server side empty to pick a free one." }), ports,
+        field("Page path", pagePath, "Where the app's own page is when it isn't the site root. Left empty, the panel looks at the usual places when / answers 404."),
+        el("div", { class: "mx-sub" }, "How to reach it"), rc, domWrap]);
+      openModal(pre.image ? `Run ${pre.image}` : "Custom container", el("div", { class: "em-form" }, [
+        el("p", { class: "muted", text: pre.image ? "Ports and folders below come from the image itself; adjust them if its documentation says otherwise." : "Run any image from Docker Hub, GitHub (ghcr.io) or another registry. The panel keeps it like a catalog app: a compose file and data folder in /opt/aurora-apps, auto-restart, capped logs." }),
+        pre.shell ? el("div", { class: "mx-note mx-note-dim" }, [icon("info", 16), el("span", { text: "This image starts a shell rather than a service, so “Keep it running” is on: the container stays up and you can open a shell inside it from the list." })]) : null,
+        el("div", { class: "dk-grid2" }, [field("Name", name, "Lowercase letters, digits and dashes."), field("Title", title)]),
+        field("Image", image, `Must have a build for this processor (${ov ? ov.arch : "arm64"}).`),
+        portsWrap,
+        el("div", { class: "mx-sub" }, "Storage"), el("p", { class: "muted mx-small", text: "Folders inside the container that must survive updates (config, databases, uploads)." }), vols,
+        el("div", { class: "mx-sub" }, "Environment variables"), env,
+        el("details", { class: "dk-adv" }, [el("summary", { text: "Advanced" }), el("div", { class: "em-form" }, [
+          el("div", { class: "dk-grid2" }, [field("Restart", restart), field("Runs as user ID", uid)]),
+          el("div", { class: "dk-grid2" }, [field("RAM limit", mem), field("CPUs", cpus)]),
+          field("Command", command), field("Devices", devices, "Hardware passed to the container, comma-separated (USB sticks, cameras)."),
+          el("label", { class: "mx-live" }, [hostNet, el("span", { text: "Host network — the container shares this server's network (needed by apps that discover devices at home). No port mapping then." })]),
+          el("label", { class: "mx-live" }, [keepAlive, el("span", { text: "Keep it running — attach a terminal so an image that only starts a shell (kali, ubuntu, alpine) doesn't exit at once." })]),
+          el("label", { class: "mx-live" }, [priv, el("span", { text: "Privileged — full access to the host's devices. Only if the app's documentation says so." })]),
+          el("label", { class: "mx-live" }, [httpsOnly, el("span", { text: "Needs HTTPS — the app refuses plain http (password managers, apps with camera or microphone access). On the local network the panel then serves it over HTTPS with a self-signed certificate." })]),
+        ])]),
+      ].filter(Boolean)), [el("button", { class: "btn btn-primary", text: "Create & start", onclick: () => {
+        const data = { name: name.value.trim(), title: title.value.trim(), image: image.value.trim(), access, domain: domain.value.trim(), restart: restart.value,
+          ports: ports.value(), volumes: vrows.map((r) => ({ host: r.h.value.trim(), container: r.cpath.value.trim() })).filter((v) => v.container), env: env.value(),
+          devices: devices.value.split(",").map((s) => s.trim()).filter(Boolean), command: command.value.trim(), mem_limit: mem.value.trim(), cpus: cpus.value.trim(),
+          host_network: swOn(hostNet), privileged: swOn(priv), https_only: swOn(httpsOnly), uid: uid.value.trim(), path: pagePath.value.trim(), keep_alive: swOn(keepAlive) };
+        call(() => API.dockerCustom(data), "Creating…", (r) => { closeModal(); watch(r.job, `${data.title || data.name} is running`); });
+      } })]);
+      modalWide();
+      setTimeout(() => name.focus(), 50);
+    }
+    function pullDlg() {
+      const image = el("input", { type: "text", placeholder: "nginx:latest", class: "em-mono" });
+      openModal("Pull an image", el("div", { class: "em-form" }, [el("p", { class: "muted", text: "Download an image now (for example before creating a custom container, or to update one you run yourself)." }), field("Image", image)]),
+        [btn("Pull", () => call(() => API.dockerPull(image.value.trim()), "Downloading…", (r) => { closeModal(); watch(r.job, "Image downloaded"); }), "btn-primary")]);
+      setTimeout(() => image.focus(), 50);
+    }
+
+    // ---- catalog install (unchanged behaviour) -------------------------------------------------
     function installDlg(x) {
+      const d = catalogData;
       let access = (x.host_network || x.no_web) ? (d.lan_ip ? "lan" : "public") : "proxy";
       const name = el("input", { type: "text", value: x.id, maxlength: 31 });
       const domain = el("input", { type: "text", placeholder: `${x.id}.example.com` });
       const domWrap = el("div", {}, field("Web address", domain, "A name whose DNS points to this server (e.g. a subdomain in the Zone Editor). AutoSSL then gives it HTTPS."));
       const opts = [];
       if (!x.host_network && !x.no_web) opts.push({ value: "proxy", label: "At a web address (recommended)", icon: "globe", desc: "https://app.yourdomain — HTTPS, protected by the WAF and your ban list. The app itself is never exposed directly." });
-      if (d.lan_ip) opts.push({ value: "lan", label: "On my local network only", icon: "wifi", desc: `http://${d.lan_ip}:<port> — reachable from devices at home, not from the internet.` });
+      if (d.lan_ip) opts.push({ value: "lan", label: "On my local network only", icon: "wifi", desc: x.https_only ? `https://${d.lan_ip}:<port> — the panel adds HTTPS itself (self-signed certificate, your browser asks once to trust it). Reachable at home, not from the internet.` : `http://${d.lan_ip}:<port> — reachable from devices at home, not from the internet.` });
       opts.push({ value: "public", label: "On a public port", icon: "warning", desc: "Anyone on the internet can reach it directly — Docker skips the firewall for these ports. Only for apps with their own strong login.", tone: "warn" });
       const rc = el("div", { class: "em-rcards" });
       opts.forEach((o) => {
@@ -697,7 +1141,11 @@ window.AuroraOps = (ui) => {
         folders: Object.fromEntries(Object.entries(folders).map(([k, i]) => [k, i.value.trim()]).filter(([, v]) => v)) }), "Installing…", (r) => { closeModal(); watch(r.job, `${x.name} is running`); }) })]);
       modalWide();
     }
+
+    drawHero();
     load();
+    const tick = setInterval(() => { if (!document.querySelector("#modal")) load(true); }, 12000);
+    state.cleanups.push(() => clearInterval(tick));
   }
 
   // ======================================================================
@@ -807,7 +1255,7 @@ window.AuroraOps = (ui) => {
         const todo = pu.length + tu.length + (cu ? 1 : 0);
         const hard = Object.values(d.hardening).filter(Boolean).length;
         const autoOn = d.plugins.length && d.plugins.every((p) => p.auto_update === "on");
-        box.append(
+        box.append(...[
           el("div", { class: "op-plan-h" }, [el("span", { class: "op-plan-ico" }, icon("wordpress", 20)), el("div", { class: "grow" }, [el("h3", { text: d.url.replace(/^https?:\/\//, "") }),
             el("p", { class: "muted mx-small", text: `WordPress ${d.version} · ${d.plugins.length} plugins · ${d.themes.length} themes · ${d.path}` })]),
             d.db_error ? pill("database error", "bad") : todo ? pill(`${todo} update${todo > 1 ? "s" : ""}`, "warn") : pill("up to date", "good"), d.maintenance ? pill("maintenance mode", "warn") : null]),
@@ -832,7 +1280,7 @@ window.AuroraOps = (ui) => {
             el("div", { class: "mx-list" }, [...pu.map((p) => el("div", { class: "mx-list-row" }, [pill("plugin"), el("b", { class: "grow", text: p.title || p.name }), el("span", { class: "muted", text: `${p.version} → ${p.update_version}` }),
               btn("Update", () => call(() => API.wptAct("update", { path: d.path, what: "plugins", names: [p.name] }), "Updating…", (r) => watch(r.job, `${p.title || p.name} updated`, fill)), "btn-ghost")])),
               ...tu.map((t) => el("div", { class: "mx-list-row" }, [pill("theme"), el("b", { class: "grow", text: t.title || t.name }), el("span", { class: "muted", text: `${t.version} → ${t.update_version}` })]))])]) : null,
-        );
+        ].filter(Boolean));
       };
       fill();
       return box;
@@ -904,7 +1352,6 @@ window.AuroraOps = (ui) => {
     let d;
     try { d = await API.mySites(); } catch (e) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); return; }
     body.innerHTML = "";
-    if (state.account) hostingMeCards(body);
     if (!d.sites.length) { body.append(el("div", { class: "card" }, empty("globe", "No websites assigned yet", "Ask the server's administrator to give you access to your websites."))); }
     body.append(el("div", { class: "op-dapps" }, d.sites.map((s) => el("div", { class: "op-dapp" }, [
       el("div", { class: "op-dapp-h" }, [el("span", { class: "op-dapp-ico", style: `--h:${APP_HUE(s.name)}`, text: s.name[0].toUpperCase() }),
@@ -924,8 +1371,7 @@ window.AuroraOps = (ui) => {
   //  Preferences → Panel Users
   // ======================================================================
   const ROLE_TXT = { admin: ["Administrator", "Everything, like you."], viewer: ["Viewer", "Sees every page, changes nothing, can't open files or secrets."],
-    site: ["Website manager", "Only their own websites: files, email accounts, visitors. Nothing else on the server."],
-    reseller: ["Reseller", "Creates and manages their own hosting accounts with the plans you allow (Hosting → Resellers)."] };
+    site: ["Website manager", "Only their own websites: files, email accounts, visitors. Nothing else on the server."] };
   async function viewPanelUsers(root) {
     root.append(pageHead("Panel Users", "Let other people into the panel with just the power they need — a colleague who only watches, or a client who manages their own website and mailboxes.",
       [btn("Add a user", () => editor(), "btn-primary")]));
@@ -940,8 +1386,8 @@ window.AuroraOps = (ui) => {
         el("div", { class: "grow" }, [el("b", { text: u.username }), el("p", { class: "muted mx-small mx-ell", text: u.owner ? "Owner — set up this panel" :
           `${ROLE_TXT[u.role][0]}${u.sites && u.sites.length ? ` · ${u.sites.join(", ")}` : ""}${u.last_login ? ` · last sign-in ${ago(u.last_login)}` : " · never signed in"}` })]),
         pill(u.disabled ? "disabled" : ROLE_TXT[u.role][0], u.disabled ? "dim" : u.role === "admin" ? "warn" : u.role === "site" ? "good" : "dim"),
-        u.owner ? null : u.account ? btn("Hosting account", () => navigate("hostaccounts"), "btn-ghost") : btn("Edit", () => editor(u), "btn-ghost"),
-        u.owner || u.account ? null : armed("Delete", "Click again", () => call(() => API.panelUserDelete(u.username), "User deleted — signed out at once", load), "btn-ghost"),
+        u.owner ? null : btn("Edit", () => editor(u), "btn-ghost"),
+        u.owner ? null : armed("Delete", "Click again", () => call(() => API.panelUserDelete(u.username), "User deleted — signed out at once", load), "btn-ghost"),
       ])))]),
       card("What each role can do", [el("div", { class: "mx-list" }, Object.entries(ROLE_TXT).map(([k, [l, h]]) => el("div", { class: "mx-list-row" }, [pill(l, k === "admin" ? "warn" : k === "site" ? "good" : "dim"), el("span", { class: "grow", text: h })])))]));
     }
@@ -955,7 +1401,7 @@ window.AuroraOps = (ui) => {
       siteWrap.hidden = role !== "site";
       const rc = el("div", { class: "em-rcards" });
       Object.entries(ROLE_TXT).forEach(([k, [l, h]]) => { const r = el("input", { type: "radio", name: "role", value: k }); r.checked = k === role; r.onchange = () => { role = k; siteWrap.hidden = role !== "site"; };
-        rc.append(el("label", { class: "em-rcard" }, [r, el("span", { class: "em-rcard-ico" }, icon(k === "admin" ? "key" : k === "site" ? "globe" : k === "reseller" ? "users" : "search", 18)), el("div", {}, [el("div", { class: "em-rcard-t" }, el("b", { text: l })), el("p", { class: "muted", text: h })])])); });
+        rc.append(el("label", { class: "em-rcard" }, [r, el("span", { class: "em-rcard-ico" }, icon(k === "admin" ? "key" : k === "site" ? "globe" : "search", 18)), el("div", {}, [el("div", { class: "em-rcard-t" }, el("b", { text: l })), el("p", { class: "muted", text: h })])])); });
       const dis = el("input", { type: "checkbox" }); dis.checked = !!(u && u.disabled);
       openModal(u ? `Edit ${u.username}` : "Add a user", el("div", { class: "em-form" }, [
         el("div", { class: "mx-grid2" }, [field("User name", name), field("Password", el("div", { class: "op-pwrow" }, [pw, gen]), "Share it with them privately; they can change it on their home page.")]),
@@ -969,230 +1415,6 @@ window.AuroraOps = (ui) => {
       modalWide();
     }
     load();
-  }
-
-  // ======================================================================
-  //  Hosting (WHM-style): accounts, plans, resellers
-  // ======================================================================
-  const genPw = () => { const a = new Uint32Array(16); crypto.getRandomValues(a); return Array.from(a, (n) => "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"[n % 57]).join(""); };
-  const mbFmt = (mb) => (mb >= 1024 ? `${+(mb / 1024).toFixed(1)} GB` : `${mb} MB`);
-  // One usage bar: used of limit (limit 0 = unlimited).
-  function useBar(label, used, limit, fmt) {
-    const pct = limit ? Math.min(100, (used / limit) * 100) : 0;
-    return el("div", { class: "hs-use" }, [
-      el("div", { class: "hs-use-t" }, [el("span", { class: "muted", text: label }), el("b", { text: `${fmt(used)}${limit ? ` / ${fmt(limit)}` : " · unlimited"}` })]),
-      el("div", { class: `em-use-bar ${pct >= 100 ? "bad" : pct >= 85 ? "warn" : ""}` }, el("span", { style: `width:${limit ? Math.max(pct, used ? 1 : 0) : 0}%` })),
-    ]);
-  }
-  function usageBars(u, lim) {
-    u = u || {}; lim = lim || {};
-    return el("div", { class: "hs-uses" }, [
-      useBar("Disk", u.disk_bytes || 0, (lim.disk_mb || 0) * 1048576, fmtBytes),
-      useBar("Bandwidth this month", u.bandwidth_bytes || 0, (lim.bandwidth_gb || 0) * 1e9, fmtBytes),
-      useBar("Email accounts", u.mailboxes || 0, lim.mailboxes || 0, num),
-    ]);
-  }
-  const limitTxt = (lim, labels) => labels.map(([k, l, unit]) => `${l}: ${lim[k] ? `${k === "disk_mb" ? mbFmt(lim[k]) : lim[k]}${unit && k !== "disk_mb" ? " " + unit : ""}` : "unlimited"}`).join(" · ");
-
-  async function viewHostAccounts(root) {
-    const isReseller = state.role === "reseller";
-    root.append(pageHead(isReseller ? "My Hosting Accounts" : "Hosting Accounts",
-      "Each account is a separate Linux user with its own home folder, website(s), panel login, mailboxes and databases — its PHP runs as that user, within its plan's limits. Like cPanel accounts in WHM.",
-      [btn("Create an account", () => create(), "btn-primary")]));
-    const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
-    root.append(body);
-    let d;
-    async function load() {
-      try { d = await API.hosting(); } catch (e) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); return; }
-      draw();
-    }
-    function draw() {
-      body.innerHTML = "";
-      if (d.ready && !(d.ready.apache && d.ready.php)) body.append(el("div", { class: "card mx-hero warn" }, [el("div", { class: "mx-hero-ico" }, icon("warning", 26)),
-        el("div", { class: "mx-hero-txt" }, [el("h3", { text: "Hosting needs Apache and PHP" }), el("p", { class: "muted", text: "Install them under Software (Apache, PHP-FPM) — every account's website runs on them." })]),
-        el("div", { class: "mx-hero-act" }, [btn("Software", () => navigate("software"), "btn-primary")])]));
-      if (d.reseller) body.append(el("p", { class: "muted mx-p", text: `${d.reseller.used} of ${d.reseller.max_accounts || "unlimited"} accounts used.` }));
-      if (!d.accounts.length) { body.append(el("div", { class: "card" }, empty("users", "No hosting accounts yet", "Create one: it gets its own Linux user, website, panel login, mail and databases."))); return; }
-      body.append(el("div", { class: "hs-accts" }, d.accounts.map((a) => el("div", { class: `card hs-acct ${a.suspended ? "susp" : ""}` }, [
-        el("div", { class: "hs-acct-h" }, [
-          el("span", { class: "op-dapp-ico", style: `--h:${APP_HUE(a.user)}`, text: a.user[0].toUpperCase() }),
-          el("div", { class: "grow" }, [el("b", { text: a.user }), el("p", { class: "muted mx-small mx-ell", text: `${a.sites.join(", ")}${a.email ? " · " + a.email : ""}${a.owner ? " · reseller " + a.owner : ""}` })]),
-          pill(a.plan, "dim"), a.suspended ? pill("suspended", "bad") : pill("active", "good"),
-        ]),
-        a.suspended && a.suspend_reason ? el("p", { class: "form-error", text: a.suspend_reason }) : null,
-        usageBars(a.usage, a.limits),
-        el("p", { class: "muted mx-small", text: a.usage && a.usage.measured ? `Measured ${ago(a.usage.measured)} (every hour)` : "Usage is measured every hour." }),
-        el("div", { class: "toolbar" }, [
-          el("a", { class: "btn btn-sm btn-ghost", href: `http://${a.domain}/`, target: "_blank", rel: "noopener", text: `${a.domain} ↗` }),
-          btn("Add a website", () => addDomain(a), "btn-ghost"),
-          btn("Plan", () => changePlan(a), "btn-ghost"),
-          btn("Password", () => setPw(a), "btn-ghost"),
-          a.suspended ? btn("Unsuspend", () => call(() => API.hostingSuspend(a.user, false), `${a.user} is active again`, load), "btn-primary")
-            : btn("Suspend", () => suspendDlg(a), "btn-ghost"),
-          btn("Terminate", () => terminateDlg(a), "btn-ghost"),
-        ]),
-      ]))));
-      if (!isReseller) body.append(el("div", { class: "toolbar" }, [btn("Measure usage now", () => call(() => API.hostingMeasure(), "Measured", load), "btn-ghost")]));
-    }
-    function create() {
-      if (!d) return;
-      const plans = Object.keys(d.plans);
-      if (!plans.length) return toast(isReseller ? "The administrator hasn't given you any plans yet" : "Create a plan first (Hosting → Plans)", "bad");
-      const user = el("input", { type: "text", placeholder: "alice", autocomplete: "off", maxlength: 16 });
-      const dom = el("input", { type: "text", placeholder: "alice-shop.com", autocomplete: "off" });
-      const pw = el("input", { type: "text", autocomplete: "off", placeholder: "at least 10 characters" });
-      const mail = el("input", { type: "email", placeholder: "Optional", autocomplete: "off" });
-      const plan = el("select", { class: "em-select" }, plans.map((p) => el("option", { value: p, text: p })));
-      const planInfo = el("p", { class: "muted mx-small" });
-      const showPlan = () => { planInfo.textContent = limitTxt(d.plans[plan.value] || {}, d.limits); };
-      plan.onchange = showPlan; showPlan();
-      user.oninput = () => { user.value = user.value.toLowerCase().replace(/[^a-z0-9]/g, ""); };
-      const log = el("div", {});
-      openModal("Create a hosting account", el("div", { class: "em-form" }, [
-        el("div", { class: "mx-grid2" }, [field("User name", user, "Lowercase letters and digits — it becomes the Linux user and the panel login."), field("Main domain", dom, "Its website: /home/<user>/public_html")]),
-        el("div", { class: "mx-grid2" }, [field("Panel password", el("div", { class: "op-pwrow" }, [pw, btn("Generate", () => { pw.value = genPw(); }, "btn-ghost")]), "Give it to the customer privately."), field("Contact email", mail)]),
-        field("Plan", plan), planInfo, log,
-      ]), [el("button", { class: "btn btn-primary", text: "Create", onclick: async (ev) => {
-        const b = ev.currentTarget;
-        b.disabled = true; b.textContent = "Creating…";
-        let r;
-        try {
-          r = await API.hostingCreate({ user: user.value.trim(), domain: dom.value.trim(), plan: plan.value, password: pw.value, email: mail.value.trim() });
-        } catch (e) { toast(e.message, "bad"); b.disabled = false; b.textContent = "Create"; return; }
-        // Follow the job: its log here, then close and show the new account (or keep the log if it failed).
-        const out = el("pre", { class: "log", text: "Starting…" });
-        log.replaceChildren(out);
-        const name = user.value.trim();
-        const t = setInterval(async () => {
-          let j;
-          try { j = await API.job(r.job); } catch (e) { return; }
-          out.textContent = j.output || "Working…"; out.scrollTop = out.scrollHeight;
-          if (j.status === "running") return;
-          clearInterval(t);
-          if (j.status === "done") { toast(`Account ${name} is ready`, "good"); closeModal(); load(); }
-          else { toast(`Creating ${name} failed — see the log`, "bad"); b.textContent = "Failed"; load(); }
-        }, 1200);
-      } })]);
-    }
-    function addDomain(a) {
-      const dom = el("input", { type: "text", placeholder: "another-site.com" });
-      openModal(`Add a website to ${a.user}`, el("div", { class: "em-form" }, [field("Domain", dom, `Its files: /home/${a.user}/<domain>. Counts toward the plan's websites (${a.limits.sites || "unlimited"}).`)]),
-        [el("button", { class: "btn btn-primary", text: "Add", onclick: () => call(() => API.hostingDomain(a.user, dom.value.trim()), "Website added", () => { closeModal(); load(); }) })]);
-    }
-    function changePlan(a) {
-      const plan = el("select", { class: "em-select" }, Object.keys(d.plans).map((p) => el("option", { value: p, text: p })));
-      plan.value = a.plan;
-      const info = el("p", { class: "muted mx-small" });
-      const show = () => { info.textContent = limitTxt(d.plans[plan.value] || {}, d.limits); };
-      plan.onchange = show; show();
-      openModal(`Plan for ${a.user}`, el("div", { class: "em-form" }, [field("Plan", plan), info]),
-        [el("button", { class: "btn btn-primary", text: "Change plan", onclick: () => call(() => API.hostingPlan(a.user, plan.value), "Plan changed — PHP limits applied", () => { closeModal(); load(); }) })]);
-    }
-    function setPw(a) {
-      const pw = el("input", { type: "text", autocomplete: "off" });
-      openModal(`New panel password for ${a.user}`, el("div", { class: "em-form" }, [field("Password", el("div", { class: "op-pwrow" }, [pw, btn("Generate", () => { pw.value = genPw(); }, "btn-ghost")]), "They're signed out everywhere.")]),
-        [el("button", { class: "btn btn-primary", text: "Set password", onclick: () => call(() => API.hostingPassword(a.user, pw.value), "Password set", () => closeModal()) })]);
-    }
-    function suspendDlg(a) {
-      const why = el("input", { type: "text", placeholder: "e.g. unpaid invoice" });
-      openModal(`Suspend ${a.user}`, el("div", { class: "em-form" }, [el("p", { class: "muted", text: "Its websites go offline, its panel login and its mailboxes' sign-in stop. Nothing is deleted; Unsuspend restores everything exactly." }), field("Reason (shown to admins)", why)]),
-        [el("button", { class: "btn btn-primary", text: "Suspend", onclick: () => call(() => API.hostingSuspend(a.user, true, why.value), `${a.user} suspended`, () => { closeModal(); load(); }) })]);
-    }
-    function terminateDlg(a) {
-      const keep = el("input", { type: "checkbox" });
-      const conf = el("input", { type: "text", placeholder: a.user, autocomplete: "off" });
-      openModal(`Terminate ${a.user}`, el("div", { class: "em-form" }, [
-        el("p", { class: "form-error", text: `Deletes the websites (${a.sites.join(", ")}), the Linux user, the panel login, every mailbox with its mail and every ${a.user}_ database. This can't be undone.` }),
-        el("label", { class: "dm-check" }, [keep, el("span", { text: `Keep the files in /home/${a.user}` })]),
-        field(`Type ${a.user} to confirm`, conf),
-      ]), [el("button", { class: "btn btn-primary", text: "Terminate", onclick: () => {
-        if (conf.value.trim() !== a.user) return toast(`Type ${a.user} to confirm`, "bad");
-        call(() => API.hostingTerminate(a.user, keep.checked), `${a.user} terminated`, () => { closeModal(); load(); });
-      } })]);
-    }
-    load();
-  }
-
-  async function viewHostPlans(root) {
-    root.append(pageHead("Hosting Plans", "What an account may use — like WHM packages. Changing a plan applies to every account on it at once (PHP limits right away, disk and bandwidth at the next hourly check). 0 means unlimited.",
-      [btn("New plan", () => edit(), "btn-primary")]));
-    const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
-    root.append(body);
-    let d;
-    async function load() {
-      try { d = await API.hosting(); } catch (e) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); return; }
-      body.innerHTML = "";
-      const used = (p) => d.accounts.filter((a) => a.plan === p).length;
-      body.append(el("div", { class: "hs-plans" }, Object.entries(d.plans).map(([name, lim]) => el("div", { class: "card hs-plan" }, [
-        el("div", { class: "hs-acct-h" }, [el("div", { class: "grow" }, [el("b", { text: name }), el("p", { class: "muted mx-small", text: `${used(name)} account${used(name) === 1 ? "" : "s"}` })])]),
-        el("div", { class: "hs-limits" }, d.limits.map(([k, l, unit]) => el("div", {}, [el("span", { class: "muted", text: l }),
-          el("b", { text: lim[k] ? (k === "disk_mb" || k === "php_memory_mb" ? mbFmt(lim[k]) : k === "bandwidth_gb" ? `${lim[k]} GB` : String(lim[k])) : "unlimited" })]))),
-        el("div", { class: "toolbar" }, [btn("Edit", () => edit(name, lim), "btn-ghost"), used(name) ? null : armed("Delete", "Click again", () => call(() => API.hostingPlanDelete(name), "Plan deleted", load), "btn-ghost")]),
-      ]))));
-    }
-    function edit(name = "", lim = {}) {
-      const nm = el("input", { type: "text", value: name, maxlength: 40 });
-      const inputs = {};
-      const rows = d.limits.map(([k, l, unit]) => { inputs[k] = el("input", { type: "number", min: 0, value: lim[k] ?? 0, class: "op-num" });
-        return el("div", { class: "op-rule" }, [el("b", { text: l }), el("span", { class: "op-numw" }, [inputs[k], el("span", { class: "muted", text: unit || "" })])]); });
-      openModal(name ? `Edit ${name}` : "New plan", el("div", { class: "em-form" }, [field("Name", nm), el("div", { class: "op-rules" }, rows),
-        el("p", { class: "muted mx-small", text: "PHP workers: how many requests an account's sites run at once (others wait) — keeps one busy site from slowing the server." })]),
-        [el("button", { class: "btn btn-primary", text: "Save plan", onclick: () => {
-          const limits = {}; Object.entries(inputs).forEach(([k, i]) => { limits[k] = +i.value || 0; });
-          call(() => API.hostingPlanSave({ name: nm.value.trim(), original: name, limits }), "Plan saved", () => { closeModal(); load(); });
-        } })]);
-      modalWide();
-    }
-    load();
-  }
-
-  async function viewHostResellers(root) {
-    root.append(pageHead("Resellers", "People who sell hosting from this server: they create and manage their own accounts with the plans you allow, up to the number you set. Make someone a reseller under Panel Users (role: Reseller).",
-      [btn("Panel Users", () => navigate("panelusers"), "btn-ghost")]));
-    const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
-    root.append(body);
-    let d;
-    async function load() {
-      try { d = await API.hosting(); } catch (e) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); return; }
-      body.innerHTML = "";
-      if (!d.resellers.length) { body.append(el("div", { class: "card" }, empty("users", "No resellers yet", "Add a panel user with the Reseller role, then choose their plans here."))); return; }
-      body.append(el("div", { class: "hs-plans" }, d.resellers.map((r) => {
-        const max = el("input", { type: "number", min: 0, value: r.max_accounts || 0, class: "op-num" });
-        const box = el("div", { class: "op-destpick" }, Object.keys(d.plans).map((p) => { const c = el("input", { type: "checkbox", value: p }); c.checked = (r.plans || []).includes(p); return el("label", { class: "dm-check" }, [c, el("span", { text: p })]); }));
-        return el("div", { class: "card hs-plan" }, [
-          el("div", { class: "hs-acct-h" }, [el("span", { class: "op-dapp-ico", style: `--h:${APP_HUE(r.username)}`, text: r.username[0].toUpperCase() }),
-            el("div", { class: "grow" }, [el("b", { text: r.username }), el("p", { class: "muted mx-small", text: `${r.accounts} account${r.accounts === 1 ? "" : "s"}` })])]),
-          el("div", { class: "mx-sub" }, "Plans they may sell"), box,
-          el("div", { class: "op-rule" }, [el("b", { text: "Most accounts" }), el("span", { class: "op-numw" }, [max, el("span", { class: "muted", text: "0 = unlimited" })])]),
-          el("div", { class: "toolbar" }, [btn("Save", () => call(() => API.hostingReseller({ username: r.username, plans: [...box.querySelectorAll("input:checked")].map((c) => c.value), max_accounts: +max.value || 0 }), "Saved", load), "btn-primary")]),
-        ]);
-      })));
-    }
-    load();
-  }
-
-  // A hosting account's own page (shown on My Websites): plan, usage, and its databases.
-  async function hostingMeCards(body) {
-    let me, db;
-    try { [me, db] = await Promise.all([API.hostingMe(), API.hostingMyDb()]); } catch (e) { return; }
-    body.prepend(card(`My plan: ${me.plan}`, [usageBars(me.usage, me.limits),
-      el("p", { class: "muted mx-small", text: `${limitTxt(me.limits, me.labels)} · Your files: ${me.home}` })]));
-    const dbCard = el("div", {});
-    const draw = () => {
-      dbCard.innerHTML = "";
-      const name = el("input", { type: "text", placeholder: "shop", autocomplete: "off" });
-      const pw = el("input", { type: "text", autocomplete: "off", placeholder: "at least 8 characters" });
-      dbCard.append(card(`My databases (${db.databases.length}${db.limit ? ` of ${db.limit}` : ""})`, [
-        !db.available ? el("p", { class: "muted", text: "MySQL/MariaDB isn't installed on this server." }) : el("div", { class: "mx-list" }, db.databases.length ? db.databases.map((x) => el("div", { class: "mx-list-row" }, [
-          icon("database", 16), el("b", { class: "grow", text: x.name }), el("span", { class: "muted", text: `${x.size} · ${x.tables} tables · user ${x.name}@localhost` }),
-          armed("Delete", "Click again — deletes all its data", () => call(() => API.hostingMyDbDrop(x.name), "Database deleted", reload), "btn-ghost")])) : [el("p", { class: "muted", text: "No databases yet." })]),
-        db.available ? el("div", { class: "mx-grid2" }, [field(`New database (${db.prefix}<name>)`, name), field("Its user's password", el("div", { class: "op-pwrow" }, [pw, btn("Generate", () => { pw.value = genPw(); }, "btn-ghost")]))]) : null,
-        db.available ? el("div", { class: "toolbar" }, [btn("Create database and user", () => call(() => API.hostingMyDbCreate(name.value.trim(), pw.value), "Created — the user has the same name as the database", reload), "btn-primary")]) : null,
-      ]));
-    };
-    const reload = async () => { try { db = await API.hostingMyDb(); draw(); } catch (e) {} };
-    draw();
-    body.children[0].after(dbCard);
   }
 
   // ======================================================================
@@ -1213,6 +1435,8 @@ window.AuroraOps = (ui) => {
     const num0 = (n) => (n || 0);
     // key view, icon, title, description, status() -> {text,tone} | null, and whether it's a core hardening item
     const TOOLS = [
+      { view: "secreport", icon: "listing", title: "Security Report", desc: "Scan everything you own on this server — panel, websites, mail — score it like an outside scanner would, and get a fix list.",
+        status: () => !S.rep ? null : (S.rep.last ? { text: `${S.rep.last.grade} · ${S.rep.last.score}/100 · ${ago(S.rep.last.ts)}`, tone: S.rep.last.score >= 90 ? "good" : S.rep.last.score >= 65 ? "warn" : "bad" } : warn("not run yet")) },
       { view: "modsec", icon: "shield", title: "WAF Firewall", desc: "Blocks SQL injection, XSS and other web attacks (ModSecurity + OWASP CRS).", core: true,
         status: () => !S.waf ? null : (S.waf.installed ? (S.waf.module_on && S.waf.enabled !== false ? on(S.waf.mode === "detect" ? "detect only" : "blocking") : off("installed, off")) : off("not installed")) },
       { view: "leech", icon: "trap", title: "Fail2ban", desc: "Bans IPs that repeatedly fail to log in (SSH, panel, mail, FTP…).", core: true,
@@ -1270,20 +1494,283 @@ window.AuroraOps = (ui) => {
       const onCount = core.filter((s) => s && s.tone === "good").length;
       hero.className = `card mx-hero ${!done ? "" : onCount === core.length ? "good" : onCount >= core.length - 1 ? "" : "warn"}`;
       hero.innerHTML = "";
+      const ah = S.apache;
+      const heroAct = el("div", { class: "mx-hero-act" }, [
+        btn("Run security report", () => navigate("secreport"), "btn-primary"),
+        ah && ah.available && ah.ok < ah.total ? btn(`Harden web server (${ah.total - ah.ok} to fix)`, () => runFix("apache_harden", paint), "btn-ghost") : null,
+      ].filter(Boolean));
       hero.append(el("div", { class: "mx-hero-ico" }, icon("shield", 28)),
         el("div", { class: "mx-hero-txt" }, [
           el("h3", { text: `${onCount} of ${core.length} core protections on` }),
           el("p", { class: "muted", text: onCount === core.length ? "WAF, Fail2ban, two-factor login, Panel HTTPS and the firewall are all on. Nicely hardened." : "Turn on the ones marked below to harden this server: two-factor login, the WAF, Fail2ban, Panel HTTPS and the firewall." }),
-        ]));
+        ]), heroAct);
     };
     // Fire all status calls; repaint as each resolves.
     [["guard", API.guard], ["twofa", API.twofaStatus], ["waf", API.waf], ["f2b", API.fail2ban], ["fw", API.firewall],
      ["autossl", API.autossl], ["iso", API.isolation], ["av", API.avStatus], ["https", API.panelHttps],
-     ["tokens", API.tokens], ["ssl", API.sslCerts], ["slack", () => API.slack()]].forEach(([k, fn]) => grab(k, fn).then(paint));
+     ["tokens", API.tokens], ["ssl", API.sslCerts], ["slack", () => API.slack()], ["rep", API.secreport], ["apache", API.apacheHardening]].forEach(([k, fn]) => grab(k, fn).then(paint));
     paint();
+  }
+
+  // One-click fixes the report (and Global Security) can offer.
+  async function runFix(action, after) {
+    if (action === "panel_regen") return navigate("panelhttps");
+    if (action === "panel_harden") {
+      if (await call(() => API.panelHttpsHarden(), "Panel restarting with strong ciphers — reloading in a moment")) setTimeout(() => location.reload(), 4000);
+      return;
+    }
+    const r = await call(() => API.secreportFix(action), null, (r) => toast(r.message || "Done", "good"));
+    if (r && after) after(r);
+  }
+  // action → button label; per-target actions look like "kind:argument"
+  const FIX_LABEL = { ca_distrust: "Distrust it", apache_harden: "Harden web server", panel_harden: "Harden panel TLS", panel_regen: "New panel certificate", ufw_enable: "Enable firewall",
+    vhost_tls: "Use server-wide TLS", autossl_run: "Get Let's Encrypt certificate", hsts: "Turn on HSTS", force_https: "Force HTTPS" };
+  const fixLabel = (a) => FIX_LABEL[a] || FIX_LABEL[(a || "").split(":")[0]] || "Fix";
+  const fixIsGlobal = (a) => !/^(autossl_run|hsts|force_https):/.test(a);
+
+  // ======================================================================
+  //  Files → Shadow Copies (version history of a site's files)
+  // ======================================================================
+  const shWhen = (ts) => new Date(ts * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const shDay = (ts) => new Date(ts * 1000).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+  const SH_STATUS = { current: ["current", "good", "The newest copy equals the file as it is now"], modified: ["changed since", "warn", "The file changed after its last copy — the next snapshot (every 10 min) saves it"], deleted: ["deleted", "bad", "The file is gone from the site — restore any version to bring it back"] };
+  const extIcon = (p) => { const e = (p.split(".").pop() || "").toLowerCase(); return /^(png|jpe?g|gif|webp|svg|ico|avif)$/.test(e) ? "image" : /^(html?|php|css|js|mjs|json|xml|md|txt|yml|yaml|ini|conf|env|htaccess)$/.test(e) ? "t_code" : /^(zip|gz|tar|tgz|7z|rar)$/.test(e) ? "packages" : "listing"; };
+
+  async function viewShadow(root) {
+    const snapAll = btn("Snapshot all now", () => call(() => API.shadowSnapshot("*"), "Snapshots taken", load), "btn-ghost");
+    const head = pageHead("Shadow Copies", "A version history for a website's files: everything you upload, edit or delete can be brought back — any earlier version, or a file that is gone. Copies are taken every 10 minutes and the moment before the File Manager overwrites or deletes something, and they live outside the site where the web server can't reach them.", [snapAll]);
+    head.classList.add("sh-head"); root.append(head);
+    const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
+    root.append(body);
+    const jp = jobPanel(root);
+    let d, sel = state.viewArg && typeof state.viewArg === "string" ? state.viewArg : "", q = "", only = "", open = new Set();
+    const site = () => (d.sites || []).find((s) => s.id === sel);
+    const pct = (s) => Math.min(100, Math.round((s.usage.bytes / (s.max_mb * 1048576)) * 100));
+
+    async function load() {
+      try { d = await API.shadow(); } catch (e) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); return; }
+      if (sel && !site()) sel = "";
+      draw();
+    }
+    const watch = (jobId, label) => { jp.run(jobId, label); const t = setInterval(async () => { try { const j = await API.job(jobId); if (j.status !== "running") { clearInterval(t); load(); } } catch (e) { clearInterval(t); } }, 1500); };
+    async function toggle(s, on, inp) {
+      try {
+        const r = await API.shadowEnable(s.id, on);
+        toast(on ? `Shadow copies on for ${s.name}` : `Shadow copies off for ${s.name} — the copies stay until you delete them`, "good");
+        if (r.job) watch(r.job, `First snapshot · ${s.name}`); else load();
+      } catch (e) { if (inp) inp.checked = !on; toast(e.message, "bad"); }
+    }
+
+    function hero() {
+      const on = d.sites.filter((s) => s.enabled);
+      const versions = d.sites.reduce((n, s) => n + s.usage.versions, 0), bytes = d.sites.reduce((n, s) => n + s.usage.bytes, 0);
+      return el("div", { class: `card mx-hero sh-hero ${on.length ? "good" : ""}` }, [
+        el("div", { class: "mx-hero-ico" }, icon("shadow", 28)),
+        el("div", { class: "mx-hero-txt" }, [
+          el("h3", { text: on.length ? `${on.length} of ${d.sites.length} site${d.sites.length === 1 ? "" : "s"} protected` : "No site is protected yet" }),
+          el("p", { class: "muted", text: on.length ? `${num(versions)} versions of ${num(d.sites.reduce((n, s) => n + s.usage.files, 0))} files · ${fmtBytes(bytes)} in ${d.store}${d.free != null ? ` · ${fmtBytes(d.free)} free on the disk` : ""}` : "Turn it on per site below. Each site gets its own limits, so you decide how much space it may take." }),
+        ]),
+        el("div", { class: "mx-note sh-warn" }, [icon("warning", 16), el("span", { text: "Uses extra space: every version is a full copy. The caps below (versions per file, days, total MB) keep it bounded; big files over the per-file limit are skipped. The first snapshot copies the whole site once." })]),
+      ]);
+    }
+
+    function siteCard(s) {
+      const sw0 = sw(s.enabled, (v, inp) => toggle(s, v, inp), { title: s.enabled ? "Turn off (copies are kept)" : "Turn on — takes a first snapshot" });
+      const u = s.usage;
+      return el("div", { class: `card sh-site ${s.enabled ? "on" : ""} ${s.id === sel ? "sel" : ""}` }, [
+        el("div", { class: "sh-site-h" }, [
+          el("span", { class: "sh-site-ico" }, icon(s.kind === "folder" ? "folder" : "globe", 18)),
+          el("div", { class: "grow" }, [el("b", { text: s.name }), el("p", { class: "muted mx-small mx-ell", text: s.path, title: s.path })]),
+          sw0,
+        ]),
+        el("div", { class: "sh-stats" }, [
+          el("div", {}, [el("b", { text: num(u.versions) }), el("span", { text: "versions" })]),
+          el("div", {}, [el("b", { text: num(u.files) }), el("span", { text: "files" })]),
+          el("div", {}, [el("b", { text: fmtBytes(u.bytes) }), el("span", { text: `of ${s.max_mb} MB` })]),
+          el("div", {}, [el("b", { text: s.last_run ? ago(s.last_run) : "—" }), el("span", { text: "last snapshot" })]),
+        ]),
+        s.enabled ? el("div", { class: `em-use-bar ${pct(s) >= 90 ? "bad" : pct(s) >= 70 ? "warn" : ""}` }, el("span", { style: `width:${Math.max(pct(s), u.bytes ? 1 : 0)}%` })) : null,
+        el("div", { class: "toolbar" }, [
+          btn(s.enabled || u.versions ? "Open history" : "Set up", () => { sel = s.id; draw(); }, "btn-primary"),
+          s.enabled ? btn("Snapshot now", () => call(() => API.shadowSnapshot(s.id), null, (r) => { toast(`${r.changes} file${r.changes === 1 ? "" : "s"} copied`, "good"); load(); }), "btn-ghost") : null,
+        ].filter(Boolean)),
+      ]);
+    }
+
+    function settingsCard(s) {
+      const inp = (v, min, max, unit) => el("input", { type: "number", value: v, min, max, class: "mx-narrow" });
+      const kd = inp(s.keep_days, 1, 3650), mv = inp(s.max_versions, 1, 500), mm = inp(s.max_mb, 10, 1000000), mf = inp(s.max_file_mb, 1, 10000);
+      return card("Limits for this site", [
+        el("p", { class: "muted", text: "Oldest versions go first when a limit is hit; the newest copy of every file is always kept. Lowering a limit prunes right away." }),
+        el("div", { class: "sh-settings" }, [field("Versions per file", mv), field("Keep for (days)", kd), field("Total space (MB)", mm), field("Skip files over (MB)", mf)]),
+        el("div", { class: "toolbar" }, [
+          btn("Save limits", () => call(() => API.shadowSettings(s.id, { keep_days: +kd.value, max_versions: +mv.value, max_mb: +mm.value, max_file_mb: +mf.value }), "Limits saved", (r) => { if (r.freed) toast(`${fmtBytes(r.freed)} pruned`, "good"); load(); }), "btn-primary"),
+          armed("Delete all copies", "Click again — every version of this site goes", () => call(() => API.shadowForget(s.id), "All shadow copies of this site deleted", load), "btn-ghost"),
+        ]),
+      ]);
+    }
+
+    async function fileList(s, box) {
+      box.innerHTML = ""; box.append(el("div", { class: "loading", text: "Reading the history…" }));
+      let r;
+      try { r = await API.shadowFiles(s.id, q, only); } catch (e) { box.innerHTML = ""; box.append(el("p", { class: "empty", text: e.message })); return; }
+      box.innerHTML = "";
+      const search = el("input", { type: "search", placeholder: "Find a file…", value: q, class: "sh-search" });
+      let t; search.oninput = () => { clearTimeout(t); t = setTimeout(() => { q = search.value.trim(); fileList(s, box); }, 250); };
+      const chips = el("div", { class: "cw-seg cw-seg-sm" }, [["", `All · ${num(r.total)}`], ["modified", `Changed since · ${num(r.counts.modified)}`], ["deleted", `Deleted · ${num(r.counts.deleted)}`], ["current", `Up to date · ${num(r.counts.current)}`]].map(([k, l]) =>
+        el("button", { type: "button", class: k === only ? "active" : "", text: l, onclick: () => { only = k; fileList(s, box); } })));
+      box.append(el("div", { class: "sh-tools" }, [search, chips]));
+      if (!r.files.length) { box.append(empty("shadow", q || only ? "Nothing matches" : "No copies yet", q || only ? "Try another filter." : s.enabled ? "The first snapshot is on its way, or the folder is empty." : "Turn Shadow on for this site to start keeping versions.")); return; }
+      box.append(el("div", { class: "sh-list" }, r.files.map((f) => {
+        const [lbl, tone, hint] = SH_STATUS[f.status];
+        const isOpen = open.has(f.path);
+        const row = el("div", { class: `sh-row ${isOpen ? "open" : ""} st-${f.status}` });
+        const head = el("button", { type: "button", class: "sh-row-h", onclick: () => { if (open.has(f.path)) open.delete(f.path); else open.add(f.path); fileList(s, box); } }, [
+          el("span", { class: "sh-dotst", title: hint }), icon(extIcon(f.path), 16),
+          el("span", { class: "sh-path grow", title: f.path }, [el("span", { class: "muted", text: f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/") + 1) : "" }), el("b", { text: f.path.split("/").pop() })]),
+          pill(lbl, tone),
+          el("span", { class: "muted sh-meta", text: `${f.versions.length} version${f.versions.length === 1 ? "" : "s"} · ${ago(f.versions[0].ts)}` }),
+          el("span", { class: "sh-chev" }, icon("chevron", 14)),
+        ]);
+        row.append(head);
+        if (isOpen) {
+          const tl = el("div", { class: "sh-timeline" });
+          if (f.current) tl.append(el("div", { class: "sh-v now" }, [el("span", { class: "sh-v-dot" }), el("div", { class: "grow" }, [el("b", { text: "Now on the site" }), el("p", { class: "muted", text: `${fmtBytes(f.current.size)} · changed ${shWhen(f.current.mtime)}${f.status === "modified" ? " · not copied yet" : ""}` })]),
+            el("div", { class: "sh-v-act" }, [btn("Open in File Manager", () => navigate("files", { arg: `${r.root}/${f.path}`.replace(/\/[^/]*$/, "") }), "btn-ghost")])]));
+          else tl.append(el("div", { class: "sh-v gone" }, [el("span", { class: "sh-v-dot" }), el("div", { class: "grow" }, [el("b", { text: "Gone from the site" }), el("p", { class: "muted", text: "Restore any version below to bring it back." })])]));
+          let lastDay = "";
+          f.versions.forEach((v, i) => {
+            const day = shDay(v.ts);
+            if (day !== lastDay) { tl.append(el("div", { class: "sh-day", text: day })); lastDay = day; }
+            tl.append(el("div", { class: "sh-v" }, [el("span", { class: "sh-v-dot" }), el("div", { class: "grow" }, [el("b", { text: `${shWhen(v.ts)}${i === 0 ? " · newest copy" : ""}` }), el("p", { class: "muted", text: fmtBytes(v.size) })]),
+              el("div", { class: "sh-v-act" }, [
+                armed(f.status === "deleted" ? "Bring back" : "Restore", "Click again to restore", () => call(() => API.shadowRestore(s.id, f.path, v.ts), `Restored ${f.path.split("/").pop()} from ${shWhen(v.ts)} — the previous content was kept as a version`, () => fileList(s, box)), "btn-primary"),
+                el("a", { class: "btn btn-sm btn-ghost", href: API.shadowDownloadUrl(s.id, f.path, v.ts), download: f.path.split("/").pop(), text: "Download" }),
+                armed("Delete", "Click again", () => call(() => API.shadowForget(s.id, f.path, v.ts), "Version deleted", () => fileList(s, box)), "btn-ghost"),
+              ])]));
+          });
+          tl.append(el("div", { class: "toolbar" }, [armed("Forget this file's history", "Click again — all its versions go", () => call(() => API.shadowForget(s.id, f.path), "History deleted", () => fileList(s, box)), "btn-ghost")]));
+          row.append(tl);
+        }
+        return row;
+      })));
+      if (r.total > r.files.length) box.append(el("p", { class: "muted mx-small", text: `Showing ${num(r.files.length)} of ${num(r.total)} — narrow it down with the search.` }));
+    }
+
+    function detail(s) {
+      const sw0 = sw(s.enabled, (v, inp) => toggle(s, v, inp), { title: s.enabled ? "Turn off (copies are kept)" : "Turn on — takes a first snapshot" });
+      const head = el("div", { class: "card sh-detail-h" }, [
+        btn("← All sites", () => { sel = ""; draw(); }, "btn-ghost"),
+        el("span", { class: "sh-site-ico big" }, icon(s.kind === "folder" ? "folder" : "globe", 22)),
+        el("div", { class: "grow" }, [el("h3", { text: s.name }), el("p", { class: "muted mx-small", text: `${s.path} · ${num(s.usage.versions)} versions · ${fmtBytes(s.usage.bytes)} of ${s.max_mb} MB${s.last_run ? ` · last snapshot ${ago(s.last_run)}` : ""}` })]),
+        el("label", { class: "sh-toggle" }, [el("span", { text: s.enabled ? "On" : "Off" }), sw0]),
+        s.enabled ? btn("Snapshot now", () => call(() => API.shadowSnapshot(s.id), null, (r) => { toast(`${r.changes} file${r.changes === 1 ? "" : "s"} copied`, "good"); load(); }), "btn-primary") : null,
+      ].filter(Boolean));
+      const files = el("div", { class: "card sh-files" });
+      const setBox = el("details", { class: "sh-more" }, [el("summary", {}, [icon("gear", 14), " Limits & cleanup"]), settingsCard(s)]);
+      fileList(s, files);
+      return el("div", { class: "sh-detail" }, [head, s.enabled ? null : el("div", { class: "mx-note sh-warn" }, [icon("warning", 16), el("span", { text: `Shadow is off for ${s.name}. Turn it on to start keeping versions — the first snapshot copies every file under the limits (currently up to ${s.max_mb} MB in total, files over ${s.max_file_mb} MB skipped).` })]), files, setBox].filter(Boolean));
+    }
+
+    function draw() {
+      body.innerHTML = "";
+      if (!d.sites.length) { body.append(el("div", { class: "card" }, empty("shadow", "No websites yet", "Create a website or a folder site under Domains first — Shadow keeps a history of its files."))); return; }
+      const s = site();
+      if (s) { body.append(detail(s)); return; }
+      body.append(hero(), el("div", { class: "sh-sites" }, d.sites.map(siteCard)));
+    }
+    load();
+  }
+
+  // ======================================================================
+  //  Security → Security Report (scores what this server owns)
+  // ======================================================================
+  const SEV_TONE = { critical: "bad", high: "bad", medium: "warn", low: "dim", info: "dim" };
+  const KIND_TXT = { panel: "Panel", site: "Website", ip: "By address", mail: "Mail", server: "Server" };
+  const scoreTone = (n) => (n >= 90 ? "good" : n >= 65 ? "warn" : "bad");
+  function scoreRing(score, grade, size = 120) {
+    const r = size * 0.4, c = 2 * Math.PI * r, tone = scoreTone(score);
+    const ring = el("div", { class: `sr-ring ${tone}`, style: `width:${size}px;height:${size}px` });
+    ring.innerHTML = `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><circle cx="${size / 2}" cy="${size / 2}" r="${r}" class="sr-track"/>` +
+      `<circle cx="${size / 2}" cy="${size / 2}" r="${r}" class="sr-bar" stroke-dasharray="${(c * score / 100).toFixed(1)} ${c.toFixed(1)}"/></svg>`;
+    ring.append(el("b", {}, [document.createTextNode(grade), el("small", { text: `${score} / 100` })]));
+    return ring;
+  }
+  async function viewSecReport(root) {
+    const runBtn = btn("Run report", () => run(), "btn-primary");
+    root.append(pageHead("Security Report", "What an outside scanner would say about this server — checked from the inside, only for what you own here: the panel under every name it's opened as, every website (by name and by bare address), the mail server, and the server's own protections. Each finding comes with the fix.", [runBtn]));
+    const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
+    root.append(body);
+    let d, picks = null;
+    const chosen = () => (picks ? [...picks.querySelectorAll("input:checked")].map((c) => c.value) : []);
+    async function run() {
+      const ids = chosen();
+      if (!ids.length) return toast("Pick at least one target", "bad");
+      runBtn.disabled = true; runBtn.textContent = "Checking…";
+      try { d.last = await API.secreportRun(ids); toast(`Done in ${d.last.took} s — ${d.last.grade}`, "good"); draw(); }
+      catch (e) { toast(e.message, "bad"); }
+      runBtn.disabled = false; runBtn.textContent = "Run report";
+    }
+    function picker() {
+      const groups = {};
+      d.targets.forEach((t) => { (groups[t.kind] = groups[t.kind] || []).push(t); });
+      const wasOn = new Set(d.last ? d.last.targets.map((t) => t.id) : d.targets.map((t) => t.id));
+      picks = el("div", { class: "sr-picks" }, Object.entries(groups).map(([k, ts]) => el("div", { class: "sr-pick-grp" }, [
+        el("div", { class: "mx-sub" }, KIND_TXT[k] || k),
+        ...ts.map((t) => { const c = el("input", { type: "checkbox", value: t.id }); c.checked = wasOn.has(t.id); return el("label", { class: "dm-check" }, [c, el("span", { text: t.label.replace(/^[^·]+· /, "") })]); }),
+      ])));
+      const all = (on) => picks.querySelectorAll("input").forEach((c) => { c.checked = on; });
+      return card("What to check", [el("p", { class: "muted", text: "Only things that live on this server are listed — nothing else is ever scanned. Every probe connects to this machine itself with the name as SNI / Host, so proxies and CDNs in front don't colour the result." }),
+        picks, el("div", { class: "toolbar" }, [btn("All", () => all(true), "btn-ghost"), btn("None", () => all(false), "btn-ghost")])]);
+    }
+    function findingRow(f) {
+      return el("div", { class: `sr-f sev-${f.severity}` }, [
+        pill(f.severity, SEV_TONE[f.severity] || "dim"),
+        el("div", { class: "grow" }, [el("b", { text: f.title }), el("p", { class: "muted", text: f.detail }), f.fix ? el("p", { class: "sr-fix" }, [el("b", { text: "Fix: " }), f.fix]) : null]),
+        el("div", { class: "sr-f-act" }, [
+          f.action ? btn(fixLabel(f.action), () => runFix(f.action, () => run()), "btn-primary") : null,
+          f.view ? btn("Open", () => navigate(f.view), "btn-ghost") : null].filter(Boolean)),
+      ]);
+    }
+    function draw() {
+      body.innerHTML = "";
+      const rep = d.last;
+      if (rep) {
+        const c = rep.counts || {};
+        body.append(el("div", { class: `card mx-hero sr-hero ${scoreTone(rep.score)}` }, [
+          scoreRing(rep.score, rep.grade, 132),
+          el("div", { class: "mx-hero-txt" }, [
+            el("h3", { text: rep.score >= 90 ? "Looking solid" : rep.score >= 65 ? "Some things to tighten" : "Needs attention" }),
+            el("p", { class: "muted", text: `${rep.targets.length} target${rep.targets.length === 1 ? "" : "s"} checked ${ago(rep.ts)} in ${rep.took} s on ${rep.hostname}.` }),
+            el("div", { class: "sr-counts" }, ["critical", "high", "medium", "low", "info"].map((k) => el("div", { class: `sr-cnt sev-${k}` }, [el("b", { text: String(c[k] || 0) }), el("span", { text: k })]))),
+          ]),
+          el("div", { class: "mx-hero-act" }, [
+            ...(rep.fixes || []).filter(fixIsGlobal).map((a) => btn(fixLabel(a), () => runFix(a, () => run()), "btn-primary")),
+            el("a", { class: "btn btn-sm btn-ghost", href: "/api/secreport/html", download: "", text: "Download HTML report" }),
+          ]),
+        ]));
+        body.append(el("div", { class: "sr-targets" }, rep.targets.map((t) => {
+          const facts = t.facts || {}, cert = facts.cert || {};
+          const meta = [facts.version ? `${facts.version} · ${facts.cipher || ""}` : null, cert.days != null ? `certificate expires in ${cert.days} days` : null,
+            facts.trusted === false && facts.matches ? null : null].filter(Boolean).join(" · ");
+          return el("div", { class: "card sr-t" }, [
+            el("div", { class: "sr-t-h" }, [
+              el("div", { class: "grow" }, [el("span", { class: "sr-kind", text: KIND_TXT[t.kind] || t.kind }), el("h3", { text: t.label.replace(/^[^·]+· /, "") }), meta ? el("p", { class: "muted mx-small", text: meta }) : null]),
+              el("div", { class: `sr-grade ${scoreTone(t.score)}` }, [el("b", { text: String(t.score) }), el("span", { text: t.grade })]),
+            ]),
+            t.findings.length ? el("div", { class: "sr-list" }, t.findings.map(findingRow)) : el("p", { class: "sr-ok" }, [icon("check", 16), " No findings — nicely done."]),
+          ]);
+        })));
+      } else {
+        body.append(el("div", { class: "card" }, empty("listing", "No report yet", "Pick what to check below and run the report. It takes a few seconds.")));
+      }
+      body.append(picker());
+    }
+    try { d = await API.secreport(); } catch (e) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); return; }
+    draw();
   }
 
   return { activity: viewActivity, alerts: viewAlerts, schedbackups: viewSchedBackups, updates: viewUpdates, autossl: viewAutoSSL, isolation: viewIsolation,
     dockerapps: viewDockerApps, servers: viewServers, mysites: viewMySites, panelusers: viewPanelUsers, wptoolkit: viewWPToolkit, migrate: viewMigrate,
-    hostaccounts: viewHostAccounts, hostplans: viewHostPlans, hostresellers: viewHostResellers, globalsec: viewGlobalSecurity };
+    globalsec: viewGlobalSecurity, secreport: viewSecReport, shadow: viewShadow };
 };

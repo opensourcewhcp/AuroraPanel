@@ -22,7 +22,8 @@ def available() -> bool:
     return IS_LINUX
 
 
-async def run(websocket) -> None:
+async def run(websocket, argv: list[str] | None = None) -> None:
+    """argv: run this command instead of the login shell (e.g. `docker exec -it <container> sh`)."""
     if not IS_LINUX:
         await websocket.send_text(json.dumps({"type": "output",
             "data": "Terminal is only available on Linux (the Pi).\r\n"}))
@@ -39,6 +40,9 @@ async def run(websocket) -> None:
         # Child: become the login shell.
         os.environ["TERM"] = "xterm-256color"
         try:
+            if argv:
+                os.environ["PATH"] = os.environ.get("PATH", "") + ":/usr/local/bin:/usr/bin:/bin"
+                os.execvp(argv[0], list(argv))
             os.execvp(shell, [shell, "-l"])
         except OSError:
             os._exit(1)

@@ -376,6 +376,57 @@ def ban(jail: str, ip: str, client_ip: str | None = None) -> dict:
     return {"ok": True}
 
 
+LOG_FILES = (Path("/var/log/fail2ban.log.1"), Path("/var/log/fail2ban.log"))
+_EVENT = re.compile(r"(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),\d+ fail2ban\.(filter|actions)\s+\[\d+\]: \w+\s+\[([\w.-]+)\] (Found|Ban|Unban|Restore Ban) (\S+)")
+
+
+def parse_events(text: str) -> list[dict]:
+    """fail2ban log lines → {ts, jail, kind: failure|ban|unban, ip, restored}. Observer duplicates of 'Found' are skipped."""
+    import datetime
+    out = []
+    for ln in text.splitlines():
+        m = _EVENT.search(ln)
+        if not m:
+            continue
+        ts_s, src, jail, what, ip = m.groups()
+        if what == "Found" and src != "filter":
+            continue
+        try:
+            ts = int(datetime.datetime.strptime(ts_s, "%Y-%m-%d %H:%M:%S").timestamp())
+        except ValueError:
+            continue
+        kind = "failure" if what == "Found" else "unban" if what == "Unban" else "ban"
+        out.append({"ts": ts, "jail": jail, "kind": kind, "ip": ip.rstrip(","), "restored": what == "Restore Ban"})
+    return out
+
+
+def events(limit: int = 400) -> dict:
+    """What fail2ban did lately, newest first: the failed attempts it noticed, every ban and unban — read from its
+    log (current and previous file; the journal when there is no log file). `status` says which of those addresses
+    are banned or trusted right now, so the page can colour them."""
+    out: list[dict] = []
+    source = ""
+    for p in LOG_FILES:
+        try:
+            out += parse_events(p.read_text(errors="replace"))
+            source = source or str(p.with_suffix("")) if p.suffix == ".1" else str(p)
+        except OSError:
+            continue
+    if not source:
+        out = parse_events(subprocess.run(["journalctl", "-u", "fail2ban", "-n", "4000", "--no-pager", "-o", "short-iso"],
+                                          capture_output=True, text=True).stdout)
+        source = "journal"
+    out.sort(key=lambda e: -e["ts"])
+    out = out[:limit]
+    status: dict = {}
+    try:
+        from . import guard
+        status = guard.status_of(sorted({e["ip"] for e in out}))
+    except Exception:
+        pass
+    return {"events": out, "status": status, "source": source or "/var/log/fail2ban.log"}
+
+
 def logs(lines: int = 200) -> str:
     p = Path("/var/log/fail2ban.log")
     if p.exists() and p.stat().st_size:

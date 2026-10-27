@@ -162,6 +162,13 @@ def _cert_info(s: dict) -> dict | None:
     return sslcerts._inspect(Path(path))
 
 
+def _hand_copy(conf: Path) -> bool:
+    """True when sites-enabled/<conf> is a regular file (someone copied and edited it there) instead of
+    the link a2ensite makes. Apache loads it fine, but a2ensite/a2dissite can't manage it."""
+    e = ENABLED / conf.name
+    return e.exists() and not e.is_symlink()
+
+
 def _live_conf(conf: Path) -> Path:
     """The file Apache actually loads: a hand-copied regular file in sites-enabled wins over sites-available."""
     e = ENABLED / conf.name
@@ -190,7 +197,7 @@ def list_sites() -> dict:
             "server_name": s["server_name"], "aliases": s["aliases"], "docroot": s["docroot"],
             "conf": f.name, "enabled": (ENABLED / f.name).exists(), "managed": s["_managed"],
             "system": system, "ssl": s["ssl"], "force_https": s["force_https"],
-            "has_http": _has_http(f) if system else True,
+            "has_http": _has_http(f) if system else True, "hand_copy": system and _hand_copy(f),
             "redirect_url": s["redirect_url"], "maintenance": s["maintenance"],
             "cert_expires": cert.get("expires") if cert else None,
             "cert_self_signed": cert.get("self_signed") if cert else None,
@@ -230,7 +237,7 @@ def get_site(name: str) -> dict:
     has_http = _has_http(conf) if system else True
     return {"settings": {k: v for k, v in s.items() if not k.startswith("_")}, "managed": s["_managed"],
             "conf": conf.name, "system": system, "enabled": (ENABLED / conf.name).exists(),
-            "has_http": has_http, "https": _builtin_https() if system and has_http else None,
+            "hand_copy": system and _hand_copy(conf), "has_http": has_http, "https": _builtin_https() if system and has_http else None,
             "cert": cert, "certbot": bool(shutil.which("certbot")),
             "le_available": (LE_LIVE / s["server_name"] / "fullchain.pem").exists(),
             "config_text": src.read_text(errors="replace")[:30000]}
@@ -329,8 +336,8 @@ _MAINT = ('"<!doctype html><title>Maintenance</title><body style=\'font-family:s
 
 def _content(s: dict, scheme: str) -> list[str]:
     name, root, esc = s["server_name"], s["docroot"], re.escape(s["server_name"])
-    # Isolated sites (hosting accounts) share Apache (www-data), which is in every account's group.
-    # SymLinksIfOwnerMatch stops a customer symlinking to another account's files or /etc/shadow:
+    # Isolated sites share Apache (www-data), which is in every site user's group.
+    # SymLinksIfOwnerMatch stops a site symlinking to another site's files or /etc/shadow:
     # Apache follows a symlink only when the link and its target have the same owner.
     sym = "+SymLinksIfOwnerMatch" if s.get("php_pool") else "+FollowSymLinks"
     L = [f"    <Directory {root}>",
@@ -370,6 +377,7 @@ def _content(s: dict, scheme: str) -> list[str]:
               '        Header always set X-Frame-Options "SAMEORIGIN"',
               '        Header always set X-Content-Type-Options "nosniff"',
               '        Header always set Referrer-Policy "strict-origin-when-cross-origin"',
+              "        Header always setifempty Content-Security-Policy \"frame-ancestors 'self'\"",
               "    </IfModule>"]
     if scheme == "https" and s["hsts"]:
         L += ['    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"']
@@ -573,7 +581,7 @@ def save_site(original_name: str, settings: dict) -> dict:
 
 def quick_toggle(name: str, key: str, value: bool) -> dict:
     """List-page switches (Force HTTPS, enabled, maintenance)."""
-    if key not in ("force_https", "enabled", "maintenance"):
+    if key not in ("force_https", "enabled", "maintenance", "hsts"):
         raise SiteError("Unsupported toggle")
     cur = get_site(name)
     if cur["system"]:
@@ -585,6 +593,8 @@ def quick_toggle(name: str, key: str, value: bool) -> dict:
     s = cur["settings"]
     if key == "force_https" and value and s["ssl"] == "none":
         s["ssl"] = "selfsigned"   # needs *a* cert; upgrade to Let's Encrypt from Manage
+    if key == "hsts" and value and s["ssl"] == "none":
+        raise SiteError("Turn on HTTPS for this site first — HSTS only makes sense with a working certificate")
     s[key] = bool(value)
     return save_site(name, s)
 
@@ -596,8 +606,9 @@ def _set_system_enabled(conf: Path, enabled: bool) -> dict:
     if enabled == was_enabled:
         return {"ok": True}
     if link.exists() and not link.is_symlink():
-        raise SiteError(f"sites-enabled/{conf.name} is a regular file (edited by hand), not a link to sites-available, "
-                        "so the panel won't remove it. Move it out of sites-enabled yourself to disable the site.")
+        raise SiteError(f"sites-enabled/{conf.name} is a hand-edited copy, not a link to sites-available/{conf.name}, so Apache's "
+                        "a2dissite can't turn it off. Use “Fix the layout” on this site's page first: the panel keeps the file "
+                        "exactly as Apache serves it, backs up both copies and turns it into the normal link.")
     if enabled:
         if "SSLEngine" in conf.read_text(errors="replace") and not (APACHE / "mods-enabled" / "ssl.load").exists():
             _run(["a2enmod", "-q", "ssl"])
@@ -620,6 +631,42 @@ def _set_system_enabled(conf: Path, enabled: bool) -> dict:
 _FH_BEGIN, _FH_END = "# aurora-force-https begin", "# aurora-force-https end"
 _FH_BLOCK = re.compile(rf"\n[ \t]*{re.escape(_FH_BEGIN)}.*?{re.escape(_FH_END)}[ \t]*", re.S)
 SITE_BAK = Path("/var/lib/aurora/site-backups")
+
+
+def adopt_system_conf(conf_name: str) -> dict:
+    """Turn a hand-copied sites-enabled/<conf> (a regular file) back into Apache's normal layout:
+    its text becomes sites-available/<conf> and sites-enabled/<conf> a link to it, like a2ensite
+    makes. What Apache serves doesn't change by a byte — the live text is the one kept — but the
+    site can be turned on and off again. Both originals go to /var/lib/aurora/site-backups."""
+    _require()
+    if conf_name not in SYSTEM_CONFS:
+        raise SiteError("Only the two built-in sites can be fixed this way")
+    conf, live = AVAIL / conf_name, ENABLED / conf_name
+    if not _hand_copy(conf):
+        return {"ok": True, "changed": False}
+    ts = int(time.time())
+    SITE_BAK.mkdir(parents=True, exist_ok=True)
+    text = live.read_text(errors="replace")
+    shutil.copy2(live, SITE_BAK / f"{conf_name}.enabled.{ts}")
+    old_avail = conf.read_text(errors="replace") if conf.exists() else None
+    if old_avail is not None:
+        shutil.copy2(conf, SITE_BAK / f"{conf_name}.available.{ts}")
+    conf.write_text(text, encoding="utf-8")
+    live.unlink()
+    live.symlink_to(f"../sites-available/{conf_name}")
+    test = _run(["apache2ctl", "configtest"])
+    if test.returncode != 0:  # put everything back exactly as it was
+        live.unlink(missing_ok=True)
+        live.write_text(text, encoding="utf-8")
+        if old_avail is None:
+            conf.unlink(missing_ok=True)
+        else:
+            conf.write_text(old_avail, encoding="utf-8")
+        err = "\n".join(l for l in (test.stderr + test.stdout).splitlines() if "AH00558" not in l).strip()
+        raise SiteError("Apache rejected the config, nothing was changed:\n" + err[:1500])
+    if _run(["systemctl", "reload", "apache2"]).returncode != 0:
+        _run(["systemctl", "restart", "apache2"])
+    return {"ok": True, "changed": True, "backups": [f"{SITE_BAK}/{conf_name}.enabled.{ts}"] + ([f"{SITE_BAK}/{conf_name}.available.{ts}"] if old_avail is not None else [])}
 
 
 def _set_system_force_https(conf: Path, on: bool) -> dict:
@@ -825,6 +872,11 @@ def remove_site(name: str) -> dict:
                      Path("/var/lib/apache2/site/disabled_by_admin") / conf.stem):
         leftover.unlink(missing_ok=True)
     _run(["systemctl", "reload", "apache2"])
+    try:
+        from . import shadow
+        shadow.drop(f"site:{name}")
+    except Exception:
+        pass
     return {"ok": True}
 
 
@@ -953,7 +1005,36 @@ def list_folder_sites() -> dict:
         it["indexes"] = bool(it.get("indexes"))
         # Without an index page and with the file list off, Apache answers 403 Forbidden.
         it["has_index"] = it["exists"] and any((d / f).is_file() for f in _INDEX_FILES)
-    return {"supported": True, "sites": items, "base": str(default_docroot())}
+    base = default_docroot()
+    return {"supported": True, "sites": items, "found": _folders_found(base, items), "base": str(base)}
+
+
+def _folders_found(base: Path, items: list[dict]) -> list[dict]:
+    """Folders that already sit in the default site's DocumentRoot without being set up as folder
+    sites (made by hand, by scp, by an older install). Apache serves them at /<name>/ anyway; the
+    panel lists them so they can be adopted. Document roots of the domain sites are left out."""
+    taken = {str(Path(it["path"])) for it in items} | {it["name"] for it in items}
+    try:
+        taken |= {str(Path(s["docroot"])) for s in list_sites().get("sites", []) if s.get("docroot")}
+    except Exception:
+        pass
+    found = []
+    try:
+        kids = sorted(base.iterdir(), key=lambda p: p.name.lower())
+    except OSError:
+        return found
+    for d in kids:
+        if d.name.startswith(".") or d.is_symlink() or not d.is_dir() or str(d) in taken or d.name in taken:
+            continue
+        try:
+            n = sum(1 for _ in d.iterdir())
+            mtime = int(d.stat().st_mtime)
+        except OSError:
+            continue
+        found.append({"name": d.name, "path": str(d), "entries": n, "mtime": mtime,
+                      "has_index": any((d / f).is_file() for f in _INDEX_FILES),
+                      "addable": bool(_FOLDER_NAME.match(d.name)) and d.name not in _RESERVED})
+    return found
 
 
 _INDEX_FILES = ("index.html", "index.htm", "index.php", "index.xhtml", "index.cgi", "index.pl")
@@ -1005,13 +1086,36 @@ def create_folder_site(name: str, path: str = "") -> dict:
     return {"ok": True, "name": name, "path": str(target), "alias": not in_root}
 
 
-def remove_folder_site(name: str) -> dict:
-    """Stops serving /<name> through the panel's conf; the folder and its files are kept."""
+def _folder_deletable(path: Path) -> Path:
+    """The folder of a folder site may be deleted only when it's clearly just that: not /, not a top-level
+    folder, not the web root, not a website's own folder, not a home folder (the File Manager's rules)."""
+    if not path or not path.is_absolute():
+        raise SiteError("The folder site has no folder to delete")
+    p = path.resolve()
+    if len(p.parts) <= 3 or p == Path("/var/www/html"):
+        raise SiteError(f"{p} is a system folder — not deleting it")
+    try:
+        from . import files
+        if files._protected(p):
+            raise SiteError(f"{p} is protected (a web root, website or home folder) — not deleting it")
+    except ImportError:
+        pass
+    return p
+
+
+def remove_folder_site(name: str, delete_files: bool = False, backup: bool = False) -> dict:
+    """Stops serving /<name> through the panel's conf. With delete_files the folder goes too — after a
+    backup under Backups when asked — as a job with a progress log: returns {"job": id} then."""
     _require()
+    name = (name or "").strip().strip("/").lower()
     items = _folder_state()
-    keep = [it for it in items if it["name"] != (name or "").strip().strip("/").lower()]
-    if len(keep) == len(items):
+    item = next((it for it in items if it["name"] == name), None)
+    if not item:
         raise SiteError("No folder site with that name")
+    path = Path(item.get("path") or "")
+    if delete_files:
+        path = _folder_deletable(path)  # refuse before touching Apache
+    keep = [it for it in items if it["name"] != name]
     if keep:
         _folder_apply(keep)
     else:
@@ -1019,4 +1123,33 @@ def remove_folder_site(name: str) -> dict:
         FOLDER_CONF.unlink(missing_ok=True)
         if _run(["systemctl", "reload", "apache2"]).returncode != 0:
             _run(["systemctl", "restart", "apache2"])
-    return {"ok": True}
+    try:
+        from . import shadow
+        shadow.drop(f"folder:{name}")
+    except Exception:
+        pass
+    if not delete_files:
+        return {"ok": True}
+
+    def fn(log):
+        if not path.exists():
+            log(f"• {path} is already gone")
+            return {"ok": True, "deleted": False}
+        if backup:
+            from . import backups
+            label = "folder-site-" + re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-")
+            log(f"• Backing up {path} first (it will show under Backups as {label}-<date>.tar.gz)…")
+            log.progress(None, "Backing up")
+            j = backups.create_backup(str(path), label)
+            while j.status == "running":
+                time.sleep(0.5)
+            if j.status != "done":
+                tail = next((l for l in reversed(list(j.lines)) if l.strip()), "")
+                raise SiteError(f"The backup failed, so nothing was deleted: {tail[-200:]}")
+            log(f"✓ Backup saved under Backups")
+        log(f"• Deleting {path}…")
+        log.progress(None, "Deleting")
+        shutil.rmtree(path)
+        log(f"✓ Deleted {path}")
+        return {"ok": True, "deleted": True}
+    return {"job": jobs.launch_fn(f"Delete folder site /{name}", fn, meta={"folder_site": name}).id}
