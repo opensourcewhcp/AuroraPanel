@@ -1143,33 +1143,37 @@
   // Don't start a drag from something the user is actually using (a button, link, slider…).
   const DASH_NO_DRAG = "button, a, input, select, textarea, .slider, .rbtn, [data-go], [role=button]";
 
-  // Pointer-based reorder, works with a real mouse AND touch, where native HTML5 drag doesn't.
-  // A drag starts only after the pointer moves past a threshold, so plain clicks (navigate, collapse) still work.
-  // Flicker-free: the dragged element is lifted out of the layout (position: fixed, follows the pointer) and a
-  // same-size placeholder holds its spot. Nothing reflows under the pointer, so there's no swap-back jitter.
-  const LIFT_PROPS = ["position", "left", "top", "width", "height", "zIndex", "pointerEvents", "margin", "transform"];
-  function enableReorder(container, { itemSel, handleSel, noDrag, onDrop }) {
-    let drag = null, swallowClick = false, raf = 0, px = 0, py = 0;
+  // Swap reorder, calm by design: the dragged item floats as a clone while nothing else moves, and dropping
+  // it onto another item swaps the two. No live reflow (so no jitter), and with fixed-footprint slots on the
+  // dashboard a swap can't open a gap. Works with a real mouse and touch; a plain click still gets through.
+  function swapNodes(a, b) {
+    const aParent = a.parentNode, aNext = a.nextSibling === b ? a : a.nextSibling;
+    b.parentNode.insertBefore(a, b);
+    aParent.insertBefore(b, aNext);
+  }
+  function enableReorder(container, { itemSel, handleSel, noDrag, onDrop, afterSwap }) {
+    let drag = null, swallowClick = false, raf = 0, px = 0, py = 0, hover = null;
     const THRESH = 5;
+
+    const cardUnder = () => {
+      for (const n of container.children) {
+        if (n === drag.el || !n.matches(itemSel)) continue;
+        const r = n.getBoundingClientRect();
+        if (px >= r.left && px <= r.right && py >= r.top && py <= r.bottom) return n;
+      }
+      return null;
+    };
 
     function frame() {
       raf = 0;
       if (!drag || !drag.moved) return;
-      drag.el.style.transform = `translate(${px - drag.x}px, ${py - drag.y}px)`;
-      // Nearest real sibling to the pointer (the placeholder and the lifted element are skipped).
-      let best = null, bestDist = Infinity, before = true;
-      for (const n of container.children) {
-        if (n === drag.el || n === drag.ph || !n.matches(itemSel)) continue;
-        const r = n.getBoundingClientRect();
-        const dx = px - (r.left + r.width / 2), dy = py - (r.top + r.height / 2);
-        const d = dx * dx + dy * dy;
-        if (d < bestDist) { bestDist = d; best = n; before = Math.abs(dx) > Math.abs(dy) ? dx < 0 : dy < 0; }
+      drag.clone.style.transform = `translate(${px - drag.x}px, ${py - drag.y}px)`;
+      const t = cardUnder();
+      if (t !== hover) {
+        if (hover) hover.classList.remove("swap-target");
+        hover = t;
+        if (hover) hover.classList.add("swap-target");
       }
-      if (!best) return;
-      let ref = before ? best : best.nextElementSibling;
-      if (ref === drag.el) ref = drag.el.nextElementSibling;
-      // Move the placeholder only when its slot really changes, no churn, no flicker.
-      if (ref !== drag.ph && drag.ph.nextElementSibling !== ref) container.insertBefore(drag.ph, ref);
     }
 
     container.addEventListener("pointerdown", (e) => {
@@ -1179,7 +1183,7 @@
       if (!item || !container.contains(item)) return;
       if (handleSel && !e.target.closest(handleSel)) return;      // must grab the handle (e.g. the panel header)
       if (noDrag && e.target.closest(noDrag)) return;             // not from a control inside the item
-      drag = { el: item, x: e.clientX, y: e.clientY, pid: e.pointerId, moved: false, ph: null };
+      drag = { el: item, x: e.clientX, y: e.clientY, pid: e.pointerId, moved: false, clone: null };
       px = e.clientX; py = e.clientY;
     });
 
@@ -1192,34 +1196,43 @@
         try { drag.el.setPointerCapture(drag.pid); } catch (_) {}
         document.body.classList.add("reordering");
         const r = drag.el.getBoundingClientRect();
-        // Placeholder carries the same classes (so the same grid span) and the exact size, to hold a stable gap.
-        const ph = document.createElement(drag.el.tagName);
-        ph.className = drag.el.className + " reorder-ph";
-        ph.style.cssText = `width:${r.width}px;height:${r.height}px;`;
-        drag.ph = ph;
-        drag.el.after(ph);
-        // Lift the element out of flow so it can't push its own neighbours around.
-        drag.el.classList.add("dragging");
-        Object.assign(drag.el.style, {
-          position: "fixed", left: r.left + "px", top: r.top + "px", width: r.width + "px",
-          height: r.height + "px", zIndex: "1000", pointerEvents: "none", margin: "0",
-        });
+        // A floating clone follows the cursor; the original stays put, so nothing reflows while dragging.
+        const clone = drag.el.cloneNode(true);
+        clone.classList.add("drag-clone");
+        clone.removeAttribute("id");
+        Object.assign(clone.style, { position: "fixed", left: r.left + "px", top: r.top + "px",
+          width: r.width + "px", height: r.height + "px", margin: "0", zIndex: "1000", pointerEvents: "none" });
+        drag.clone = clone;
+        document.body.appendChild(clone);
+        drag.el.classList.add("drag-source");                     // dim the original in place
       }
       e.preventDefault();
       if (!raf) raf = requestAnimationFrame(frame);
     });
 
-    const end = () => {
+    const end = (e) => {
       if (!drag) return;
+      if (e && e.clientX != null) { px = e.clientX; py = e.clientY; }   // use the actual release point
       const d = drag; drag = null;
       if (raf) { cancelAnimationFrame(raf); raf = 0; }
       document.body.classList.remove("reordering");
-      if (!d.moved) return;
-      d.el.classList.remove("dragging");
-      LIFT_PROPS.forEach((p) => { d.el.style[p] = ""; });             // drop it back into flow
-      if (d.ph && d.ph.parentNode) { container.insertBefore(d.el, d.ph); d.ph.remove(); }
-      swallowClick = true;                                            // eat the click this drag would otherwise fire
-      if (onDrop) onDrop();
+      if (hover) { hover.classList.remove("swap-target"); hover = null; }
+      if (!d.moved) { if (d.clone) d.clone.remove(); return; }
+      d.el.classList.remove("drag-source");
+      if (d.clone) d.clone.remove();
+      // Resolve the drop target from the final pointer position (a fast drop can beat the rAF hover update).
+      let target = null;
+      for (const n of container.children) {
+        if (n === d.el || !n.matches(itemSel)) continue;
+        const r = n.getBoundingClientRect();
+        if (px >= r.left && px <= r.right && py >= r.top && py <= r.bottom) { target = n; break; }
+      }
+      if (target && target !== d.el) {
+        swapNodes(d.el, target);                                  // exchange the two slots
+        if (afterSwap) afterSwap();
+        swallowClick = true;                                      // eat the click this drop would otherwise fire
+        if (onDrop) onDrop();
+      }
     };
     container.addEventListener("pointerup", end);
     container.addEventListener("pointercancel", end);
@@ -2093,14 +2106,29 @@
   async function fmUploadFiles(files) {
     const list = [...(files || [])];
     if (!list.length) return;
+    // Orange progress bar while files upload.
+    const fill = el("span");
+    const label = el("div", { class: "fm-up-label", text: "Preparing upload…" });
+    const panel = el("div", { class: "fm-upload-progress" }, [label, el("div", { class: "fm-upbar" }, fill)]);
+    (document.getElementById("fm-zone") || document.body).prepend(panel);
     let ok = 0;
-    for (const file of list) {
-      const form = new FormData();
-      form.append("path", fmState.cwd);
-      form.append("file", file);
-      try { await API.postForm("/api/files/upload", form); ok++; }
-      catch (err) { toast(`${file.name}: ${err.message}`, "bad"); }
+    for (let i = 0; i < list.length; i++) {
+      const file = list[i];
+      fill.style.width = "0%";
+      let lastSent = 0, lastT = Date.now(), rate = 0;
+      const nth = list.length > 1 ? `  ·  file ${i + 1} of ${list.length}` : "";
+      try {
+        await API.fileUpload(fmState.cwd, file, (sent, total) => {
+          const pct = total ? (sent / total) * 100 : 0;
+          fill.style.width = pct.toFixed(1) + "%";
+          const now = Date.now();
+          if (now - lastT > 350) { rate = (sent - lastSent) / ((now - lastT) / 1000); lastSent = sent; lastT = now; }
+          label.textContent = `Uploading ${file.name}  ·  ${fmtBytes(sent)} of ${fmtBytes(total)}  ·  ${pct.toFixed(0)}%` + (rate ? `  ·  ${fmtBytes(rate)}/s` : "") + nth;
+        });
+        ok++;
+      } catch (err) { toast(`${file.name}: ${err.message}`, "bad"); }
     }
+    panel.remove();
     if (ok) toast(`Uploaded ${ok} file${ok > 1 ? "s" : ""}`, "good");
     fmLoad(fmState.cwd);
   }

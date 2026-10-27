@@ -139,6 +139,25 @@ const API = (() => {
       xhr.onerror = () => reject(new Error("Upload failed, connection lost"));
       xhr.send(form);
     }),
+    // File Manager upload with progress (XHR; fetch can't report upload progress).
+    fileUpload: (path, file, onProgress) => new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      const form = new FormData();
+      form.append("path", path);
+      form.append("file", file);
+      xhr.open("POST", "/api/files/upload");
+      xhr.withCredentials = true;
+      xhr.upload.onprogress = (e) => onProgress && onProgress(e.loaded, e.lengthComputable ? e.total : file.size);
+      xhr.onload = () => {
+        let data = null;
+        try { data = JSON.parse(xhr.responseText); } catch (e) {}
+        if (xhr.status === 401) { const err = new Error("Not authenticated"); err.status = 401; reject(err); return; }
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+        else reject(new Error((data && data.detail) || xhr.statusText || "Upload failed"));
+      };
+      xhr.onerror = () => reject(new Error("Upload failed, connection lost"));
+      xhr.send(form);
+    }),
     backupDownloadUrl: (name) => `/api/backups/download?name=${encodeURIComponent(name)}`,
     backupWizard: () => request("GET", "/api/backups/wizard"),
     backupWizardCreate: (body) => request("POST", "/api/backups/wizard", body),

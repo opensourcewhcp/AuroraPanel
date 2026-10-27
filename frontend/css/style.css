@@ -249,18 +249,15 @@ select option { background: var(--glass-solid); }
 .bento .bcard { cursor: grab; }
 .bento .bcard:active { cursor: grabbing; }
 .bento .bcard button, .bento .bcard a, .bento .bcard .rbtn, .bento .bcard input, .bento .bcard [data-go] { cursor: pointer; }
-/* The lifted element follows the pointer; a same-size placeholder holds its spot (no reflow, no flicker). */
-.bcard.dragging, .tile-group.dragging { opacity: .97; box-shadow: 0 26px 60px -14px rgba(0,0,0,.6); cursor: grabbing; transition: none; }
-.reorder-ph { background: transparent !important; box-shadow: none !important; outline: 2px dashed var(--stroke-strong); outline-offset: -3px; }
-.reorder-ph > * { visibility: hidden !important; }
-.reorder-ph::before, .reorder-ph::after { display: none !important; }
-:root[data-theme="light"] .reorder-ph { outline-color: var(--accent); }
+/* Swap reorder: the dragged item floats as a clone, the original dims in place, the swap target highlights. */
+.drag-clone { opacity: .97; box-shadow: 0 26px 60px -14px rgba(0,0,0,.6); cursor: grabbing; transition: none; }
+.drag-source { opacity: .32; }
+.swap-target { outline: 2px solid var(--accent); outline-offset: -2px; transition: outline-color .1s; }
 .dash-tools { display: flex; justify-content: flex-end; min-height: 0; margin-bottom: -8px; }
 .dash-reset[hidden] { display: none; }
 /* "All tools" panels: the title bar is the drag grip; the tiles inside stay clickable. */
 .tile-group-head { cursor: grab; }
 .tile-group-head:active { cursor: grabbing; }
-/* .tile-group.dragging shares the carried look defined above. */
 /* While a reorder is in progress, don't let the drag select text; let touch drag the panel by its header. */
 body.reordering, body.reordering * { user-select: none; -webkit-user-select: none; }
 body.reordering { cursor: grabbing; }
@@ -951,6 +948,11 @@ a.btn { text-decoration: none; }
 .fm-dropzone { position: relative; }
 .fm-drop-overlay { position: absolute; inset: 0; z-index: 5; display: none; place-items: center; border: 2px dashed var(--accent); border-radius: var(--radius); background: rgba(255,122,26,0.1); font-weight: 650; color: var(--text); pointer-events: none; }
 .fm-dropzone.dragging .fm-drop-overlay { display: grid; }
+/* Upload progress, orange bar. */
+.fm-upload-progress { margin: 0 0 14px; padding: 12px 14px; border: 1px solid var(--stroke); border-radius: var(--radius); background: var(--glass); }
+.fm-up-label { font-size: 13px; color: var(--text); margin-bottom: 9px; font-variant-numeric: tabular-nums; }
+.fm-upbar { height: 8px; border-radius: 6px; background: var(--w40); overflow: hidden; }
+.fm-upbar > span { display: block; height: 100%; width: 0; border-radius: 6px; background: linear-gradient(90deg, var(--accent), #ff9d4d); transition: width .15s ease; }
 
 /* modal */
 /* Anchored near the top (not centred): a dialog whose height changes with its tabs then grows downwards instead of jumping. */
