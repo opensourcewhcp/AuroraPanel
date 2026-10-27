@@ -225,7 +225,7 @@
     dashboard: "dashboard", terminal: "terminal", services: "services", processes: "processes",
     packages: "packages", network: "network", firewall: "firewall", users: "users",
     mysql: "database", mysqlwiz: "wizard", pgsql: "database", pgwiz: "wizard",
-    vhosts: "globe", redirects: "redirect", zones: "zone", dyndns: "refresh", ddnshosts: "refresh",
+    vhosts: "globe", redirects: "redirect", revproxy: "redirect", zones: "zone", dyndns: "refresh", ddnshosts: "refresh",
     activity: "t_activity", isolation: "t_isolate", dockerapps: "t_docker", servers: "t_servers", mysites: "globe", panelusers: "t_usergear", wptoolkit: "t_wptool", migrate: "t_migrate", alerts: "t_bell", schedbackups: "t_cloudup", updates: "t_update", autossl: "t_autossl",
     visitors: "visitors", errors: "errors", bandwidth: "gauge", rawaccess: "rawlog", analytics: "chart", resources: "dashboard",
     ssh: "key", ipblocker: "ban", ssl: "lock", panelhttps: "lock", tokens: "token", hotlink: "link", secreport: "listing",
@@ -702,7 +702,7 @@
     virus: "Virus Scanner", dns: "Track DNS",
     ssh: "SSH Access", ipblocker: "IP Blocker & Trust", ssl: "SSL/TLS Certificates", tokens: "Manage API Tokens",
     hotlink: "Hotlink Protection", redirects: "Redirects", modsec: "WAF Firewall", globalsec: "Global Security", secreport: "Security Report", activity: "Activity Log", isolation: "Site Isolation", dockerapps: "Docker", servers: "Servers", mysites: "My Websites", panelusers: "Panel Users", wptoolkit: "WordPress Toolkit", migrate: "Move from cPanel", alerts: "Alerts", schedbackups: "Scheduled Backups", updates: "Updates", autossl: "AutoSSL", ddnshosts: "Dynamic DNS", visitors: "Visitors", errors: "Errors", bandwidth: "Bandwidth", rawaccess: "Raw Access", analytics: "Analytics", resources: "Resource Usage", leech: "Fail2ban",
-    fixperms: "Fix Home Permissions", vhosts: "Domains", dyndns: "Dynamic DNS Updater", zones: "Zone Editor",
+    fixperms: "Fix Home Permissions", vhosts: "Domains", revproxy: "Reverse Proxy", dyndns: "Dynamic DNS Updater", zones: "Zone Editor",
     mysql: "Manage Databases", mysqlwiz: "MariaDB Wizard", pgsql: "PostgreSQL Databases",
     pgwiz: "PostgreSQL Wizard",
     sysapps: "System Applications", appmgr: "Application Manager", phpver: "PHP Settings",
@@ -798,6 +798,7 @@
       leech: viewLeech,
       fixperms: viewFixPerms,
       vhosts: viewDomains,
+      revproxy: viewRevProxy,
       dyndns: viewDynDNS,
       zones: viewZoneEditor,
       mysql: viewMySQL,
@@ -839,7 +840,7 @@
   //  bar) instead of failing. "soft" ones only show a banner above the page.
   // ======================================================================
   const VIEW_NEEDS = {
-    vhosts: ["apache"], redirects: ["apache"], hotlink: ["apache"], indexes: ["apache"], mime: ["apache"], errorpages: ["apache"],
+    vhosts: ["apache"], revproxy: ["apache"], redirects: ["apache"], hotlink: ["apache"], indexes: ["apache"], mime: ["apache"], errorpages: ["apache"],
     handlers: ["apache"], dirprivacy: ["apache"], webdisk: ["apache"], phpver: ["web"],
     appstore: ["web", "mariadb"], app: ["web", "mariadb"], wordpress: ["web", "mariadb"],
     modsec: ["apache", "modsecurity"], dockerapps: ["docker"], autossl: { need: ["apache"], soft: ["certbot"] }, visitors: ["apache"], analytics: ["apache"], rawaccess: ["apache"], ddnshosts: { soft: ["bind9"] }, ssl: { need: ["apache"], soft: ["certbot"] },
@@ -988,6 +989,7 @@
     { name: "Domains", icon: "globe", tiles: [
       { label: "Domains", icon: "globe", view: "vhosts" },
       { label: "Redirects", icon: "redirect", view: "redirects" },
+      { label: "Reverse Proxy", icon: "redirect", view: "revproxy" },
       { label: "Zone Editor", icon: "zone", view: "zones" },
       { label: "Dynamic DNS", icon: "refresh", view: "ddnshosts" },
     ]},
@@ -2120,6 +2122,74 @@
     ]);
     openModal(`${verb} ${names.length} item${names.length > 1 ? "s" : ""}`, body, [goBtn]);
     draw(fmState.cwd);
+  }
+
+  // ======================================================================
+  //  Reverse Proxy: expose a local app/service at a domain over HTTPS
+  // ======================================================================
+  function viewRevProxy(root) {
+    const domain = el("input", { type: "text", placeholder: "app.example.com" });
+    const target = el("input", { type: "text", placeholder: "3000   (or localhost:3000, or http://127.0.0.1:3000)" });
+    const ws = el("input", { type: "checkbox" }); ws.checked = true;
+    const aliases = el("input", { type: "text", placeholder: "optional: www.app.example.com, api.app.example.com" });
+    const list = el("div", { id: "rp-list" });
+    const createBtn = btn("Create reverse proxy", async () => {
+      const d = domain.value.trim(), t = target.value.trim();
+      if (!d || !t) { toast("Enter a domain and where to forward to", "bad"); return; }
+      createBtn.disabled = true;
+      try {
+        const r = await API.proxyCreate(d, t, ws.checked, aliases.value.split(",").map((x) => x.trim()).filter(Boolean));
+        toast(`Reverse proxy created: ${d} forwards to ${r.target}`, "good");
+        domain.value = ""; target.value = ""; aliases.value = ""; ws.checked = true;
+        load();
+      } catch (e) { toast(e.message, "bad"); }
+      createBtn.disabled = false;
+    }, "btn-primary");
+
+    root.append(el("div", { class: "card" }, [
+      el("h3", { text: "Expose a local app at a domain" }),
+      el("p", { class: "muted", text: "Put a service running on this machine (any port) on a domain over HTTPS. The panel builds an Apache reverse proxy, so the WAF, IP bans and AutoSSL all apply. It starts on a self-signed certificate: point the domain here, then switch it to Let's Encrypt under Domains for a browser-trusted one." }),
+      kv([
+        ["Domain", domain],
+        ["Forward to", target],
+        ["Aliases", aliases],
+        ["WebSockets", el("label", { class: "rp-ws" }, [ws, el("span", { class: "muted", text: "Keep on unless the app has no live or realtime features" })])],
+      ]),
+      el("div", { class: "toolbar", style: "margin-top:12px" }, createBtn),
+    ]), list);
+
+    async function rpDelete(p) {
+      if (!confirmInline(`Delete the reverse proxy for ${p.domain}? The app it forwards to is not touched.`)) return;
+      try { await API.proxyDelete(p.domain); toast(`Deleted ${p.domain}`, "good"); load(); }
+      catch (e) { toast(e.message, "bad"); }
+    }
+    async function load() {
+      await guardedLoad(async () => {
+        let data;
+        try { data = await API.proxyList(); }
+        catch (e) { list.innerHTML = ""; list.append(el("div", { class: "card" }, el("p", { class: "empty", text: e.message }))); return; }
+        list.innerHTML = "";
+        if (!data.proxies.length) { list.append(el("div", { class: "card" }, empty("redirect", "No reverse proxies yet", "Create one above to put a local app on a domain."))); return; }
+        const rows = data.proxies.map((p) => el("tr", {}, [
+          el("td", {}, el("a", { href: p.url, target: "_blank", rel: "noopener", text: p.domain + " ↗" })),
+          el("td", { class: "muted", text: "→ " + p.target }),
+          el("td", {}, [pill(p.ssl === "letsencrypt" ? "Let's Encrypt" : p.ssl === "selfsigned" ? "self-signed" : p.ssl, p.ssl === "letsencrypt" ? "good" : "warn"),
+            p.websockets ? pill("ws", "dim") : null]),
+          el("td", { class: "actions" }, [
+            el("button", { class: "btn btn-sm btn-ghost", text: "HTTPS / manage", onclick: () => navigate("vhosts") }),
+            el("button", { class: "btn btn-sm btn-danger", text: "Delete", onclick: () => rpDelete(p) }),
+          ]),
+        ]));
+        list.append(el("div", { class: "card" }, [
+          el("h3", { text: `Reverse proxies (${data.proxies.length})` }),
+          el("div", { class: "table-wrap" }, el("table", {}, [
+            el("thead", {}, el("tr", {}, ["Domain", "Forwards to", "Certificate", ""].map((h) => el("th", { text: h })))),
+            el("tbody", {}, rows),
+          ])),
+        ]));
+      });
+    }
+    load();
   }
 
   async function fmUnzip(entry) {

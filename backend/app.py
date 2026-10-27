@@ -29,7 +29,7 @@ from . import (
     abuse, alerts, slackbot, antivirus, audit, authz, autossl, dockerapps, isolate, migrate, panelusers, servers, wptoolkit, schedules, tasks, updates, apache, apitokens, appmanager, auth, backups, config, cron,
     apps, databases, diskusage, dnszones, domains, fail2ban, netmgr, sites, files, firewall, ipblocker, jobs,
     metrics, modsecurity, netdiag, waf, packages, perms, phpmgr, services, sslcerts, sshaccess,
-    secreport, shadow, sysapps, system_info, terminal, twofa, users,
+    proxysites, secreport, shadow, sysapps, system_info, terminal, twofa, users,
     appconfig, ddns, ddnshosts, ftp, gitvc, guard, images, ipsec, webaccess, netmon, openvpn, mail, panelhttps, phpsettings, portcheck, requires, version, vpncommon, wireguard,
 )
 
@@ -1974,6 +1974,35 @@ class SiteConfBody(BaseModel):
 @app.post("/api/sites/conf")
 def api_site_conf(body: SiteConfBody, user: str = auth.CurrentUser):
     return _site_call(sites.save_conf_text, body.name, body.text)
+
+
+# ---- Reverse proxy: expose a local service at a domain over HTTPS ----
+class ProxyCreateBody(BaseModel):
+    domain: str
+    target: str
+    websockets: bool = True
+    aliases: list[str] = []
+
+
+@app.get("/api/proxy")
+def api_proxy_list(user: str = auth.CurrentUser):
+    return proxysites.list_proxies()
+
+
+@app.post("/api/proxy/create")
+def api_proxy_create(body: ProxyCreateBody, user: str = auth.CurrentUser):
+    try:
+        return proxysites.create_proxy(body.domain, body.target, body.websockets, body.aliases)
+    except (proxysites.ProxyError, sites.SiteError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/proxy/delete")
+def api_proxy_delete(body: NameBody, user: str = auth.CurrentUser):
+    try:
+        return proxysites.delete_proxy(body.name)
+    except (proxysites.ProxyError, sites.SiteError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 class SystemCustomBody(BaseModel):
