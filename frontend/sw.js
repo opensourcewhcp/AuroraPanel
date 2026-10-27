@@ -1,6 +1,6 @@
 // AuroraPanel service worker: lets the panel be installed as an app and keeps
 // its own static files (scripts, styles, icons, fonts) for a quick start.
-// It never stores /api/ answers — nothing about the server is kept on the device —
+// It never stores /api/ answers, nothing about the server is kept on the device, 
 // and always asks the server first, so a panel update shows up straight away.
 const CACHE = "aurora-static-v1";
 

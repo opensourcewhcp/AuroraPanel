@@ -1,4 +1,4 @@
-/* AuroraPanel — Email section (accounts, forwarders, routing, autoresponders, filters,
+/* AuroraPanel, Email section (accounts, forwarders, routing, autoresponders, filters,
    spam, lists, delivery tracking, deliverability, import, encryption, calendars, disk, queue).
    Loaded before app.js; app.js calls window.AuroraMail(ui) once with its helpers. */
 window.AuroraMail = (ui) => {
@@ -28,7 +28,7 @@ window.AuroraMail = (ui) => {
       el("div", { class: `em-use-bar ${pct >= 90 ? "bad" : pct >= 75 ? "warn" : ""}` }, el("span", { style: `width:${quotaMb ? Math.max(pct, used ? 1 : 0) : 0}%` })),
     ]);
   }
-  // The default domain in forms: not an IP address (left from before those were refused — mail apps reject name@1.2.3.4).
+  // The default domain in forms: not an IP address (left from before those were refused, mail apps reject name@1.2.3.4).
   const prefDomain = () => (MAIL.domains || []).find((d) => !/^[0-9.]+$/.test(d)) || (MAIL.domains || [])[0];
   function domainSelect(domains, value, opts = {}) {
     const s = el("select", { class: "em-select" });
@@ -153,13 +153,13 @@ window.AuroraMail = (ui) => {
         btn("Send a test email", () => testMail(), "btn-ghost"),
       ]),
     ]));
-    if (selfSigned) body.append(el("div", { class: "dm-note" }, [icon("lock", 15), el("span", { html: "Mail is encrypted with a <b>self-signed certificate</b>. Phones and mail apps will warn about it — get a free Let's Encrypt certificate under <b>Encryption</b> once your mail host name points here." }),
+    if (selfSigned) body.append(el("div", { class: "dm-note" }, [icon("lock", 15), el("span", { html: "Mail is encrypted with a <b>self-signed certificate</b>. Phones and mail apps will warn about it, get a free Let's Encrypt certificate under <b>Encryption</b> once your mail host name points here." }),
       btn("Encryption", () => navigate("mailtls"), "btn-ghost")]));
     const stat = (n, label, ico, view) => el("button", { type: "button", class: "em-stat", onclick: () => navigate(view) }, [el("span", { class: "em-stat-ico" }, icon(ico, 18)), el("b", { text: String(n) }), el("span", { class: "muted", text: label })]);
     body.append(el("div", { class: "em-stats" }, [stat(st.domains, "domains", "globe", "deliverability"), stat(st.accounts, "email accounts", "users", "mailaccounts"),
       stat(st.forwarders, "forwarders", "forward", "forwarders"), stat(st.lists, "mailing lists", "listing", "mailinglists")]));
     if (!st.accounts) {
-      const steps = [["Create your first email account", "Pick a domain and a name — the domain is set up automatically.", "mailaccounts", st.accounts > 0],
+      const steps = [["Create your first email account", "Pick a domain and a name, the domain is set up automatically.", "mailaccounts", st.accounts > 0],
         ["Publish the DNS records", "MX, SPF, DKIM and DMARC so mail arrives and isn't marked as spam.", "deliverability", false],
         ["Connect your phone and computer", "One-tap profile for iPhone/Mac; automatic setup for Thunderbird and Outlook.", "mailaccounts", false]];
       body.append(el("div", { class: "card em-start" }, [el("h3", { text: "Get started in three steps" }),
@@ -194,10 +194,10 @@ window.AuroraMail = (ui) => {
     const lc = st.local || {};
     body.append(el("div", { class: "card em-local" }, [el("div", { class: "em-card-h" }, [el("h3", { text: "Local mail (no internet needed)" }),
       lc.enabled ? pill(`on · @${lc.domain}`, "good") : pill("off")]),
-      el("p", { class: "muted", text: `Gives this ${lc.mdns ? "device" : "server"} its own mail domain, ${lc.domain}. Apps here (WordPress, cron, scripts) can use addresses like admin@${lc.domain}, and other AuroraPanel servers on the same network can send to it — they find each other by their .local name, no DNS or internet required.` }),
+      el("p", { class: "muted", text: `Gives this ${lc.mdns ? "device" : "server"} its own mail domain, ${lc.domain}. Apps here (WordPress, cron, scripts) can use addresses like admin@${lc.domain}, and other AuroraPanel servers on the same network can send to it, they find each other by their .local name, no DNS or internet required.` }),
       lc.enabled ? el("div", { class: "em-local-tips" }, [
-        el("div", {}, [el("b", { text: "Here" }), el("span", { class: "muted", text: lc.accounts.length ? lc.accounts.join(", ") : `No accounts yet — create e.g. admin@${lc.domain} in Email Accounts.` })]),
-        el("div", {}, [el("b", { text: "Other devices" }), el("span", { class: "muted", text: `Send to name@<their-hostname>.local (e.g. you@ns2.local). ${lc.mdns ? "This device answers its .local name (avahi is running)." : "This machine doesn't run avahi, so other devices can't find it by name — fine for mail on this server itself."}` })]),
+        el("div", {}, [el("b", { text: "Here" }), el("span", { class: "muted", text: lc.accounts.length ? lc.accounts.join(", ") : `No accounts yet, create e.g. admin@${lc.domain} in Email Accounts.` })]),
+        el("div", {}, [el("b", { text: "Other devices" }), el("span", { class: "muted", text: `Send to name@<their-hostname>.local (e.g. you@ns2.local). ${lc.mdns ? "This device answers its .local name (avahi is running)." : "This machine doesn't run avahi, so other devices can't find it by name, fine for mail on this server itself."}` })]),
       ]) : null,
       el("div", { class: "toolbar" }, lc.enabled ? [btn("Create an account here", () => { state.mailDomain = lc.domain; navigate("mailaccounts"); }, "btn-primary"),
         btn("Turn off", () => call(() => API.mailLocal(false), "Local mail turned off", () => navigate("email", { history: "none" })), "btn-ghost")]
@@ -212,8 +212,8 @@ window.AuroraMail = (ui) => {
       el("p", { class: "muted", text: "The name this server introduces itself with to other mail servers. Gmail and Outlook check that it points to this server and matches the IP's reverse DNS (PTR)." }),
       el("div", { class: "em-toggle" }, [autoSw, el("div", {}, [el("b", { text: "Choose automatically (recommended)" }),
         el("span", { class: "muted", text: det.hostname ? `Best name now: ${det.hostname}. ${det.reason}` : "Follows your domains' DNS and the IP's reverse DNS." })])]),
-      det.ptr !== undefined ? kv([["This server's IP", det.ip || "—"], ["Its reverse DNS (PTR)", det.ptr ? det.ptr : "none"],
-        ["Matches the server name", det.ptr && det.ptr === st.hostname ? pill("yes", "good") : pill("no — ask your provider", "warn")]]) : null,
+      det.ptr !== undefined ? kv([["This server's IP", det.ip || ", "], ["Its reverse DNS (PTR)", det.ptr ? det.ptr : "none"],
+        ["Matches the server name", det.ptr && det.ptr === st.hostname ? pill("yes", "good") : pill("no, ask your provider", "warn")]]) : null,
       el("div", { class: "toolbar" }, [hostIn, btn("Use this name", () => { autoSw.querySelector("input").checked = false; call(() => API.mailHostname(hostIn.value.trim()), "Server name saved", () => navigate("email", { history: "none" })); }, "btn-primary")])].filter(Boolean)));
   }
   function testMail(prefill) {
@@ -272,10 +272,10 @@ window.AuroraMail = (ui) => {
         el("div", { class: "grow" }, [
           el("b", { text: `Mail without a domain: info@${ld}` }),
           el("p", { class: "muted", text: ips.length
-            ? `Webmail and mail apps refuse addresses on an IP (${ips.join(", ")}). Local mail gives this server addresses like info@${ld} — for alerts, apps and webmail, no DNS or internet needed.`
-            : `Gives this server addresses like info@${ld} — for alerts, cron, apps and webmail, with no DNS or internet needed. Other AuroraPanel servers on your network can send to it too.` }),
+            ? `Webmail and mail apps refuse addresses on an IP (${ips.join(", ")}). Local mail gives this server addresses like info@${ld}, for alerts, apps and webmail, no DNS or internet needed.`
+            : `Gives this server addresses like info@${ld}, for alerts, cron, apps and webmail, with no DNS or internet needed. Other AuroraPanel servers on your network can send to it too.` }),
         ]),
-        btn(`Turn on @${ld}`, () => call(() => API.mailLocal(true), `Local mail is on — create info@${ld} now`, load), "btn-primary"),
+        btn(`Turn on @${ld}`, () => call(() => API.mailLocal(true), `Local mail is on, create info@${ld} now`, load), "btn-primary"),
       ]));
     }
     function draw() {
@@ -294,7 +294,7 @@ window.AuroraMail = (ui) => {
       const total = accs.reduce((n, a) => n + (a.used_bytes || 0), 0);
       summary.textContent = `${accs.length} account${accs.length === 1 ? "" : "s"} · ${fmtBytes(total)} stored`;
       list.innerHTML = "";
-      if (!accs.length) { list.append(empty("users", "No email accounts yet", "Create one — its domain is set up for mail automatically.", btn("Create an email account", () => createAccount(), "btn-primary"))); return; }
+      if (!accs.length) { list.append(empty("users", "No email accounts yet", "Create one, its domain is set up for mail automatically.", btn("Create an email account", () => createAccount(), "btn-primary"))); return; }
       if (!rows.length) {
         if (view.domain && !accs.some((a) => a.domain === view.domain)) {
           const d = view.domain;
@@ -328,14 +328,14 @@ window.AuroraMail = (ui) => {
       bulk.innerHTML = "";
       bulk.hidden = !view.sel.size;
       if (!view.sel.size) return;
-      bulk.append(el("b", { text: `${view.sel.size} selected` }), armed("Delete", "Click again — delete accounts", async () => {
+      bulk.append(el("b", { text: `${view.sel.size} selected` }), armed("Delete", "Click again, delete accounts", async () => {
         for (const a of [...view.sel]) await call(() => API.mailAccountDelete(a, false));
         view.sel.clear(); toast("Deleted (mail kept on disk)", "good"); load();
       }, "btn-danger"), btn("Clear", () => { view.sel.clear(); draw(); }, "btn-ghost"));
     }
     function createAccount() {
       const ad = addrInput(view.domain || (data && data.domains[0]) || "");
-      const name = el("input", { type: "text", placeholder: "Optional — e.g. Sales team" });
+      const name = el("input", { type: "text", placeholder: "Optional, e.g. Sales team" });
       const pw = pwField(true);
       let quota = 1024;
       const qCustom = el("input", { type: "number", min: 1, step: 1, value: 1024, class: "em-qnum", hidden: true });
@@ -350,7 +350,7 @@ window.AuroraMail = (ui) => {
       ad.user.oninput = upd; ad.dp.addEventListener("change", upd);
       pw.gen.click();
       openModal("Create an email account", el("div", { class: "em-form" }, [
-        field("Email address", ad.node), field("Display name", name), field("Password", pw.node, "Share it securely — it's stored only as a hash."),
+        field("Email address", ad.node), field("Display name", name), field("Password", pw.node, "Share it securely, it's stored only as a hash."),
         field("Storage", el("div", {}, [qChips, qCustom]), "Mail over the limit is refused until space is freed."),
         el("label", { class: "dm-check" }, [again, el("span", { text: "Create another after this one" })]), preview]), [
         el("button", { class: "btn btn-primary", text: "Create", onclick: async (e) => {
@@ -446,7 +446,7 @@ window.AuroraMail = (ui) => {
 
   // ------------------------------------------------------------------ Forwarders
   async function viewForwarders(root) {
-    const head = pageHead("Forwarders", "Send a copy of incoming mail from one address to another — or forward a whole domain.", [
+    const head = pageHead("Forwarders", "Send a copy of incoming mail from one address to another, or forward a whole domain.", [
       el("a", { class: "btn btn-ghost", href: "/api/mail/export?kind=forwarders", download: "" }, [icon("backup", 14), " Export CSV"]),
       btn("Add Domain Forwarder", () => addDomainFwd(), "btn-ghost"),
       el("button", { class: "btn btn-primary", onclick: () => addFwd() }, [icon("forward", 15), " Add Forwarder"])]);
@@ -485,7 +485,7 @@ window.AuroraMail = (ui) => {
       const kind = radioCards("fwd-kind", [
         { value: "forward", label: "Forward to email address", desc: "One or more addresses, separated by commas.", extra: dest },
         { value: "fail", label: "Reject with a message", desc: "The sender gets this error right away (at SMTP time).", extra: msg },
-        { value: "discard", label: "Discard silently", desc: "Not recommended — the sender never learns the mail was lost.", tone: "warn" }], "forward");
+        { value: "discard", label: "Discard silently", desc: "Not recommended, the sender never learns the mail was lost.", tone: "warn" }], "forward");
       openModal("Add a forwarder", el("div", { class: "em-form" }, [field("Address to forward", ad.node), field("Destination", kind)]), [
         el("button", { class: "btn btn-primary", text: "Add Forwarder", onclick: async () => {
           if (await call(() => API.mailForwarderAdd({ source: ad.value(), kind: kind.value(), dest: dest.value, message: msg.value }), "Forwarder added")) { closeModal(); load(); }
@@ -542,7 +542,7 @@ window.AuroraMail = (ui) => {
         el("div", { class: "em-mxbox-h" }, [el("b", { text: "MX records for " + sel.value }), el("span", { class: "muted", text: "Where the internet sends this domain's mail" })]),
         r.mx.length ? el("div", { class: "em-mx" }, r.mx.map(([p, h]) => el("div", { class: "em-mx-row" }, [el("span", { class: "em-mx-pri", title: "Priority (lower is tried first)", text: String(p) }),
           el("code", { class: "em-mono", text: h }), h === r.hostname ? pill("this server", "good") : pill("another server")])))
-          : el("p", { class: "muted", text: "No MX records — mail falls back to the domain's A record. Publish one under Email Deliverability." }),
+          : el("p", { class: "muted", text: "No MX records, mail falls back to the domain's A record. Publish one under Email Deliverability." }),
       ]), el("div", { class: "em-route-act" }, [save, btn("Zone Editor", () => navigate("zones"), "btn-ghost")]));
     };
     sel.onchange = draw; draw();
@@ -580,7 +580,7 @@ window.AuroraMail = (ui) => {
 
   // ------------------------------------------------------------------ Autoresponders
   async function viewAutoresponders(root) {
-    const head = pageHead("Autoresponders", "Automatic replies — out of office, holidays, or “we got your message”.", [el("button", { class: "btn btn-primary", onclick: () => edit() }, [icon("reply", 15), " Add Autoresponder"])]);
+    const head = pageHead("Autoresponders", "Automatic replies, out of office, holidays, or “we got your message”.", [el("button", { class: "btn btn-primary", onclick: () => edit() }, [icon("reply", 15), " Add Autoresponder"])]);
     const list = el("div", { class: "em-list" }, el("div", { class: "loading", text: "Loading…" }));
     root.append(head, el("div", { class: "card em-pad0" }, list));
     let data;
@@ -594,7 +594,7 @@ window.AuroraMail = (ui) => {
     };
     function draw() {
       list.innerHTML = "";
-      if (!data.autoresponders.length) { list.append(empty("reply", "No autoresponders", data.accounts.length ? "Set one up for holidays or a support address." : "Autoresponders run on an email account — create one first.", data.accounts.length ? btn("Add Autoresponder", () => edit(), "btn-primary") : btn("Email Accounts", () => navigate("mailaccounts"), "btn-primary"))); return; }
+      if (!data.autoresponders.length) { list.append(empty("reply", "No autoresponders", data.accounts.length ? "Set one up for holidays or a support address." : "Autoresponders run on an email account, create one first.", data.accounts.length ? btn("Add Autoresponder", () => edit(), "btn-primary") : btn("Email Accounts", () => navigate("mailaccounts"), "btn-primary"))); return; }
       data.autoresponders.forEach((a) => list.append(el("div", { class: "em-row" }, [avatar(a.address), el("div", { class: "em-row-main", onclick: () => edit(a) }, [el("b", { text: a.address }), el("span", { class: "muted", text: a.subject })]),
         status(a), el("div", { class: "em-row-act" }, [btn("Edit", () => edit(a), "btn-ghost"), armed("Delete", "Click again", () => call(() => API.mailAutoresponderDelete(a.address), "Autoresponder deleted", load), "btn-ghost")])])));
     }
@@ -602,7 +602,7 @@ window.AuroraMail = (ui) => {
       if (!data.accounts.length) { toast("Create an email account first", "bad"); return; }
       a = a || { address: owner || data.accounts[0], subject: "Out of office: %subject%", body: "Hello %from%,\n\nThanks for your message. I'm away until …, and will reply when I'm back.\n\nBest regards", interval_hours: 24, enabled: true, html: false };
       const acc = el("select", {}, data.accounts.map((x) => el("option", { value: x, text: x }))); acc.value = a.address; if (a.subject && data.autoresponders.find((x) => x.address === a.address)) acc.disabled = true;
-      const fromName = el("input", { type: "text", value: a.from_name || "", placeholder: "Optional — e.g. Jane Doe" });
+      const fromName = el("input", { type: "text", value: a.from_name || "", placeholder: "Optional, e.g. Jane Doe" });
       const subject = el("input", { type: "text", value: a.subject || "" });
       const bodyT = el("textarea", { rows: 8, class: "em-text" }); bodyT.value = a.body || "";
       const html = el("input", { type: "checkbox" }); html.checked = !!a.html;
@@ -620,7 +620,7 @@ window.AuroraMail = (ui) => {
           html.checked ? el("div", { class: "em-prev-b", html: f(bodyT.value).replace(/<script[\s\S]*?<\/script>/gi, "") }) : el("pre", { class: "em-prev-b", text: f(bodyT.value) }));
       };
       [subject, bodyT, fromName, acc].forEach((x) => x.addEventListener("input", upd)); html.onchange = upd;
-      openModal(a.subject && data.autoresponders.find((x) => x.address === a.address) ? `Autoresponder — ${a.address}` : "Add an autoresponder", el("div", { class: "em-form em-ar" }, [
+      openModal(a.subject && data.autoresponders.find((x) => x.address === a.address) ? `Autoresponder, ${a.address}` : "Add an autoresponder", el("div", { class: "em-form em-ar" }, [
         el("div", {}, [field("Email account", acc), field("From name", fromName), field("Subject", subject),
           field("Message", bodyT), el("div", { class: "em-tags" }, [el("span", { class: "muted", text: "Insert:" }), tag("%subject%", "Their subject"), tag("%from%", "Their name"), tag("%email%", "Their address")]),
           el("label", { class: "dm-check" }, [html, el("span", { text: "The message is HTML" })]),
@@ -640,13 +640,13 @@ window.AuroraMail = (ui) => {
 
   // ------------------------------------------------------------------ Mailing lists
   async function viewLists(root) {
-    const head = pageHead("Mailing Lists", "One address that reaches a whole group — team@, members@, announcements@.", [el("button", { class: "btn btn-primary", onclick: () => edit() }, [icon("listing", 15), " Create a list"])]);
+    const head = pageHead("Mailing Lists", "One address that reaches a whole group, team@, members@, announcements@.", [el("button", { class: "btn btn-primary", onclick: () => edit() }, [icon("listing", 15), " Create a list"])]);
     const list = el("div", { class: "em-list" }, el("div", { class: "loading", text: "Loading…" }));
     root.append(head, el("div", { class: "card em-pad0" }, list));
     let data;
     const load = async () => { try { data = await API.mailLists(); MAIL.domains = data.domains; MAIL.candidates = data.candidates; draw(); } catch (e) { list.innerHTML = ""; list.append(el("p", { class: "empty", text: e.message })); } };
-    const ACC = { public: ["Public", "Anyone can post — e.g. info@ for a small team.", "good"], members: ["Members only", "Only addresses on the list can post — discussion lists.", "warn"],
-      announce: ["Announcements", "Only the owners can post; members just receive — newsletters.", "dim"] };
+    const ACC = { public: ["Public", "Anyone can post, e.g. info@ for a small team.", "good"], members: ["Members only", "Only addresses on the list can post, discussion lists.", "warn"],
+      announce: ["Announcements", "Only the owners can post; members just receive, newsletters.", "dim"] };
     function draw() {
       list.innerHTML = "";
       if (!data.lists.length) { list.append(empty("listing", "No mailing lists", "Create team@yourdomain and add the members.", btn("Create a list", () => edit(), "btn-primary"))); return; }
@@ -665,7 +665,7 @@ window.AuroraMail = (ui) => {
       members.oninput = cnt; cnt();
       const owners = el("input", { type: "text", value: (l.owners || []).join(", "), placeholder: "owner@example.com" });
       const access = radioCards("acc", Object.entries(ACC).map(([k, v]) => ({ value: k, label: v[0], desc: v[1] })), l.access);
-      const opt = (k, label, desc) => { const c = el("input", { type: "checkbox" }); c.checked = l[k] !== false; opt[k] = c; return el("label", { class: "dm-check" }, [c, el("span", {}, [el("b", { text: label }), el("span", { class: "muted", text: ` — ${desc}` })])]); };
+      const opt = (k, label, desc) => { const c = el("input", { type: "checkbox" }); c.checked = l[k] !== false; opt[k] = c; return el("label", { class: "dm-check" }, [c, el("span", {}, [el("b", { text: label }), el("span", { class: "muted", text: `, ${desc}` })])]); };
       openModal(isNew ? "Create a mailing list" : `Edit ${l.address}`, el("div", { class: "em-form" }, [
         isNew ? field("List address", ad.node) : null, field("Description", desc), field("Who can post", access),
         field("Members", el("div", {}, [members, count])), field("Owners", owners, "They receive bounces and unsubscribe requests, and may post to announcement lists."),
@@ -694,23 +694,23 @@ window.AuroraMail = (ui) => {
     let what, fix = "";
     if (x.status === "sent") {
       what = local ? "Delivered to the mailbox" : `Delivered to ${prov || host || "the receiving server"}`;
-      if (x.spam != null && x.spam >= 5) fix = "It got through, but our spam check scored it high — the receiver may file it as spam.";
+      if (x.spam != null && x.spam >= 5) fix = "It got through, but our spam check scored it high, the receiver may file it as spam.";
     } else if (x.status === "deferred") {
-      what = /greylist|try again later|4\.7\.1|temporar/.test(r) ? "Receiver asked us to try again later — retrying automatically"
-        : /timed out|refused|unreachable|no route|lost connection/.test(r) ? "Couldn't reach the receiving server — retrying automatically"
-        : /rate|too many|throttl/.test(r) ? "Receiver is limiting how fast we send — retrying automatically"
-        : /tls|certificate|ssl/.test(r) ? "Secure (TLS) connection to the receiver failed — retrying"
-        : /quota|full/.test(r) ? "Their mailbox is full for now — retrying" : "Temporary problem — retrying automatically";
+      what = /greylist|try again later|4\.7\.1|temporar/.test(r) ? "Receiver asked us to try again later, retrying automatically"
+        : /timed out|refused|unreachable|no route|lost connection/.test(r) ? "Couldn't reach the receiving server, retrying automatically"
+        : /rate|too many|throttl/.test(r) ? "Receiver is limiting how fast we send, retrying automatically"
+        : /tls|certificate|ssl/.test(r) ? "Secure (TLS) connection to the receiver failed, retrying"
+        : /quota|full/.test(r) ? "Their mailbox is full for now, retrying" : "Temporary problem, retrying automatically";
       fix = "Nothing to do yet: the server keeps retrying for up to 5 days. Mail Queue shows what's waiting.";
     } else if (x.status === "bounced" || x.status === "expired") {
       if (/user unknown|5\.1\.1|does not exist|no such user|unknown user|recipient not found|invalid recipient|address rejected/.test(r)) { what = "That email address doesn't exist"; fix = "Check the spelling of the address."; }
       else if (/spf|dkim|dmarc|5\.7\.(1|23|25|26)|spam|blocked|blacklist|blocklist|reputation|policy/.test(r)) { what = "Refused as spam or not authenticated"; fix = "Open Deliverability: SPF, DKIM, DMARC and reverse DNS (PTR) must all be green."; }
-      else if (/quota|mailbox full|5\.2\.2|over quota/.test(r)) { what = "Their mailbox is full"; fix = "Nothing you can fix — try again later or reach them another way."; }
+      else if (/quota|mailbox full|5\.2\.2|over quota/.test(r)) { what = "Their mailbox is full"; fix = "Nothing you can fix, try again later or reach them another way."; }
       else if (/too large|size|5\.3\.4/.test(r)) { what = "The message was too large for the receiver"; fix = "Send the attachment as a link instead."; }
-      else if (x.status === "expired") { what = "Gave up after retrying for days"; fix = "The receiving server never accepted it — check the address or their server."; }
+      else if (x.status === "expired") { what = "Gave up after retrying for days"; fix = "The receiving server never accepted it, check the address or their server."; }
       else { what = "The receiving server refused it permanently"; fix = "The server's answer below says why."; }
     } else if (x.status === "rejected") {
-      if (/relay access denied/.test(r)) { what = "Refused: tried to use this server to relay mail to others"; fix = "Normal — that's a spammer probing. Nothing to do."; }
+      if (/relay access denied/.test(r)) { what = "Refused: tried to use this server to relay mail to others"; fix = "Normal, that's a spammer probing. Nothing to do."; }
       else if (/user unknown|recipient address rejected|unknown in virtual|no such user|5\.1\.1/.test(r)) { what = "Refused: no such mailbox here"; fix = "If it should exist, create it in Email Accounts or add a Forwarder."; }
       else if (/blocked using|rbl|spamhaus|dnsbl/.test(r)) { what = "Refused: the sender's IP is on a spam blocklist"; fix = "Normal protection. If it's someone you know, add them to the Spam Filters allow list."; }
       else if (/spam|milter|gtube|rspamd/.test(r)) { what = "Blocked by the spam filter"; fix = "If this was real mail, add the sender to the allow list in Spam Filters."; }
@@ -735,7 +735,7 @@ window.AuroraMail = (ui) => {
       [[7, "Keep 7 days"], [30, "Keep 30 days"], [90, "Keep 90 days"], [365, "Keep a year"]].map(([d, l]) => el("option", { value: d, text: l })));
     keep.onchange = () => call(() => API.mailTrackSettings({ days: +keep.value }), "History setting saved", load);
     const clearBtn = armed("Clear history", "Click again to clear", () => call(() => API.mailTrackSettings({ clear: true }), "History cleared", load), "btn-ghost");
-    root.append(pageHead("Track Delivery", "Every email this server received or sent, and what happened to it — in plain words.", [keep, clearBtn, btn("Send a test email", () => testMail(), "btn-primary")]),
+    root.append(pageHead("Track Delivery", "Every email this server received or sent, and what happened to it, in plain words.", [keep, clearBtn, btn("Send a test email", () => testMail(), "btn-primary")]),
       tiles, el("div", { class: "card em-pad0" }, [el("div", { class: "em-tools-bar" }, [q, el("span", { class: "grow" }), range]), table]));
     const GROUPS = [["sent", "Delivered", "good", "check", ["sent"]], ["deferred", "Retrying", "warn", "clock", ["deferred"]],
       ["bounced", "Bounced", "bad", "warning", ["bounced", "expired"]], ["rejected", "Refused", "bad", "ban", ["rejected"]]];
@@ -768,7 +768,7 @@ window.AuroraMail = (ui) => {
         return el("button", { type: "button", class: `em-trk-row ${s[1]}`, onclick: () => detail(x) }, [
           el("span", { class: `em-ev ${s[1]}`, title: s[0], text: s[2] }),
           el("span", { class: `em-trk-dir ${e.dir}`, title: e.dir === "in" ? "Received by this server" : "Sent out by this server", text: e.dir === "in" ? "↓ In" : "↑ Out" }),
-          el("span", { class: "em-trk-who" }, [el("span", { class: "em-ell", text: x.from || "(no sender)" }), el("span", { class: "muted", text: " → " }), el("b", { class: "em-ell", text: x.to || "—" })]),
+          el("span", { class: "em-trk-who" }, [el("span", { class: "em-ell", text: x.from || "(no sender)" }), el("span", { class: "muted", text: " → " }), el("b", { class: "em-ell", text: x.to || ", " })]),
           el("span", { class: "em-trk-what em-ell", title: x.result || "", text: e.what }),
           x.spam != null ? el("span", { class: `em-trk-spam ${x.spam >= 5 ? "hi" : ""}`, title: "Spam score (5 or more = likely spam)", text: x.spam.toFixed(1) }) : el("span"),
           el("span", { class: "muted em-nowrap em-trk-time", text: new Date(x.time).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) }),
@@ -780,9 +780,9 @@ window.AuroraMail = (ui) => {
       openModal("What happened to this email", el("div", {}, [
         el("div", { class: `em-trk-verdict ${s[1]}` }, [el("b", { text: e.what }), e.fix ? el("span", { text: e.fix }) : null]),
         kv([["Status", pill(s[0], s[1])], ["Direction", e.dir === "in" ? "Received by this server" : "Sent out by this server"], ["Time", new Date(x.time).toLocaleString()],
-          ["From", x.from || "—"], ["To", x.to || "—"], ["Handed to", x.relay ? `${x.relay}${e.prov ? ` (${e.prov})` : ""}` : "—"], ["Took", x.delay != null ? `${x.delay}s` : "—"],
-          ["Came from", x.client || "—"], ["Signed-in user", x.user || "—"], ["Spam score", x.spam != null ? `${x.spam} ${x.spam >= 5 ? "(likely spam)" : "(fine)"}` : "—"], ["Queue ID", x.id || "—"]]),
-        el("h4", { class: "em-sub", text: "The receiving server's exact answer" }), el("pre", { class: "log", text: x.result || "—" })]),
+          ["From", x.from || ", "], ["To", x.to || ", "], ["Handed to", x.relay ? `${x.relay}${e.prov ? ` (${e.prov})` : ""}` : ", "], ["Took", x.delay != null ? `${x.delay}s` : ", "],
+          ["Came from", x.client || ", "], ["Signed-in user", x.user || ", "], ["Spam score", x.spam != null ? `${x.spam} ${x.spam >= 5 ? "(likely spam)" : "(fine)"}` : ", "], ["Queue ID", x.id || ", "]]),
+        el("h4", { class: "em-sub", text: "The receiving server's exact answer" }), el("pre", { class: "log", text: x.result || ", " })]),
         [x.to ? btn("Trace this address", () => traceModal(x.to), "btn-ghost") : null, x.status === "deferred" ? btn("Mail Queue", () => { closeModal(); navigate("mailqueue"); }, "btn-ghost") : null,
           /spf|dkim|dmarc|spam/i.test(x.result || "") ? btn("Deliverability", () => { closeModal(); navigate("deliverability"); }, "btn-ghost") : null].filter(Boolean));
     }
@@ -847,7 +847,7 @@ window.AuroraMail = (ui) => {
         actsBox.append(el("button", { type: "button", class: "bk-mini", text: "+ Add action", onclick: () => { f.actions.push({ type: "stop", value: "" }); drawActs(); } }));
       };
       drawRules(); drawActs();
-      openModal(idx == null ? "Create a filter" : `Edit filter — ${f.name}`, el("div", { class: "em-form" }, [field("Filter name", name), el("h4", { class: "em-sub", text: "When a message arrives" }), match, rulesBox,
+      openModal(idx == null ? "Create a filter" : `Edit filter, ${f.name}`, el("div", { class: "em-form" }, [field("Filter name", name), el("h4", { class: "em-sub", text: "When a message arrives" }), match, rulesBox,
         el("h4", { class: "em-sub", text: "Then" }), actsBox,
         el("p", { class: "dm-hint", text: "Tip: rule “Spam score is at least 5” catches what the spam filter marked; Size over 10M finds big attachments." })]), [
         el("button", { class: "btn btn-primary", text: "Save filter", onclick: async () => {
@@ -866,7 +866,7 @@ window.AuroraMail = (ui) => {
     filterEditor(card, "global", "Applies to all mail delivered to any account on this server.");
   }
   async function viewEmailFilters(root) {
-    root.append(pageHead("Email Filters", "Rules for one email account — sort, forward or drop its incoming mail."));
+    root.append(pageHead("Email Filters", "Rules for one email account, sort, forward or drop its incoming mail."));
     let accs;
     try { accs = (await API.mailAccounts()).accounts.map((a) => a.address); } catch (e) { root.append(el("p", { class: "empty", text: e.message })); return; }
     if (!accs.length) { root.append(el("div", { class: "card" }, empty("filter", "No email accounts", "Filters belong to an account.", btn("Email Accounts", () => navigate("mailaccounts"), "btn-primary")))); return; }
@@ -881,13 +881,13 @@ window.AuroraMail = (ui) => {
   // ------------------------------------------------------------------ Deliverability
   async function viewDeliverability(root) {
     const body = el("div", {}, el("div", { class: "loading", text: "Checking DNS…" }));
-    root.append(pageHead("Email Deliverability", "The DNS records that make mail arrive — and keep it out of spam folders at Gmail, Outlook and Yahoo."), body);
+    root.append(pageHead("Email Deliverability", "The DNS records that make mail arrive, and keep it out of spam folders at Gmail, Outlook and Yahoo."), body);
     let all;
     try { all = await API.mailDeliverability(""); } catch (e) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); return; }
     body.innerHTML = "";
     if (!all.domains.length) { body.append(el("div", { class: "card" }, empty("send", "No mail domains yet", "Create an email account first.", btn("Email Accounts", () => navigate("mailaccounts"), "btn-primary")))); return; }
     const listBox = el("div", { class: "card em-pad0" }, el("div", { class: "em-list" }, all.domains.map((d) => el("div", { class: "em-row" }, [avatar(d.domain),
-      el("div", { class: "em-row-main", onclick: () => (d.local ? null : detail(d.domain)) }, [el("b", { text: d.domain }), el("span", { class: "muted", text: d.error ? d.error : d.local ? "Local network domain — no DNS records needed" : d.problems.length ? `Problems: ${d.problems.join(", ")}` : "All checks pass" })]),
+      el("div", { class: "em-row-main", onclick: () => (d.local ? null : detail(d.domain)) }, [el("b", { text: d.domain }), el("span", { class: "muted", text: d.error ? d.error : d.local ? "Local network domain, no DNS records needed" : d.problems.length ? `Problems: ${d.problems.join(", ")}` : "All checks pass" })]),
       d.local ? pill("local", "good") : d.error ? pill("error", "bad") : el("span", { class: `em-ring ${d.score === d.total ? "good" : d.score >= 3 ? "warn" : "bad"}`, text: `${d.score}/${d.total}` }),
       el("div", { class: "em-row-act" }, d.local ? [] : [btn("Manage", () => detail(d.domain), "btn-ghost")])]))));
     const detBox = el("div");
@@ -898,10 +898,10 @@ window.AuroraMail = (ui) => {
       let r;
       try { r = await API.mailDeliverability(domain); } catch (e) { detBox.innerHTML = ""; detBox.append(el("p", { class: "empty", text: e.message })); return; }
       detBox.innerHTML = "";
-      const where = r.zone_here ? (r.authoritative ? "This server answers DNS for the domain: install the records with one click." : "There's a zone for it on this server, but the domain's nameservers are elsewhere — records installed here won't be seen until the nameservers point here.")
-        : `DNS for ${domain} is served by ${r.nameservers.join(", ") || "unknown nameservers"} — add these records there (registrar, Cloudflare…).`;
+      const where = r.zone_here ? (r.authoritative ? "This server answers DNS for the domain: install the records with one click." : "There's a zone for it on this server, but the domain's nameservers are elsewhere, records installed here won't be seen until the nameservers point here.")
+        : `DNS for ${domain} is served by ${r.nameservers.join(", ") || "unknown nameservers"}, add these records there (registrar, Cloudflare…).`;
       const CH = { mx: ["MX", "Where mail for the domain is delivered."], spf: ["SPF", "Which servers may send mail as the domain."], dkim: ["DKIM", "A signature proving the mail wasn't forged or changed."],
-        dmarc: ["DMARC", "Tells receivers what to do when SPF/DKIM fail — required by Gmail and Yahoo for bulk senders."], ptr: ["Reverse DNS (PTR)", "The IP's name must match the server name."] };
+        dmarc: ["DMARC", "Tells receivers what to do when SPF/DKIM fail, required by Gmail and Yahoo for bulk senders."], ptr: ["Reverse DNS (PTR)", "The IP's name must match the server name."] };
       detBox.append(el("div", { class: "card" }, [el("div", { class: "em-card-h" }, [el("h3", { text: domain }), el("div", { class: "toolbar" }, [btn("Re-check", () => detail(domain), "btn-ghost"), btn("Zone Editor", () => navigate("zones"), "btn-ghost")])]),
         el("div", { class: `dm-note ${r.zone_here && r.authoritative ? "good" : ""}` }, [icon("info", 15), el("span", { text: where })]),
         el("p", { class: "muted", html: `Mail server <b>${esc(r.hostname)}</b> · IP <b>${esc(r.ip)}</b>` }),
@@ -924,15 +924,15 @@ window.AuroraMail = (ui) => {
   async function viewImporter(root) {
     await domainsAll().catch(() => {});
     root.append(pageHead("Address Importer", "Create many email accounts or forwarders at once from a CSV file or a pasted list."));
-    const kind = radioCards("imp", [{ value: "accounts", label: "Email accounts", desc: "email, password (optional — generated if empty), quota in MB (optional)", icon: "users" },
+    const kind = radioCards("imp", [{ value: "accounts", label: "Email accounts", desc: "email, password (optional, generated if empty), quota in MB (optional)", icon: "users" },
       { value: "forwarders", label: "Forwarders", desc: "source address, destination address(es) separated by ; or |", icon: "forward" }], "accounts");
-    const text = el("textarea", { rows: 9, class: "em-text em-mono", placeholder: "email,password,quota_mb\njane@example.com,,1024\njohn@example.com,S3cure-pass!,5120" });
+    const text = el("textarea", { rows: 9, class: "em-text em-mono", placeholder: "email,password,quota_mb\njane@example.com,1024\njohn@example.com,S3cure-pass!,5120" });
     const file = el("input", { type: "file", accept: ".csv,.txt,text/csv", onchange: async () => { const f = file.files[0]; if (f) text.value = await f.text(); } });
-    const dom = domainSelect(MAIL.domains || [], "", { all: "— none —" });
+    const dom = domainSelect(MAIL.domains || [], "", { all: ", none, " });
     const quota = el("input", { type: "number", value: 1024, min: 0, class: "em-qnum" });
     const out = el("div");
     const sample = () => downloadText(kind.value() === "accounts" ? "accounts-example.csv" : "forwarders-example.csv",
-      kind.value() === "accounts" ? "email,password,quota_mb\njane@example.com,,1024\njohn,,\n" : "source,destination\nsales@example.com,jane@example.com;john@example.com\n", "text/csv");
+      kind.value() === "accounts" ? "email,password,quota_mb\njane@example.com,1024\njohn,\n" : "source,destination\nsales@example.com,jane@example.com;john@example.com\n", "text/csv");
     root.append(el("div", { class: "card em-form" }, [field("1 · What to import", kind), field("2 · CSV file or pasted text", el("div", {}, [file, text])),
       el("div", { class: "em-grid2" }, [field("Domain for bare names", dom, "Rows like “john” become john@this-domain"), field("Default quota (MB)", quota, "For accounts without one; 0 = unlimited")]),
       el("div", { class: "toolbar" }, [btn("Preview", () => run(true), "btn-primary"), btn("Download an example file", sample, "btn-ghost")]), out]));
@@ -945,8 +945,8 @@ window.AuroraMail = (ui) => {
       const accounts = kind.value() === "accounts";
       out.append(el("div", { class: "em-imp-sum" }, [pill(`${r.valid} ready`, "good"), r.invalid ? pill(`${r.invalid} with problems`, "bad") : null, dry ? null : pill("imported", "good")].filter(Boolean)),
         el("div", { class: "table-wrap" }, el("table", { class: "em-table" }, [el("thead", {}, el("tr", {}, ["#", accounts ? "Address" : "Source", accounts ? "Password" : "Destination", accounts ? "Quota" : "", "Status"].map((h) => el("th", { text: h })))),
-          el("tbody", {}, r.rows.map((x) => el("tr", {}, [el("td", { text: x.line }), el("td", { text: x.address || x.source || "—" }),
-            el("td", { class: "em-mono", text: accounts ? (x.password ? (x.generated ? (dry ? "generated on import" : x.password) : "••••••••") : "—") : x.dest || "—" }),
+          el("tbody", {}, r.rows.map((x) => el("tr", {}, [el("td", { text: x.line }), el("td", { text: x.address || x.source || ", " }),
+            el("td", { class: "em-mono", text: accounts ? (x.password ? (x.generated ? (dry ? "generated on import" : x.password) : "••••••••") : ", ") : x.dest || ", " }),
             el("td", { text: accounts && x.quota_mb != null ? mb(x.quota_mb) : "" }),
             el("td", {}, x.ok ? pill(dry ? "ok" : "created", "good") : el("span", { class: "em-err", text: x.error }))])))])));
       if (dry && r.valid) out.append(el("div", { class: "toolbar" }, [btn(`Import ${r.valid} ${accounts ? "account" : "forwarder"}${r.valid > 1 ? "s" : ""}`, () => run(false), "btn-primary")]));
@@ -976,21 +976,21 @@ window.AuroraMail = (ui) => {
       const v = { ...d };
       const thr = el("input", { type: "range", min: 1, max: 15, step: 1, value: v.threshold, class: "em-range" });
       const thrTxt = el("b");
-      const desc = () => { const n = +thr.value; v.threshold = n; thrTxt.textContent = `${n} — ${n <= 3 ? "strict: catches more, may catch good mail" : n <= 6 ? "balanced (recommended)" : n <= 9 ? "relaxed" : "very relaxed: only obvious spam"}`; };
+      const desc = () => { const n = +thr.value; v.threshold = n; thrTxt.textContent = `${n}, ${n <= 3 ? "strict: catches more, may catch good mail" : n <= 6 ? "balanced (recommended)" : n <= 9 ? "relaxed" : "very relaxed: only obvious spam"}`; };
       thr.oninput = desc; desc();
       const del = el("input", { type: "number", min: 2, max: 50, value: v.delete_threshold, class: "em-qnum", oninput: (e) => { v.delete_threshold = +e.target.value; } });
       const toggle = (k, title, text, extra) => el("div", { class: "em-sp" }, [sw(!!v[k], (x) => { v[k] = x; }), el("div", {}, [el("b", { text: title }), el("p", { class: "muted", text }), extra || null].filter(Boolean))]);
       const listEd = (k, ph) => { const t = el("textarea", { rows: 4, class: "em-text em-mono", placeholder: ph }); t.value = (v[k] || []).join("\n"); t.oninput = () => { v[k] = t.value.split(/[\s,;]+/).filter(Boolean); }; return t; };
       if (g && d.stats) body.append(el("div", { class: "em-stats" }, [["scanned", "scanned"], ["ham", "clean"], ["spam", "marked spam"], ["rejected", "rejected"]].map(([k, l]) =>
         el("div", { class: "em-stat" }, [el("b", { text: String(d.stats[k] || 0) }), el("span", { class: "muted", text: l })]))));
-      if (!g) body.append(el("div", { class: `dm-note ${d.custom ? "" : "good"}` }, [icon("info", 15), el("span", { text: d.custom ? "This account has its own spam settings." : "This account follows the server default — saving here gives it its own settings." }),
+      if (!g) body.append(el("div", { class: `dm-note ${d.custom ? "" : "good"}` }, [icon("info", 15), el("span", { text: d.custom ? "This account has its own spam settings." : "This account follows the server default, saving here gives it its own settings." }),
         d.custom ? btn("Use server default", () => call(() => API.mailSpamSave(sel.value, { reset: true }), "Back to the server default", draw), "btn-ghost") : null].filter(Boolean)));
       body.append(el("div", { class: "card" }, [
         toggle("enabled", "Process new mail and act on spam", "Rspamd marks suspicious messages with a score; the rules below decide what happens."),
         el("div", { class: "em-sp-thr" }, [el("span", { class: "em-sub", text: "Spam threshold score" }), el("div", { class: "em-range-row" }, [thr, el("div", { class: "em-levels" }, LEVELS.map(([n, l]) => el("button", { type: "button", class: "em-tag", text: l, onclick: () => { thr.value = n; desc(); } })))]), thrTxt]),
-        toggle("junk", "Move spam to the Junk folder (Spam Box)", "Recommended — nothing is lost; check Junk now and then."),
+        toggle("junk", "Move spam to the Junk folder (Spam Box)", "Recommended, nothing is lost; check Junk now and then."),
         toggle("autodelete", "Automatically delete obvious spam", "Permanently deletes messages scoring at or above:", el("div", { class: "toolbar" }, [del, el("span", { class: "muted", text: "Keep it well above the threshold." })])),
-        g ? toggle("greylist", "Greylisting", "Ask unknown senders to retry a few minutes later — spam robots usually don't. Delays the first mail from new senders.") : null,
+        g ? toggle("greylist", "Greylisting", "Ask unknown senders to retry a few minutes later, spam robots usually don't. Delays the first mail from new senders.") : null,
         el("div", { class: "em-grid2" }, [field("Always allow (whitelist)", listEd("allow", "friend@example.com\ntrusted-company.com"), "Addresses or whole domains, one per line."),
           field("Always block (blacklist)", listEd("block", "spammer@example.com\nbad-domain.biz"), "Mail from these is rejected or dropped.")]),
         el("div", { class: "toolbar" }, [btn("Save", () => call(() => API.mailSpamSave(sel.value, v), "Spam settings saved", draw), "btn-primary")]),
@@ -1010,9 +1010,9 @@ window.AuroraMail = (ui) => {
     const days = c.expires ? Math.round((new Date(c.expires) - Date.now()) / 864e5) : null;
     body.append(el("div", { class: "card" }, [el("div", { class: "em-card-h" }, [el("h3", { text: "Certificate" }), pill(d.source === "self" ? "Self-signed" : "Let's Encrypt", d.source === "self" ? "warn" : "good")]),
       kv([["Mail server name", d.hostname], ["Issued to", (c.names || []).join(", ") || c.subject], ["Issuer", c.issuer],
-        ["Expires", c.expires ? `${new Date(c.expires).toLocaleDateString()}${days != null ? ` (${days} days${d.source !== "self" ? ", renews automatically" : ""})` : ""}` : "—"],
+        ["Expires", c.expires ? `${new Date(c.expires).toLocaleDateString()}${days != null ? ` (${days} days${d.source !== "self" ? ", renews automatically" : ""})` : ""}` : ", "],
         ["Covers the server name", d.covers_host ? pill("yes", "good") : pill("no", "bad")]]),
-      d.source === "self" ? el("div", { class: "dm-note" }, [icon("info", 15), el("span", { text: "Mail apps show a warning with a self-signed certificate. A free Let's Encrypt certificate fixes that — the server name must point to this server and port 80 must be reachable." })]) : null,
+      d.source === "self" ? el("div", { class: "dm-note" }, [icon("info", 15), el("span", { text: "Mail apps show a warning with a self-signed certificate. A free Let's Encrypt certificate fixes that, the server name must point to this server and port 80 must be reachable." })]) : null,
       el("div", { class: "toolbar" }, [
         d.certbot ? btn(d.source === d.hostname ? "Renew now" : `Get a Let's Encrypt certificate for ${d.hostname}`, async () => {
           const r = await call(() => API.mailTLSIssue()); if (!r) return;
@@ -1055,14 +1055,14 @@ window.AuroraMail = (ui) => {
         const rows = d.collections.map((c) => el("div", { class: "em-row" }, [el("span", { class: "em-cal", style: `background:${c.color || (c.type === "calendar" ? "#ff7a1a" : "#6b8afd")}` }, icon(c.type === "calendar" ? "calendar" : "contacts", 14)),
           el("div", { class: "em-row-main" }, [el("b", { text: c.name }), el("span", { class: "muted", text: `${c.owner} · ${c.type === "calendar" ? "Calendar" : "Address book"} · ${c.items} item${c.items === 1 ? "" : "s"}` })]),
           el("div", { class: "em-row-act" }, [btn("Copy URL", async () => toast(await copyText(c.url) ? "URL copied" : "Copy failed", "good"), "btn-ghost"),
-            btn("Rename", () => renameCol(c), "btn-ghost"), armed("Delete", "Click again — deletes its items", () => call(() => API.mailDavDelete({ owner: c.owner, id: c.id }), "Deleted", refresh), "btn-ghost")])]));
+            btn("Rename", () => renameCol(c), "btn-ghost"), armed("Delete", "Click again, deletes its items", () => call(() => API.mailDavDelete({ owner: c.owner, id: c.id }), "Deleted", refresh), "btn-ghost")])]));
         return [el("div", { class: "card" }, [el("h3", { text: "Create" }), el("div", { class: "em-grid4" }, [field("Owner", own), field("Type", kind), field("Name", name), field("Colour", color)]),
           el("div", { class: "toolbar" }, [btn("Create", () => call(() => API.mailDavCreate({ owner: own.value, kind: kind.value, name: name.value, color: color.value }), "Created", refresh), "btn-primary")])]),
           el("div", { class: "card em-pad0" }, rows.length ? el("div", { class: "em-list" }, rows) : empty("calendar", "No calendars yet", "They're created with each new email account."))];
       },
       Sharing: () => {
         const cols = d.collections;
-        const col = el("select", {}, cols.map((c, i) => el("option", { value: i, text: `${c.owner} — ${c.name}` })));
+        const col = el("select", {}, cols.map((c, i) => el("option", { value: i, text: `${c.owner}, ${c.name}` })));
         const who = el("select", {}, d.accounts.map((a) => el("option", { value: a, text: a })));
         const write = el("input", { type: "checkbox" });
         const name = (s) => (cols.find((c) => c.owner === s.owner && c.id === s.collection) || { name: s.collection }).name;
@@ -1095,7 +1095,7 @@ window.AuroraMail = (ui) => {
     let ov;
     try { ov = await API.mailDisk(""); } catch (e) { root.append(el("p", { class: "empty", text: e.message })); return; }
     if (!ov.accounts.length) { root.append(el("div", { class: "card" }, empty("disk", "No email accounts", "Nothing stored yet."))); return; }
-    const sel = el("select", {}, ov.accounts.map((a) => el("option", { value: a.address, text: `${a.address} — ${fmtBytes(a.used_bytes)}` })));
+    const sel = el("select", {}, ov.accounts.map((a) => el("option", { value: a.address, text: `${a.address}, ${fmtBytes(a.used_bytes)}` })));
     sel.value = state.mailOwner && ov.accounts.find((a) => a.address === state.mailOwner) ? state.mailOwner : ov.accounts[0].address;
     const body = el("div");
     const max = Math.max(1, ...ov.accounts.map((a) => a.used_bytes));
@@ -1122,7 +1122,7 @@ window.AuroraMail = (ui) => {
   async function viewQueue(root) {
     const sel = new Set();
     const list = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
-    root.append(pageHead("Mail Queue", "Messages waiting to be delivered — usually because the receiving server is slow or refusing them for now.", [
+    root.append(pageHead("Mail Queue", "Messages waiting to be delivered, usually because the receiving server is slow or refusing them for now.", [
       btn("Retry all now", () => call(() => API.mailQueue("flush"), "Retrying delivery", () => setTimeout(load, 2000)), "btn-primary"),
       armed("Delete all deferred", "Click again", () => call(() => API.mailQueue("delete_deferred"), "Deferred messages deleted", load), "btn-ghost")]),
       el("div", { class: "card em-pad0" }, list));

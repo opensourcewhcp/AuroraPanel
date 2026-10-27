@@ -12,8 +12,8 @@ import re
 import urllib.error
 import urllib.request
 
-VERSION = "1.1.13"
-LABEL = "v1.1.11"
+VERSION = "1.1.14"
+LABEL = "v" + VERSION
 RELEASED = "2026-10-26"
 VERSION_URL = "https://aurora51.com/version.json"
 CHANGELOG_URL = "https://aurora51.com/changelog.json"

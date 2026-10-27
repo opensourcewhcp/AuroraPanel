@@ -1,4 +1,4 @@
-/* AuroraPanel — WAF Firewall (Security), Dynamic DNS hosts (Domains) and the Metrics section
+/* AuroraPanel, WAF Firewall (Security), Dynamic DNS hosts (Domains) and the Metrics section
    (Visitors, Errors, Bandwidth, Raw Access, Analytics, Resource Usage).
    Loaded before app.js; app.js calls window.AuroraExtras(ui) once with its helpers. */
 window.AuroraExtras = (ui) => {
@@ -55,8 +55,8 @@ window.AuroraExtras = (ui) => {
   }
   const tile = (label, value, sub, ico, kind, onclick) => el(onclick ? "button" : "div", { class: `mx-tile ${kind || ""}`, type: onclick ? "button" : null, onclick },
     [el("div", { class: "mx-tile-l" }, [ico ? icon(ico, 15) : null, el("span", { text: label })]), el("div", { class: "mx-tile-v", text: value }), sub ? el("div", { class: "mx-tile-s", text: sub }) : null]);
-  const num = (n) => (n == null ? "—" : Number(n).toLocaleString());
-  const t2s = (ts, opts) => (ts ? new Date(ts * 1000).toLocaleString([], opts || { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
+  const num = (n) => (n == null ? ", " : Number(n).toLocaleString());
+  const t2s = (ts, opts) => (ts ? new Date(ts * 1000).toLocaleString([], opts || { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : ", ");
   const dur = (s) => (s < 60 ? `${Math.round(s)}s` : s < 3600 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m`);
   const rate = (b) => `${fmtBytes(b)}/s`;
   const statusKind = (s) => (s >= 500 ? "bad" : s >= 400 ? "warn" : s >= 300 ? "dim" : "good");
@@ -78,7 +78,7 @@ window.AuroraExtras = (ui) => {
   function chart(o) {
     const W = 1000, H = o.height || 190, pts = o.points || [], series = o.series;
     const box = el("div", { class: "mx-chart", style: `--h:${H}px` });
-    if (!pts.length) { box.append(el("div", { class: "mx-chart-empty muted", text: o.emptyText || "No data yet — the collector adds a point every few minutes." })); return box; }
+    if (!pts.length) { box.append(el("div", { class: "mx-chart-empty muted", text: o.emptyText || "No data yet, the collector adds a point every few minutes." })); return box; }
     const val = (p, k) => +(p[1][k] || 0);
     const tot = pts.map((p) => (o.stacked === false ? Math.max(...series.map((s) => val(p, s.key))) : series.reduce((a, s) => a + val(p, s.key), 0)));
     const top = Math.max(...tot, ...(o.lines || []).map((l) => l.value || 0));
@@ -127,7 +127,7 @@ window.AuroraExtras = (ui) => {
       const gx = o.type === "line" ? (n === 1 ? 50 : (i / (n - 1)) * 100) : ((i + 0.5) / n) * 100;
       guide.hidden = false; guide.style.left = `${gx}%`;
       tip.hidden = false; tip.innerHTML = "";
-      // tipNonZero: many series (one per category) — list only those present in this slot, biggest first.
+      // tipNonZero: many series (one per category), list only those present in this slot, biggest first.
       const shown = series.filter((s) => p[1][s.key] != null && (!o.tipNonZero || val(p, s.key)));
       if (o.tipNonZero) shown.sort((a, b) => val(p, b.key) - val(p, a.key));
       tip.append(el("b", { text: (o.tipX || o.xfmt)(p[0]) }), ...shown.map((s) =>
@@ -206,9 +206,9 @@ window.AuroraExtras = (ui) => {
       const stPill = st.status === "banned" ? pill(st.kind === "fail2ban" ? `banned by fail2ban (${(st.jails || []).join(", ") || "jail"})` : "banned", "bad")
         : st.status === "trusted" ? pill("trusted", "good") : pill("not banned");
       const banLine = st.status === "banned" ? (st.kind === "manual"
-        ? `Banned ${st.created ? ago(st.created) : ""}${st.source ? ` from ${st.source}` : ""}${st.cidr && st.cidr !== ip && st.cidr !== ip + "/32" ? ` as part of ${st.cidr}` : ""}${st.reason ? ` — “${st.reason}”` : ""}. ${st.expires ? `Lifts ${new Date(st.expires * 1000).toLocaleString()}.` : "Until you unban it."}`
+        ? `Banned ${st.created ? ago(st.created) : ""}${st.source ? ` from ${st.source}` : ""}${st.cidr && st.cidr !== ip && st.cidr !== ip + "/32" ? ` as part of ${st.cidr}` : ""}${st.reason ? `, “${st.reason}”` : ""}. ${st.expires ? `Lifts ${new Date(st.expires * 1000).toLocaleString()}.` : "Until you unban it."}`
         : `fail2ban banned it automatically${st.expires_in ? `, lifts in ${dur(st.expires_in)}` : ""}.`) + " It can't reach anything on this server: websites, mail, SSH, FTP, VPN and this panel."
-        : st.status === "trusted" ? `Trusted${st.cidr && st.cidr !== ip && st.cidr !== ip + "/32" ? ` (via ${st.cidr})` : ""}${st.reason ? ` — “${st.reason}”` : ""}: it is never banned.` : "";
+        : st.status === "trusted" ? `Trusted${st.cidr && st.cidr !== ip && st.cidr !== ip + "/32" ? ` (via ${st.cidr})` : ""}${st.reason ? `, “${st.reason}”` : ""}: it is never banned.` : "";
       body.append(el("div", { class: "mx-ip-head" }, [
         el("div", { class: "mx-ip-flag", text: FLAG(o.country) || "🌐" }),
         el("div", { class: "mx-ip-id" }, [el("div", { class: "mx-ip-addr" }, [el("code", { class: ipCls(st.status, d.reported), text: ip }), stPill, d.reported ? pill("reported", "warn") : null]),
@@ -260,22 +260,22 @@ window.AuroraExtras = (ui) => {
           : API.guardBan(ip, `${w.hits} requests, ${d.waf.events} WAF events, ${d.logins_failed} failed logins`, +dsel.value || null, `IP card · ${document.title.split(" · ")[0]}`), `${ip} banned`), "btn-danger")]));
       }
       if (st.status === "trusted") foot.append(btn("Remove from trusted", () => act(() => API.guardUntrust(st.cidr || ip), `${ip} no longer trusted`), "btn-ghost"));
-      else if (st.status !== "banned") foot.append(btn("Trust", () => act(() => API.guardTrust(ip, "Trusted from the IP card"), `${ip} trusted — it will never be banned`), "btn-ghost"));
+      else if (st.status !== "banned") foot.append(btn("Trust", () => act(() => API.guardTrust(ip, "Trusted from the IP card"), `${ip} trusted, it will never be banned`), "btn-ghost"));
       if (!d.private) foot.append(btn(d.reported ? "Reported · read / send again" : "Report abuse", () => reportIp(ip, onChange), "btn-ghost"));
       foot.append(btn("Copy IP", async () => toast(await copyText(ip) ? "Copied" : "Copy failed", "good"), "btn-ghost"));
       if (allSrv && st.status !== "trusted") foot.append(allSrv);
     }
     load();
   }
-  // Send an abuse report to the network that owns ip — from this server's own mail, with the evidence attached.
+  // Send an abuse report to the network that owns ip, from this server's own mail, with the evidence attached.
   async function reportIp(ip, done) {
     let p;
     try { p = await API.abusePreview(ip); } catch (e) { toast(e.message, "bad"); return; }
-    if (!p.mail_ready) { toast("Reports go out through this server's mail — set up Email first", "bad"); return; }
+    if (!p.mail_ready) { toast("Reports go out through this server's mail, set up Email first", "bad"); return; }
     if (!p.info.contacts.length) { toast(`No abuse contact is published for ${ip}`, "bad"); return; }
     const from = el("select", { class: "em-select" }, p.accounts.map((a) => el("option", { value: a, text: a })));
     if (p.from) from.value = p.from;
-    // Editable: pre-filled with the parsed abuse contact, but the registry often lists a person —
+    // Editable: pre-filled with the parsed abuse contact, but the registry often lists a person, 
     // the real desk is usually abuse@<domain>, offered in the dropdown. The user can type any address.
     const suggestions = p.info.suggestions && p.info.suggestions.length ? p.info.suggestions : p.info.contacts;
     const toList = el("datalist", { id: "abuse-to-list" }, suggestions.map((a) => el("option", { value: a })));
@@ -297,16 +297,16 @@ window.AuroraExtras = (ui) => {
       el("div", { class: "mx-tiles" }, [
         tile("Failed logins", num(c.logins), "SSH, mail, panel, FTP · 7 days", "key", c.logins ? "warnt" : ""),
         tile("Web attacks", num(c.attacks), "caught by the WAF · 7 days", "shield", c.attacks ? "warnt" : ""),
-        tile("Network", p.info.network || "—", p.info.country || "", "globe"),
+        tile("Network", p.info.network || ", ", p.info.country || "", "globe"),
       ]),
-      !p.events ? el("div", { class: "mx-note" }, [icon("warning", 16), el("span", { text: "No failed logins or WAF attacks from this address in the last 7 days — abuse desks usually ignore reports without evidence." })]) : null,
+      !p.events ? el("div", { class: "mx-note" }, [icon("warning", 16), el("span", { text: "No failed logins or WAF attacks from this address in the last 7 days, abuse desks usually ignore reports without evidence." })]) : null,
       p.reported ? el("div", { class: "mx-note" }, [icon("check", 16), el("span", { text: `Already reported to ${p.reported.to.join(", ")} on ${new Date(p.reported.ts * 1000).toLocaleString()} from ${p.reported.from}. Sending again repeats it.` })]) : null,
-      p.accounts.length ? el("div", { class: "mx-grid2" }, [field("Send from", from, "Remembered for next time; replies come here."), field("To (abuse contact)", toWrap, "Pre-filled from the registry — edit it or pick abuse@… if the desk differs.")])
+      p.accounts.length ? el("div", { class: "mx-grid2" }, [field("Send from", from, "Remembered for next time; replies come here."), field("To (abuse contact)", toWrap, "Pre-filled from the registry, edit it or pick abuse@… if the desk differs.")])
         : el("p", { class: "empty", text: "Create an email account first (Email → Email Accounts)." }),
       field("Note", note),
       el("div", { class: "mx-sub" }, "The message"), preview,
       p.info.whois_url ? el("p", { class: "muted mx-small", style: "margin:6px 0 0" },
-        [el("a", { href: p.info.whois_url, target: "_blank", rel: "noopener noreferrer", text: p.info.whois_label || "Look up the registry record" }), " — check the abuse address if it looks wrong."]) : null,
+        [el("a", { href: p.info.whois_url, target: "_blank", rel: "noopener noreferrer", text: p.info.whois_label || "Look up the registry record" }), ", check the abuse address if it looks wrong."]) : null,
     ].filter(Boolean)), p.accounts.length ? [send] : []);
     const m = document.querySelector("#modal .modal"); if (m) m.classList.add("em-modal");
   }
@@ -339,10 +339,10 @@ window.AuroraExtras = (ui) => {
       body.append(el("div", { class: `card mx-hero ${modeKind}` }, [
         el("div", { class: "mx-hero-ico" }, icon("shield", 30)),
         el("div", { class: "mx-hero-txt" }, [
-          el("h3", { text: !on ? "The WAF is off — websites aren't filtered" : d.mode === "block" ? "Protecting your websites" : "Watching, not blocking" }),
+          el("h3", { text: !on ? "The WAF is off, websites aren't filtered" : d.mode === "block" ? "Protecting your websites" : "Watching, not blocking" }),
           el("p", { class: "muted", text: !on ? "Turn on Blocking to stop attacks, or Detect only to see what would be blocked first."
             : d.mode === "block" ? `Attacks are refused with “403 Forbidden”. OWASP CRS ${d.crs_version || ""}, ${PARANOIA[d.paranoia][0].toLowerCase()} rules.`
-            : "Attacks are logged below but still reach your sites — good for a few days after installing a new app, then switch to Blocking." }),
+            : "Attacks are logged below but still reach your sites, good for a few days after installing a new app, then switch to Blocking." }),
           testOut,
         ]),
         el("div", { class: "mx-hero-act" }, [
@@ -357,16 +357,16 @@ window.AuroraExtras = (ui) => {
       ]));
       const st = d.stats;
       body.append(el("div", { class: "mx-tiles" }, [
-        tile("Attacks, last 24 h", num(st.events), st.events ? `${num(st.blocked)} blocked · ${num(st.detected)} logged only` : "None — quiet day", "shield", st.events ? "accent" : ""),
-        tile("Top attack type", st.types[0] ? st.types[0][0] : "—", st.types[0] ? `${num(st.types[0][1])} requests` : "", "brick"),
-        tile("Top attacker", st.ips[0] ? st.ips[0][0] : "—", st.ips[0] ? `${num(st.ips[0][1])} requests` : "", "ban"),
+        tile("Attacks, last 24 h", num(st.events), st.events ? `${num(st.blocked)} blocked · ${num(st.detected)} logged only` : "None, quiet day", "shield", st.events ? "accent" : ""),
+        tile("Top attack type", st.types[0] ? st.types[0][0] : ", ", st.types[0] ? `${num(st.types[0][1])} requests` : "", "brick"),
+        tile("Top attacker", st.ips[0] ? st.ips[0][0] : ", ", st.ips[0] ? `${num(st.ips[0][1])} requests` : "", "ban"),
         tile("Rules switched off", num(Object.keys(d.disabled_rules).length), "False alarms you allowed", "check"),
       ]));
       // ---- settings
       const lvl = el("div", { class: "mx-levels" }, [1, 2, 3, 4].map((n) => el("button", { type: "button", class: `mx-level ${d.paranoia === n ? "on" : ""}`,
         onclick: () => d.paranoia !== n && save({ paranoia: n }, `Rule level: ${PARANOIA[n][0]}`) }, [el("b", { text: `${n} · ${PARANOIA[n][0]}` }), el("span", { class: "muted", text: PARANOIA[n][1] })])));
       const thr = el("select", { class: "em-select", onchange: () => save({ threshold: +thr.value }, "Sensitivity saved") },
-        [[5, "Normal — one critical match blocks (recommended)"], [10, "Relaxed — needs two critical matches"], [25, "Lenient — only obvious attacks"], [3, "Tight — even minor matches add up"]].map(([v, l]) => el("option", { value: v, text: l })));
+        [[5, "Normal, one critical match blocks (recommended)"], [10, "Relaxed, needs two critical matches"], [25, "Lenient, only obvious attacks"], [3, "Tight, even minor matches add up"]].map(([v, l]) => el("option", { value: v, text: l })));
       thr.value = String(d.threshold);
       if (thr.value !== String(d.threshold)) thr.append(el("option", { value: d.threshold, text: `Custom (${d.threshold})`, selected: "" }));
       const apps = el("div", { class: "mx-chips" }, Object.entries(d.apps_all).map(([k, v]) => {
@@ -379,7 +379,7 @@ window.AuroraExtras = (ui) => {
       const names = [...new Set(sitesList.flatMap((s) => s.names))].sort();
       const offSites = el("div", { class: "mx-chips" }, names.length ? names.map((h) => {
         const off = d.sites_off.includes(h);
-        return el("button", { type: "button", class: `em-chip ${off ? "warnchip" : ""}`, text: (off ? "⏸ " : "") + h, title: off ? "The WAF skips this site — click to protect it again" : "Click to switch the WAF off for this site only",
+        return el("button", { type: "button", class: `em-chip ${off ? "warnchip" : ""}`, text: (off ? "⏸ " : "") + h, title: off ? "The WAF skips this site, click to protect it again" : "Click to switch the WAF off for this site only",
           onclick: () => save({ sites_off: off ? d.sites_off.filter((x) => x !== h) : [...d.sites_off, h] }, off ? `${h} protected again` : `WAF off for ${h}`) });
       }) : [el("span", { class: "muted", text: "No websites yet." })]);
       body.append(el("div", { class: "mx-grid2" }, [
@@ -387,7 +387,7 @@ window.AuroraExtras = (ui) => {
         card("Exceptions", [
           el("p", { class: "muted mx-p", text: "App exclusions teach the rules what normal looks like for these apps (editors, admin pages), so they don't trip the WAF." }), apps,
           el("div", { class: "mx-sep" }),
-          field("Trusted addresses — never filtered", trusted, "Your office or monitoring service. Applied when you click Save."),
+          field("Trusted addresses, never filtered", trusted, "Your office or monitoring service. Applied when you click Save."),
           el("div", { class: "toolbar" }, [btn("Save trusted addresses", () => save({ trusted: trusted.value.split(/[\s,]+/).filter(Boolean) }, "Trusted addresses saved"), "btn-primary")]),
           el("div", { class: "mx-sep" }),
           el("p", { class: "muted mx-p", text: "Switch the WAF off for one website only:" }), offSites,
@@ -419,7 +419,7 @@ window.AuroraExtras = (ui) => {
         btn("Lookup", () => ipCard(ip, loadEvents), "btn-ghost"),
         st === "banned" ? btn("Unban", () => call(() => API.guardUnban(ip), `${ip} unbanned`, loadEvents), "btn-ghost")
           : st === "trusted" ? null
-          : armed("Ban", "Click again · 24 h", () => call(() => API.guardBan(ip, `WAF: ${r0.category} — ${r0.msg}`, 86400, "WAF Firewall"), `${ip} banned for 24 hours`, loadEvents), "btn-danger"),
+          : armed("Ban", "Click again · 24 h", () => call(() => API.guardBan(ip, `WAF: ${r0.category}, ${r0.msg}`, 86400, "WAF Firewall"), `${ip} banned for 24 hours`, loadEvents), "btn-danger"),
         btn(rep ? "Report again" : "Report", () => reportIp(ip, loadEvents), "btn-ghost"),
       ].filter(Boolean));
     }
@@ -474,10 +474,10 @@ window.AuroraExtras = (ui) => {
       el("button", { type: "button", class: "bk-mini", text: "Copy", onclick: async () => toast(await copyText(value) ? `${label} copied` : "Copy failed", "good") })]);
     const tabs = el("div", { class: "mx-seg" }), pane = el("div", { class: "mx-ddns-pane" });
     const T = {
-      "Update URL": () => [el("p", { class: "muted", text: "Open this URL from the network whose IP should be used — a browser, a script, or a router. The record moves to the caller's public IP. Add &ip=… to set an address yourself." }),
+      "Update URL": () => [el("p", { class: "muted", text: "Open this URL from the network whose IP should be used, a browser, a script, or a router. The record moves to the caller's public IP. Add &ip=… to set an address yourself." }),
         row("URL", u.url), row("Via the panel", u.panel),
         u.url.startsWith("http:") ? el("p", { class: "muted mx-small", text: "No trusted HTTPS certificate covers this domain yet, so the URL uses plain HTTP. Get a free certificate in SSL/TLS to switch it to HTTPS." }) : null,
-        el("p", { class: "muted mx-small", text: "Answers: “good <ip>” (changed), “nochg <ip>” (already right), “badauth” (wrong key), “abuse” (too often — wait 30 s)." })],
+        el("p", { class: "muted mx-small", text: "Answers: “good <ip>” (changed), “nochg <ip>” (already right), “badauth” (wrong key), “abuse” (too often, wait 30 s)." })],
       "Linux (cron)": () => [el("p", { class: "muted", text: "Runs every 5 minutes on the machine at home and keeps the name pointed at it:" }),
         row("crontab -e", `*/5 * * * * curl -fsS "${u.url}" >/dev/null`), row("IPv6 too", `*/5 * * * * curl -6 -fsS "${u.url}" >/dev/null`)],
       "Router (DynDNS)": () => [el("p", { class: "muted", text: "Most routers (FRITZ!Box, OpenWrt, pfSense, OPNsense, MikroTik, Ubiquiti…) have a “Custom” or “DynDNS2” Dynamic DNS option:" }),
@@ -489,7 +489,7 @@ window.AuroraExtras = (ui) => {
     const show = (k) => { tabs.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.textContent === k)); pane.innerHTML = ""; pane.append(...T[k]()); };
     Object.keys(T).forEach((k) => tabs.append(el("button", { type: "button", text: k, onclick: () => show(k) })));
     openModal(`Update ${h.host}`, el("div", { class: "em-form" }, [
-      el("div", { class: "mx-note" }, [icon("key", 16), el("span", { text: "The key in this URL is the password for this name — anyone who has it can move the record. Regenerate it if it leaks." })]),
+      el("div", { class: "mx-note" }, [icon("key", 16), el("span", { text: "The key in this URL is the password for this name, anyone who has it can move the record. Regenerate it if it leaks." })]),
       tabs, pane]), []);
     const m = document.querySelector("#modal .modal"); if (m) m.classList.add("em-modal");
     show("Update URL");
@@ -497,7 +497,7 @@ window.AuroraExtras = (ui) => {
   function viewDdnsHosts(root) {
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
     const createBtn = el("button", { class: "btn btn-primary", onclick: () => create() }, [icon("plus", 15), " Create"]);
-    root.append(pageHead("Dynamic DNS", "Give a device on a network with a changing IP — your home, an office, a Raspberry Pi behind a router — a fixed name like home.example.com, served by this server's DNS. A secret URL moves the name whenever the IP changes.",
+    root.append(pageHead("Dynamic DNS", "Give a device on a network with a changing IP, your home, an office, a Raspberry Pi behind a router, a fixed name like home.example.com, served by this server's DNS. A secret URL moves the name whenever the IP changes.",
       [btn("Updater on this machine (DuckDNS…)", () => navigate("dyndns"), "btn-ghost"), createBtn]), body);
     let d, q = "";
     async function load() {
@@ -527,7 +527,7 @@ window.AuroraExtras = (ui) => {
             el("td", {}, [el("b", { text: h.host }), el("div", { class: "muted mx-small", text: `created ${ago(h.created)}` })]),
             el("td", {}, [h.ip ? el("code", { text: h.ip }) : null, h.ip6 ? el("div", {}, el("code", { class: "mx-small", text: h.ip6 })) : null, !h.ip && !h.ip6 ? el("span", { class: "muted", text: "waiting for the first update" }) : null]),
             el("td", {}, [el("div", { text: h.updated ? ago(h.updated) : "never" }), h.last_result ? el("div", { class: "muted mx-small mx-ell", title: `${h.last_result}${h.last_from ? " · from " + h.last_from : ""}`, text: `${h.last_result}${h.last_from ? " · from " + h.last_from : ""}` }) : null]),
-            el("td", { class: "mx-ell", text: h.description || "—" }),
+            el("td", { class: "mx-ell", text: h.description || ", " }),
             el("td", { class: "mx-actions" }, [
               btn("Update URL", async () => { const k = await call(() => API.ddnsHostKey(h.id)); if (k) showDdnsKey(h, k.key); }, "btn-primary"),
               btn("Edit", () => edit(h), "btn-ghost"),
@@ -571,7 +571,7 @@ window.AuroraExtras = (ui) => {
         field("Description", desc),
         field("Set the IP now (optional)", ip, "Normally the device updates it by itself."),
         el("div", { class: "mx-sep" }),
-        el("p", { class: "muted", text: "New key: the old update URL stops working at once — update your router or cron job afterwards." }),
+        el("p", { class: "muted", text: "New key: the old update URL stops working at once, update your router or cron job afterwards." }),
         el("div", { class: "toolbar" }, [armed("Regenerate key", "Click again", async () => { const r = await call(() => API.ddnsHostRegen(h.id), "New key generated"); if (r) { closeModal(); showDdnsKey(h, r.key); } }, "btn-ghost")]),
       ]), [el("button", { class: "btn btn-primary", text: "Save", onclick: () => call(() => API.ddnsHostEdit(h.id, { description: desc.value, ip: ip.value.trim() || null }), "Saved", () => { closeModal(); load(); }) })]);
     }
@@ -579,7 +579,7 @@ window.AuroraExtras = (ui) => {
   }
 
   // ======================================================================
-  //  Metrics — site picker shared by Visitors and Analytics
+  //  Metrics, site picker shared by Visitors and Analytics
   // ======================================================================
   async function sitePicker(root, view, title, desc) {
     root.append(pageHead(title, desc));
@@ -613,7 +613,7 @@ window.AuroraExtras = (ui) => {
   ];
   async function viewVisitors(root) {
     const sid = state.viewArg;
-    if (!sid) return sitePicker(root, "visitors", "Visitors", "Every request to your websites, newest first — who visited, what they opened, how the server answered. Pick a site:");
+    if (!sid) return sitePicker(root, "visitors", "Visitors", "Every request to your websites, newest first, who visited, what they opened, how the server answered. Pick a site:");
     let sw0;
     try { sw0 = await siteSwitcher("visitors", sid); } catch (e) { root.append(el("p", { class: "empty", text: e.message })); return; }
     const cols = new Set(LS.get("vis.cols", ["ip", "url", "ts", "size", "status", "method", "ref", "client"]));
@@ -664,7 +664,7 @@ window.AuroraExtras = (ui) => {
       facets.append(el("div", { class: "mx-grid3" }, [
         card("Top visitors", [rank(top("ip").slice(0, 8).map(([ip, n]) => ({ label: ip, n, onclick: () => setIp(ip), extra: d.ip_status[ip] ? pill(d.ip_status[ip], d.ip_status[ip] === "trusted" ? "good" : "bad") : reportedIps[ip] ? pill("reported", "warn") : null, cls: ipCls(d.ip_status[ip], reportedIps[ip]) })))]),
         card("Top pages", [rank(top("url", (r) => !r.bot && r.page).slice(0, 8).map(([u, n]) => ({ label: u, n, onclick: () => { search.value = u; q = u.toLowerCase(); drawTable(); } })))]),
-        card("Top referrers", [rank(top("ref", (r) => r.ref && !r.bot && !own.has(refHost(r.ref))).slice(0, 8).map(([u, n]) => ({ label: u.replace(/^https?:\/\//, ""), n })), { empty: "No links from other websites — visitors typed the address, used a bookmark or came from your own pages." })]),
+        card("Top referrers", [rank(top("ref", (r) => r.ref && !r.bot && !own.has(refHost(r.ref))).slice(0, 8).map(([u, n]) => ({ label: u.replace(/^https?:\/\//, ""), n })), { empty: "No links from other websites, visitors typed the address, used a bookmark or came from your own pages." })]),
       ]));
     }
     function setIp(ip) { ipF = ip; page = 0; drawTable(); }
@@ -681,10 +681,10 @@ window.AuroraExtras = (ui) => {
         case "ts": return el("span", { class: "mx-time", text: t2s(r.ts, { month: "numeric", day: "numeric", year: "2-digit", hour: "numeric", minute: "2-digit", second: "2-digit" }) });
         case "size": return document.createTextNode(fmtBytes(r.size));
         case "status": return el("span", { class: `mx-st ${statusKind(r.status)}`, text: r.status });
-        case "ref": return !r.ref ? el("span", { class: "muted", text: "—" })
+        case "ref": return !r.ref ? el("span", { class: "muted", text: ", " })
           : safeUrl(r.ref) ? el("a", { href: safeUrl(r.ref), target: "_blank", rel: "noopener noreferrer nofollow", referrerpolicy: "no-referrer", class: "mx-url", title: r.ref, text: r.ref.replace(/^https?:\/\//, "") })
           : el("span", { class: "mx-url mx-bad-url", title: r.ref, text: r.ref });
-        case "ua": return el("span", { class: "mx-ua", title: r.ua, text: r.ua || "—" });
+        case "ua": return el("span", { class: "mx-ua", title: r.ua, text: r.ua || ", " });
         case "client": return el("span", { class: r.bot ? "mx-bot" : "", text: r.client });
         default: return document.createTextNode(r[c] || "");
       }
@@ -746,7 +746,7 @@ window.AuroraExtras = (ui) => {
     ssl: "lock", timeout: "clock", server: "server", mail: "mail", database: "database", dns: "dns", php_fpm: "brick", panel: "dashboard", system: "processes", other: "listing" };
   const SOURCES = [["web", "Web server"], ["mail", "Mail"], ["database", "Database"], ["dns", "DNS"], ["php_fpm", "PHP-FPM"], ["panel", "Panel"], ["system", "System"]];
   async function viewErrors(root) {
-    // full = the whole period (drives the timeline); d = what the cards and list show —
+    // full = the whole period (drives the timeline); d = what the cards and list show, 
     // the same, or only the hour(s) of the bar that was clicked (win).
     let sid = state.viewArg || "", hours = 24, cat = "", lvl = "", q = "", mode = "grouped", d, full, win = null;
     const srcOn = new Set(LS.get("err.src", SOURCES.map((s) => s[0])));
@@ -754,7 +754,7 @@ window.AuroraExtras = (ui) => {
     try { sites = (await API.metSites()).sites.filter((s) => s.kind === "site"); } catch (e) {}
     const siteSel = el("select", { class: "em-select mx-site-sel", onchange: () => { sid = siteSel.value; load(); } }, [el("option", { value: "", text: "All websites" }), ...sites.map((s) => el("option", { value: s.id, text: s.label }))]);
     siteSel.value = sid;
-    root.append(pageHead("Errors", "Problems from the web server, PHP, mail, database, DNS and the system — sorted into categories, with repeats grouped and a hint for what to do about each.", [siteSel,
+    root.append(pageHead("Errors", "Problems from the web server, PHP, mail, database, DNS and the system, sorted into categories, with repeats grouped and a hint for what to do about each.", [siteSel,
       btn("Download", () => {
         if (!d) return;
         downloadText(`errors-${new Date().toISOString().slice(0, 10)}.log`, filtered().map((e) => `${new Date(e.ts * 1000).toISOString()} [${e.source}/${e.mod || "-"}:${e.level}]${e.client ? " [client " + e.client + "]" : ""} ${e.msg}`).join("\n"));
@@ -843,7 +843,7 @@ window.AuroraExtras = (ui) => {
       const n = d.items.filter((e) => (!cat || e.cat === cat) && (!q || `${e.msg} ${e.mod} ${e.client} ${e.code} ${e.file}`.toLowerCase().includes(q))).length;
       if (!n) return null;
       return el("div", { class: "mx-lvl-hidden" }, [
-        el("p", { class: "muted", text: `No ${lvl === "error" ? "errors" : "warnings"} here — ${num(n)} message${n === 1 ? " is" : "s are"} ${lvl === "error" ? "warnings or notices" : "errors or notices"}.` }),
+        el("p", { class: "muted", text: `No ${lvl === "error" ? "errors" : "warnings"} here, ${num(n)} message${n === 1 ? " is" : "s are"} ${lvl === "error" ? "warnings or notices" : "errors or notices"}.` }),
         btn("Show all levels", () => { lvl = ""; drawLvl(); drawList(); }, "btn-primary")]);
     }
     function filtered() {
@@ -854,7 +854,7 @@ window.AuroraExtras = (ui) => {
       listBox.innerHTML = "";
       if (cat) listBox.append(el("div", { class: "mx-hint" }, [icon(CAT_ICO[cat] || "listing", 18), el("div", {}, [el("b", { text: d.categories[cat].label }), el("p", { class: "muted", text: d.categories[cat].hint })]),
         cat === "security" ? btn("WAF Firewall", () => navigate("modsec"), "btn-ghost") : cat === "permission" ? btn("Fix permissions", () => navigate("fixperms"), "btn-ghost") : cat === "mail" ? btn("Email", () => navigate("email"), "btn-ghost") : null]));
-      if (!d.total) { listBox.append(empty("check", "No errors in this period", "Nothing went wrong — or the selected sources are quiet.")); return; }
+      if (!d.total) { listBox.append(empty("check", "No errors in this period", "Nothing went wrong, or the selected sources are quiet.")); return; }
       if (mode === "grouped") {
         const gs = d.groups.filter((g) => (!cat || g.cat === cat) && lvlOk(g.level) && (!q || `${g.pattern} ${g.example.msg} ${g.mod} ${g.clients.map((c) => c[0]).join(" ")}`.toLowerCase().includes(q)));
         if (!gs.length) { listBox.append(hiddenByLevel() || empty("search", "Nothing matches", "Try another filter.")); return; }
@@ -881,7 +881,7 @@ window.AuroraExtras = (ui) => {
           el("span", { class: "mx-line-t", text: t2s(e.ts, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }) }),
           el("span", { class: "mx-line-src", text: `${e.mod || e.source}:${e.level}` }),
           el("span", { class: "mx-line-msg", text: `${e.client ? "[" + e.client + "] " : ""}${e.msg}` })]))));
-        if (rows.length > 1500) listBox.append(el("p", { class: "muted mx-p", text: `Showing the newest 1,500 of ${num(rows.length)} — use Download for all of them.` }));
+        if (rows.length > 1500) listBox.append(el("p", { class: "muted mx-p", text: `Showing the newest 1,500 of ${num(rows.length)}, use Download for all of them.` }));
       }
     }
     load();
@@ -895,7 +895,7 @@ window.AuroraExtras = (ui) => {
   const NET = [{ key: "net_rx", label: "Download (in)", color: "#6fb6ff" }, { key: "net_tx", label: "Upload (out)", color: "#ff7a1a" }];
   async function viewBandwidth(root) {
     let d, view = LS.get("bw.view", "services"), month = null;
-    root.append(pageHead("Bandwidth", "How much data your websites, mail and FTP send and receive — and all traffic through the network card — over the last day, week, month and year. History is kept even after logs are rotated.",
+    root.append(pageHead("Bandwidth", "How much data your websites, mail and FTP send and receive, and all traffic through the network card, over the last day, week, month and year. History is kept even after logs are rotated.",
       [seg([["services", "By service"], ["network", "All network traffic"]], view, (v) => { view = v; LS.set("bw.view", v); draw(); })]));
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
     root.append(body);
@@ -937,7 +937,7 @@ window.AuroraExtras = (ui) => {
         const drawMonth = () => {
           mbox.innerHTML = "";
           const items = [];
-          // A site whose HTTPS side writes to Apache's shared log shows up twice — add them together.
+          // A site whose HTTPS side writes to Apache's shared log shows up twice, add them together.
           const by = new Map();
           Object.entries(d.months[month] || {}).forEach(([k, v]) => {
             const label = `HTTP · ${d.labels[k] || k}`, x = by.get(label) || { label, n: 0, hits: 0, visitors: 0 };
@@ -949,8 +949,8 @@ window.AuroraExtras = (ui) => {
           items.sort((a, b) => b.n - a.n);
           if (!items.length) { mbox.append(el("p", { class: "muted", text: "No traffic recorded for this month." })); return; }
           mbox.append(el("div", { class: "mx-bw-month" }, [
-            sortableTable([{ k: "label", label: "Website / service" }, { k: "hits", label: "Requests", num: true, render: (r) => r.hits != null ? num(r.hits) : "—" },
-              { k: "visitors", label: "Visitors", num: true, render: (r) => r.visitors != null ? num(r.visitors) : "—" }, { k: "n", label: "Data", num: true, render: (r) => fmtBytes(r.n) }], items, { sort: "n" }),
+            sortableTable([{ k: "label", label: "Website / service" }, { k: "hits", label: "Requests", num: true, render: (r) => r.hits != null ? num(r.hits) : ", " },
+              { k: "visitors", label: "Visitors", num: true, render: (r) => r.visitors != null ? num(r.visitors) : ", " }, { k: "n", label: "Data", num: true, render: (r) => fmtBytes(r.n) }], items, { sort: "n" }),
             donut(items.slice(0, 9).concat(items.length > 9 ? [{ label: "Everything else", n: items.slice(9).reduce((a, x) => a + x.n, 0) }] : []), fmtBytes),
           ]));
         };
@@ -965,7 +965,7 @@ window.AuroraExtras = (ui) => {
   //  Metrics → Raw Access
   // ======================================================================
   async function viewRawAccess(root) {
-    root.append(pageHead("Raw Access", "The web server's own log files — download them as they are (or gzipped), open them in Analytics, and choose how long the server keeps them."));
+    root.append(pageHead("Raw Access", "The web server's own log files, download them as they are (or gzipped), open them in Analytics, and choose how long the server keeps them."));
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
     root.append(body);
     async function load() {
@@ -1009,7 +1009,7 @@ window.AuroraExtras = (ui) => {
   // ======================================================================
   async function viewAnalytics(root) {
     const sid = state.viewArg;
-    if (!sid) return sitePicker(root, "analytics", "Analytics", "Visitors, visits, pages, traffic sources, browsers and more — worked out from the web server's logs, no tracking script needed. Pick a site:");
+    if (!sid) return sitePicker(root, "analytics", "Analytics", "Visitors, visits, pages, traffic sources, browsers and more, worked out from the web server's logs, no tracking script needed. Pick a site:");
     let days = LS.get("ana.days", 30), file = state.anaFile || "";
     state.anaFile = "";
     let sw0;
@@ -1038,9 +1038,9 @@ window.AuroraExtras = (ui) => {
         tile("Pages", num(s.pages), `${s.pages_per_visit} per visit`, "listing"),
         tile("Hits", num(s.hits), "every file: pages, images, CSS…", "processes"),
         tile("Bandwidth", fmtBytes(s.bytes), s.visits ? `${fmtBytes(s.bytes / s.visits)} per visit` : "", "network"),
-        tile("Avg. visit", s.avg_duration ? dur(s.avg_duration) : "—", "time between first and last page", "clock"),
+        tile("Avg. visit", s.avg_duration ? dur(s.avg_duration) : ", ", "time between first and last page", "clock"),
       ]));
-      body.append(el("div", { class: "mx-note mx-note-dim" }, [icon("radar", 16), el("span", { text: `Not counted above: ${num(s.bot_hits)} requests (${fmtBytes(s.bot_bytes)}) by bots, crawlers and scanners — see “Robots & tools” below.` })]));
+      body.append(el("div", { class: "mx-note mx-note-dim" }, [icon("radar", 16), el("span", { text: `Not counted above: ${num(s.bot_hits)} requests (${fmtBytes(s.bot_bytes)}) by bots, crawlers and scanners, see “Robots & tools” below.` })]));
       if (!s.hits && !s.bot_hits) { body.append(el("div", { class: "card" }, empty("chart", "No visits in this period", "Choose a longer period, or check back once people have visited the site."))); return; }
       const dayMetric = LS.get("ana.metric", "visitors");
       const dayBox = el("div", {});
@@ -1104,8 +1104,8 @@ window.AuroraExtras = (ui) => {
       body.append(el("div", { class: "mx-grid2" }, [
         card("HTTP status codes", [rank(a.status.map((x) => ({ label: `${x.code} ${STATUS[x.code] || ""}`, n: x.n, extra: el("span", { class: `mx-st ${statusKind(x.code)}`, text: "" }) })), { limit: 12 })]),
         card("Not found (404)", [a.e404.length ? sortableTable([{ k: "url", label: "Missing URL", render: (r) => el("span", { class: "mx-url", title: r.url, text: r.url }) },
-          { k: "n", label: "Hits", num: true }, { k: "ref", label: "Linked from", render: (r) => r.ref ? el("span", { class: "mx-url", title: r.ref, text: r.ref.replace(/^https?:\/\//, "") }) : el("span", { class: "muted", text: "—" }) }], a.e404, { sort: "n" })
-          : el("p", { class: "muted mx-none", text: "No broken links — nice." })]),
+          { k: "n", label: "Hits", num: true }, { k: "ref", label: "Linked from", render: (r) => r.ref ? el("span", { class: "mx-url", title: r.ref, text: r.ref.replace(/^https?:\/\//, "") }) : el("span", { class: "muted", text: ", " }) }], a.e404, { sort: "n" })
+          : el("p", { class: "muted mx-none", text: "No broken links, nice." })]),
       ]));
       if (a.users.length) body.append(card("Signed-in users (HTTP auth)", [rank(a.users.map((x) => ({ label: x.key, n: x.n })))]));
     }
@@ -1120,7 +1120,7 @@ window.AuroraExtras = (ui) => {
   // ======================================================================
   async function viewResources(root) {
     let span = LS.get("res.span", "day");
-    root.append(pageHead("Resource Usage", "CPU, memory, disk and network over time — sampled every minute by the panel, kept for a year — plus which software uses the most and any times the server ran out of memory or power.",
+    root.append(pageHead("Resource Usage", "CPU, memory, disk and network over time, sampled every minute by the panel, kept for a year, plus which software uses the most and any times the server ran out of memory or power.",
       [seg([["hour", "Hour"], ["day", "Day"], ["week", "Week"], ["month", "Month"], ["year", "Year"]], span, (v) => { span = v; LS.set("res.span", v); load(); })]));
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
     root.append(body);
@@ -1136,15 +1136,15 @@ window.AuroraExtras = (ui) => {
       const peak = (k) => P.reduce((a, p) => Math.max(a, p[1][k + "_max"] ?? p[1][k] ?? 0), 0);
       const oom = d.faults.filter((f) => f.kind === "oom").length, pwr = d.faults.filter((f) => f.kind === "power").length;
       body.append(el("div", { class: "mx-tiles" }, [
-        tile("CPU now", last.cpu != null ? `${Math.round(last.cpu)}%` : "—", `peak ${Math.round(peak("cpu"))}% · ${info.cpus || "?"} cores`, "processes", last.cpu > 85 ? "warnt" : ""),
-        tile("Memory", last.mem != null ? `${fmtBytes(last.mem * 1048576)}` : "—", info.mem_total ? `of ${fmtBytes(info.mem_total * 1048576)} · peak ${Math.round(peak("mem_pct"))}%` : "", "server", last.mem_pct > 90 ? "warnt" : ""),
-        tile("Load", last.load != null ? String(last.load) : "—", info.cpus ? `${info.cpus} = all cores busy` : "", "dashboard"),
+        tile("CPU now", last.cpu != null ? `${Math.round(last.cpu)}%` : ", ", `peak ${Math.round(peak("cpu"))}% · ${info.cpus || "?"} cores`, "processes", last.cpu > 85 ? "warnt" : ""),
+        tile("Memory", last.mem != null ? `${fmtBytes(last.mem * 1048576)}` : ", ", info.mem_total ? `of ${fmtBytes(info.mem_total * 1048576)} · peak ${Math.round(peak("mem_pct"))}%` : "", "server", last.mem_pct > 90 ? "warnt" : ""),
+        tile("Load", last.load != null ? String(last.load) : ", ", info.cpus ? `${info.cpus} = all cores busy` : "", "dashboard"),
         tile("Faults (31 days)", String(oom + pwr), oom || pwr ? `${oom} out-of-memory · ${pwr} power` : "No crashes or throttling", "warning", oom + pwr ? "warnt" : ""),
       ]));
       if (!P.length) { body.append(el("div", { class: "card" }, empty("chart", "Collecting…", "The first points appear within a minute; history grows from now on."))); return; }
       const want = { hour: 3600, day: 86400, week: 7 * 86400, month: 30 * 86400, year: 365 * 86400 }[span];
       if (P[0][0] > Date.now() / 1000 - want * 0.9) body.append(el("div", { class: "mx-note mx-note-dim" }, [icon("clock", 16),
-        el("span", { text: `History starts ${t2s(P[0][0])} — the panel began recording then. The charts fill the whole ${span} as time goes on.` })]));
+        el("span", { text: `History starts ${t2s(P[0][0])}, the panel began recording then. The charts fill the whole ${span} as time goes on.` })]));
       const c = (title, series, yfmt, extra = {}) => card(title, [chart({ points: P, series, type: "line", stacked: false, height: 150, xfmt: xf, tipX: tx, yfmt, ticks: 5, ...extra })], "mx-res");
       const charts = [
         c("CPU", [{ key: "cpu", label: "Average", color: "#ff7a1a" }, { key: "cpu_max", label: "Peak", color: "rgba(255,122,26,.45)", fill: false }], (v) => `${Math.round(v)}%`, { max: 100 }),

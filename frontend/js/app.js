@@ -9,7 +9,7 @@
     : s.replace(/(?<!Raspberry )\bPi's\b/g, "server's").replace(/(?<!Raspberry |\w\.)\bPi\b(?![-.]\w)/g, "server"));
   const el = (tag, attrs = {}, children = []) => {
     const node = document.createElement(tag);
-    // raw: data shown exactly as it is (log lines, URLs, user agents) — never reworded, never parsed as HTML.
+    // raw: data shown exactly as it is (log lines, URLs, user agents), never reworded, never parsed as HTML.
     const h = attrs.raw ? (s) => s : host;
     for (const [k, v] of Object.entries(attrs)) {
       if (k === "raw") continue;
@@ -29,7 +29,7 @@
 
   // -------- formatting helpers --------
   const fmtBytes = (n) => {
-    if (n == null) return "—";
+    if (n == null) return ", ";
     const u = ["B", "KB", "MB", "GB", "TB", "PB"];
     let i = 0, v = n;
     while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
@@ -55,7 +55,7 @@
   window.addEventListener("aurora-updated", () => {
     if (document.querySelector(".update-banner")) return;
     document.body.append(el("div", { class: "update-banner", role: "status" }, [
-      el("span", { text: "AuroraPanel was updated — reload to use the new version." }),
+      el("span", { text: "AuroraPanel was updated, reload to use the new version." }),
       el("button", { class: "btn btn-sm btn-primary", text: "Reload", onclick: () => location.reload() }),
     ]));
   });
@@ -520,7 +520,7 @@
   //  Auth flow
   // ======================================================================
   const state = { view: "dashboard", firstLogin: false, refreshHandler: null, sysUser: null, sysHome: null };
-  // The Pi's regular login (whoever installed the panel) — used for defaults/placeholders.
+  // The Pi's regular login (whoever installed the panel), used for defaults/placeholders.
   const sysUser = () => state.sysUser || "pi";
   const sysHome = () => state.sysHome || `/home/${sysUser()}`;
 
@@ -563,7 +563,7 @@
     $("#auth-form").hidden = true;
     $("#auth-hint").hidden = true;
     $("#pw-form").hidden = false;
-    $("#auth-subtitle").textContent = "Choose your own password to continue — the one from the installer works only once.";
+    $("#auth-subtitle").textContent = "Choose your own password to continue, the one from the installer works only once.";
     $("#pw-form").querySelector('input[name="username"]').value = username;
     $("#pw-current-wrap").hidden = !!current;
     $("#pw-current").required = !current;
@@ -640,7 +640,7 @@
     }
   });
 
-  // What a limited panel user may open (the server enforces it too — this only keeps the menus honest).
+  // What a limited panel user may open (the server enforces it too, this only keeps the menus honest).
   const SITE_VIEWS = new Set(["mysites", "files", "mailaccounts", "visitors", "analytics", "errors"]);
   async function enterApp(username, me) {
     $("#auth-screen").hidden = true;
@@ -655,7 +655,7 @@
     // that stops the automatic revert to HTTP.
     if (location.protocol === "https:") {
       API.panelHttps().then((st) => st.pending && API.panelHttpsConfirm()
-        .then(() => toast("Panel HTTPS is on — bookmark this https:// address", "good"))).catch(() => {});
+        .then(() => toast("Panel HTTPS is on, bookmark this https:// address", "good"))).catch(() => {});
     }
     initTheme();
     decorateNav();
@@ -834,7 +834,7 @@
   }
 
   // ======================================================================
-  //  Requirements — a fresh Ubuntu/Debian server has no Apache, PHP, MariaDB…
+  //  Requirements, a fresh Ubuntu/Debian server has no Apache, PHP, MariaDB…
   //  Pages that need them offer a one-click install (with an orange progress
   //  bar) instead of failing. "soft" ones only show a banner above the page.
   // ======================================================================
@@ -898,7 +898,7 @@
         el("span", { class: "rq-badge" }, icon(comps[0].icon, 26)),
         el("div", {}, [
           el("h3", { text: `${page} needs ${list}` }),
-          el("p", { class: "muted", text: `This server doesn't have ${them} yet. One click downloads, installs and starts ${them} — your other software and settings aren't touched.` }),
+          el("p", { class: "muted", text: `This server doesn't have ${them} yet. One click downloads, installs and starts ${them}, your other software and settings aren't touched.` }),
         ]),
       ]),
       el("ul", { class: "rq-list" }, rows.map((r) => r.li)),
@@ -1116,7 +1116,7 @@
   }
 
   // ======================================================================
-  //  Bento dashboard — device-style cards fed by live system data
+  //  Bento dashboard, device-style cards fed by live system data
   // ======================================================================
   const I = (name, size) => icon(name, size).outerHTML;
   const clamp = (v, a = 0, b = 100) => Math.max(a, Math.min(b, v));
@@ -1143,7 +1143,7 @@
   // Don't start a drag from something the user is actually using (a button, link, slider…).
   const DASH_NO_DRAG = "button, a, input, select, textarea, .slider, .rbtn, [data-go], [role=button]";
 
-  // Pointer-based reorder — works with a real mouse AND touch, where native HTML5 drag doesn't.
+  // Pointer-based reorder, works with a real mouse AND touch, where native HTML5 drag doesn't.
   // A drag starts only after the pointer moves past a threshold, so plain clicks (navigate, collapse) still work.
   // Flicker-free: the dragged element is lifted out of the layout (position: fixed, follows the pointer) and a
   // same-size placeholder holds its spot. Nothing reflows under the pointer, so there's no swap-back jitter.
@@ -1168,7 +1168,7 @@
       if (!best) return;
       let ref = before ? best : best.nextElementSibling;
       if (ref === drag.el) ref = drag.el.nextElementSibling;
-      // Move the placeholder only when its slot really changes — no churn, no flicker.
+      // Move the placeholder only when its slot really changes, no churn, no flicker.
       if (ref !== drag.ph && drag.ph.nextElementSibling !== ref) container.insertBefore(drag.ph, ref);
     }
 
@@ -1280,7 +1280,7 @@
     renderTiles(tilesWrap, refreshReset);
     try {
       if (!localStorage.getItem("aurora.dash.hint")) {
-        toast("Tip: drag a dashboard card — or a tool panel by its title bar — to rearrange. Your layout is remembered.", "good");
+        toast("Tip: drag a dashboard card, or a tool panel by its title bar, to rearrange. Your layout is remembered.", "good");
         localStorage.setItem("aurora.dash.hint", "1");
       }
     } catch (e) {}
@@ -1333,7 +1333,7 @@
       const dt = (now - netState.prevT) / 1000;
       netState.rx = Math.max(0, (cur.rx - netState.prev.rx) / dt);
       netState.tx = Math.max(0, (cur.tx - netState.prev.tx) / dt);
-    } else { netState.rx = 0; netState.tx = 0; }  // first sample, or the interface changed — no rate yet
+    } else { netState.rx = 0; netState.tx = 0; }  // first sample, or the interface changed, no rate yet
     netState.prev = cur; netState.prevT = now;
   }
 
@@ -1371,11 +1371,11 @@
       </svg>
       ${bcHead("flame", "Thermal", o.pi_model ? "SoC temperature" : "CPU temperature")}
       <div class="bc-body">
-        <div class="bc-big ${hot ? "is-hot" : ""}">${t != null ? t.toFixed(1) : "—"}<small>°C</small></div>
+        <div class="bc-big ${hot ? "is-hot" : ""}">${t != null ? t.toFixed(1) : ", "}<small>°C</small></div>
         <div class="bc-sub">${t == null ? "No temperature sensor (normal on a virtual server)" : throttled ? "⚠ Throttled (" + esc(o.throttled) + ")" : hist.length > 1 ? `Low ${Math.min(...hist).toFixed(0)}° · High ${Math.max(...hist).toFixed(0)}°` : "No throttling"}</div>
       </div>
       <div class="bc-foot">
-        <span class="chip">${I("processes", 12)} ${o.cpu.freq_mhz ? o.cpu.freq_mhz.toFixed(0) + " MHz" : "—"}</span>
+        <span class="chip">${I("processes", 12)} ${o.cpu.freq_mhz ? o.cpu.freq_mhz.toFixed(0) + " MHz" : ", "}</span>
         <span class="chip ${throttled ? "chip-bad" : ""}">${t == null ? "n/a" : throttled ? "throttled" : "nominal"}</span>
       </div>`;
   }
@@ -1404,7 +1404,7 @@
     const p = clamp(rd.percent || 0);
     c.style.setProperty("--fill", `${p}%`);
     c.innerHTML = `${bcHead("disk", "Root filesystem", rd.mountpoint || "/")}
-      <div class="bc-body"><div class="bc-big accent">${rd.percent != null ? p.toFixed(0) : "—"}<small>%</small></div>
+      <div class="bc-body"><div class="bc-big accent">${rd.percent != null ? p.toFixed(0) : ", "}<small>%</small></div>
       <div class="bc-sub">Used · ${fmtBytes(rd.free)} free</div></div>
       <div class="bc-foot">${rbtn("disk", "disk", "Disk usage")}${rbtn("folder", "files", "File manager")}<span class="grow"></span>${tuneBtn("backups", "Backups")}</div>`;
   }
@@ -1466,11 +1466,11 @@
       <div class="sys-top"><span class="sys-loc">${I("globe", 15)} ${esc(o.hostname)}</span><span class="sys-cond">${I("dashboard", 26)}<em>${esc(model || "Linux")}</em></span></div>
       <div class="sys-mid">
         <div><div class="sys-big">${esc(fmtUptime(o.uptime_seconds))}</div>
-          <div class="sys-hl">Load ${la[0] != null ? la[0].toFixed(2) : "—"} · ${o.cpu.cores_logical} threads</div>
+          <div class="sys-hl">Load ${la[0] != null ? la[0].toFixed(2) : ", "} · ${o.cpu.cores_logical} threads</div>
           <div class="sys-note">${esc(o.arch)} · Python ${esc(o.python)}</div></div>
         <div class="sys-stats">
-          <div><span>Load 5m</span><b>${la[1] != null ? la[1].toFixed(2) : "—"}</b></div>
-          <div><span>Load 15m</span><b>${la[2] != null ? la[2].toFixed(2) : "—"}</b></div>
+          <div><span>Load 5m</span><b>${la[1] != null ? la[1].toFixed(2) : ", "}</b></div>
+          <div><span>Load 15m</span><b>${la[2] != null ? la[2].toFixed(2) : ", "}</b></div>
           <div><span>Swap</span><b>${o.swap.percent.toFixed(0)}%</b></div>
         </div>
       </div>
@@ -1543,7 +1543,7 @@
   // ---- Network (switch-style) ----
   function renderNetCard(c) {
     const i = netState.iface;
-    c.innerHTML = `${bcHead("network", "Network", i ? i.name : "—")}
+    c.innerHTML = `${bcHead("network", "Network", i ? i.name : ", ")}
       <div class="bc-body"><div class="net-rate">${I("chevron", 12)}<b>${fmtBytes(netState.rx)}/s</b><span>down</span></div>
         <div class="net-rate up">${I("chevron", 12)}<b>${fmtBytes(netState.tx)}/s</b><span>up</span></div></div>
       <div class="bc-foot"><span class="bc-sub mono">${esc((i && i.ipv4) || "no IPv4")}</span><span class="grow"></span>${tuneBtn("network", "Network")}</div>`;
@@ -1553,7 +1553,7 @@
   function renderStorageCard(c, disks) {
     const rd = rootDisk(disks) || {};
     const totalAll = disks.reduce((s, d) => s + d.total, 0);
-    c.innerHTML = `${bcHead("backup", `Storage · ${disks.length} mount${disks.length === 1 ? "" : "s"}`, rd.device || "—")}
+    c.innerHTML = `${bcHead("backup", `Storage · ${disks.length} mount${disks.length === 1 ? "" : "s"}`, rd.device || ", ")}
       <div class="stat3">
         <div><span>${I("disk", 12)} Used</span><b>${fmtBytes(rd.used)}</b></div>
         <div><span>${I("folder", 12)} Free</span><b>${fmtBytes(rd.free)}</b></div>
@@ -1663,9 +1663,9 @@
     // Group units by what they're doing, so the page answers "what's running / what's broken" at a glance.
     const KINDS = [
       ["running", "Running", "good", "Services working right now."],
-      ["failed", "Failed", "bad", "Crashed or couldn't start — these need a look (Status shows why)."],
+      ["failed", "Failed", "bad", "Crashed or couldn't start, these need a look (Status shows why)."],
       ["exited", "Finished", "dim", "One-shot jobs that ran at boot and exited. That's normal: there's nothing to keep running."],
-      ["stopped", "Stopped", "dim", "Not running. Many are started only when needed (timers, sockets) — not an error."],
+      ["stopped", "Stopped", "dim", "Not running. Many are started only when needed (timers, sockets), not an error."],
       ["all", "All", "", ""],
     ];
     const kindOf = (s) => (s.active === "failed" || s.sub === "failed" ? "failed" : s.active === "active" || s.active === "reloading" || s.active === "activating"
@@ -1711,7 +1711,7 @@
       body.innerHTML = "";
       if (!all.length) { body.append(el("p", { class: "empty", text: "No systemd services (this host isn't running systemd)." })); return; }
       if (kind === "all") {
-        for (const [k, l, , h] of KINDS.slice(0, 4)) {
+        for (const [k, l, h] of KINDS.slice(0, 4)) {
           const list = match.filter((s) => kindOf(s) === k);
           if (!list.length) continue;
           body.append(el("div", { class: "svc-group" }, [el("h3", {}, [l, el("span", { class: "muted", text: ` · ${list.length}` })]), el("p", { class: "muted svc-hint", text: h }), table(list)]));
@@ -1719,7 +1719,7 @@
         return;
       }
       const list = match.filter((s) => kindOf(s) === kind);
-      body.append(list.length ? table(list) : el("p", { class: "empty", text: kind === "failed" ? "Nothing has failed — every service started cleanly." : "Nothing here." }));
+      body.append(list.length ? table(list) : el("p", { class: "empty", text: kind === "failed" ? "Nothing has failed, every service started cleanly." : "Nothing here." }));
     };
 
     const load = async () => {
@@ -1756,9 +1756,9 @@
   // ======================================================================
   // Processes: grouped by what they are doing, sortable by any column, searchable. Kernel helpers are hidden
   // by default (they can't be ended anyway) so what's left is the owner's apps and services.
-  const PROC_STATE = { running: ["Running", "good", "Using the CPU right now"], sleeping: ["Sleeping", "dim", "Waiting for work — normal for almost every program"],
-    idle: ["Idle", "dim", "A kernel helper with nothing to do"], "disk-sleep": ["Waiting for disk", "warn", "Blocked on a disk or network read — fine for a moment, a problem if it stays"],
-    stopped: ["Stopped", "warn", "Paused with a STOP signal — resume it or end it"], zombie: ["Zombie", "bad", "Finished, but its parent hasn't collected it yet. Harmless unless they pile up"],
+  const PROC_STATE = { running: ["Running", "good", "Using the CPU right now"], sleeping: ["Sleeping", "dim", "Waiting for work, normal for almost every program"],
+    idle: ["Idle", "dim", "A kernel helper with nothing to do"], "disk-sleep": ["Waiting for disk", "warn", "Blocked on a disk or network read, fine for a moment, a problem if it stays"],
+    stopped: ["Stopped", "warn", "Paused with a STOP signal, resume it or end it"], zombie: ["Zombie", "bad", "Finished, but its parent hasn't collected it yet. Harmless unless they pile up"],
     "tracing-stop": ["In debugger", "warn", "Stopped by a debugger or strace"], dead: ["Dead", "bad", "Being torn down"], parked: ["Idle", "dim", "A kernel helper, parked"], waking: ["Waking", "dim", "About to run"] };
   function viewProcesses(root) {
     // small local helpers (the shared ones live in extras.js, outside this file's scope)
@@ -1780,7 +1780,7 @@
     const bar = el("div", { class: "card em-pad0 pr-bar" }, [el("div", { class: "mx-toolbar" }, [search, segHost, el("span", { class: "grow" }),
       el("label", { class: "mx-live" }, [liveSw, el("span", { text: "Live (5 s)" })])])]);
     const body = el("div", { class: "pr-body" }, el("div", { class: "loading", text: "Loading…" }));
-    const note = el("p", { class: "muted mx-small mx-p", text: "Sleeping is normal — a program waits until there is work for it. Idle rows are kernel helpers. A zombie has finished but its parent hasn't noticed yet; harmless unless they pile up. Click a column to sort." });
+    const note = el("p", { class: "muted mx-small mx-p", text: "Sleeping is normal, a program waits until there is work for it. Idle rows are kernel helpers. A zombie has finished but its parent hasn't noticed yet; harmless unless they pile up. Click a column to sort." });
     root.append(tiles, bar, body, note);
     state.cleanups.push(() => clearInterval(timer));
 
@@ -1951,7 +1951,7 @@
       body.innerHTML = "";
       let entries = data.entries;
       if (!fmState.showHidden) entries = entries.filter((e) => !e.is_hidden);
-      if (!entries.length) { body.append(el("p", { class: "empty", text: fmState.showHidden ? "Empty folder" : "Empty (or only hidden files — tick “Show hidden”)" })); return; }
+      if (!entries.length) { body.append(el("p", { class: "empty", text: fmState.showHidden ? "Empty folder" : "Empty (or only hidden files, tick “Show hidden”)" })); return; }
       const rows = entries.map((e) => {
         const cb = el("input", { type: "checkbox", style: "width:auto", onchange: (ev) => { ev.target.checked ? fmState.selected.add(e.name) : fmState.selected.delete(e.name); } });
         const nameCell = el("td", {}, el("span", { class: `fm-name ${e.is_dir ? "dir" : ""}`,
@@ -1962,7 +1962,7 @@
         return el("tr", {}, [
           el("td", { style: "width:34px" }, cb),
           nameCell,
-          el("td", { class: "muted", text: e.is_dir ? "—" : fmtBytes(e.size) }),
+          el("td", { class: "muted", text: e.is_dir ? ", " : fmtBytes(e.size) }),
           el("td", { class: "muted", text: e.mode }),
           el("td", { class: "muted", text: new Date(e.modified * 1000).toLocaleString() }),
           el("td", { class: "actions" }, [
@@ -2062,8 +2062,8 @@
         } }),
       ]);
     } catch (err) {
-      // Non-text or too large — offer download instead.
-      toast(err.message + " — use ↓ to download", "bad");
+      // Non-text or too large, offer download instead.
+      toast(err.message + ", use ↓ to download", "bad");
     }
   }
 
@@ -2110,7 +2110,7 @@
   // ======================================================================
   const netHist = { rx: [], tx: [] };
   // ======================================================================
-  //  Network — Overview · Wi-Fi · IP settings · Hotspot · Devices · Ports · Hostname
+  //  Network, Overview · Wi-Fi · IP settings · Hotspot · Devices · Ports · Hostname
   // ======================================================================
   const NET_TABS = [["overview", "Overview", "dashboard"], ["wifi", "Wi-Fi", "wifi"], ["ip", "IP & DNS", "network"],
     ["hotspot", "Hotspot", "dns"], ["devices", "Devices on LAN", "users"], ["ports", "Open ports", "shield"], ["host", "Hostname", "home"]];
@@ -2153,7 +2153,7 @@
     if (!p) return;
     box.append(el("div", { class: "net-pending" }, [
       el("div", { class: "net-count", text: p.seconds_left }),
-      el("div", { class: "grow" }, [el("b", { text: `Keep this change? — ${p.label}` }),
+      el("div", { class: "grow" }, [el("b", { text: `Keep this change?, ${p.label}` }),
         el("span", { html: p.new_url ? `If this page stops responding, open <a href="${esc(p.new_url)}">${esc(p.new_url.split("?")[0])}</a> and it will confirm automatically. Otherwise everything is put back in <b>${p.seconds_left}s</b>.` : `If the panel still works, click Keep. Otherwise it's put back automatically in <b>${p.seconds_left}s</b>.` })]),
       el("button", { class: "btn btn-ghost", text: "Revert now", onclick: async () => { try { await API.netRevert(p.id); toast("Reverted", "good"); pollPending(box); } catch (e) { toast(e.message, "bad"); } } }),
       el("button", { class: "btn btn-primary", text: "Keep", onclick: async () => { try { await API.netConfirm(p.id); toast("Change kept", "good"); pollPending(box); } catch (e) { toast(e.message, "bad"); } } }),
@@ -2180,8 +2180,8 @@
       top.append(
         tile("home", "Hostname", o.hostname, `${o.hostname}.local on your LAN`),
         tile("link", "You're connected via", o.panel_iface || "?", o.panel_ip || ""),
-        tile("network", "Gateway (router)", o.gateway ? o.gateway.ip : "—", o.gateway ? `via ${o.gateway.device}` : ""),
-        tile("dns", "DNS servers", o.dns.join(", ") || "—", ""));
+        tile("network", "Gateway (router)", o.gateway ? o.gateway.ip : ", ", o.gateway ? `via ${o.gateway.device}` : ""),
+        tile("dns", "DNS servers", o.dns.join(", ") || ", ", ""));
       if (!o.nm) top.append(el("div", { class: "dm-note", style: "grid-column:1/-1" }, [icon("info", 15), el("span", { text: "This machine's network is set up with netplan / systemd-networkd (normal on Ubuntu servers and VPSs), so it's shown read-only here. Wi-Fi, hotspot and IP changes need NetworkManager." })]));
       o.devices.forEach((d) => {
         const c = o.connections.find((x) => x.device === d.device);
@@ -2227,7 +2227,7 @@
     function connectModal(ssid, needPw, hidden) {
       const f = el("div", { class: "dm-form" });
       const s = el("input", { type: "text", value: ssid, placeholder: "Network name (SSID)" }); if (ssid) s.readOnly = true;
-      const p = el("input", { type: "password", placeholder: needPw || hidden ? "Wi-Fi password" : "(saved or open — leave empty)", autocomplete: "off" });
+      const p = el("input", { type: "password", placeholder: needPw || hidden ? "Wi-Fi password" : "(saved or open, leave empty)", autocomplete: "off" });
       f.append(el("label", { class: "cw-lbl" }, ["Network", s]), el("label", { class: "cw-lbl" }, ["Password", p]),
         el("div", { class: "dm-note" }, [icon("error", 15), el("span", { text: "If you're using the panel over Wi-Fi, switching networks will disconnect this page. You'll have 2 minutes to confirm from the new network; otherwise the Pi reconnects to the current one automatically." })]));
       const go = el("button", { class: "btn btn-primary", text: "Connect", onclick: async () => {
@@ -2249,7 +2249,7 @@
       body.innerHTML = "";
       const conns = o.connections.filter((c) => (c.type === "ethernet" || c.type === "wifi") && c.mode !== "ap");
       if (!conns.length) { body.append(el("p", { class: "empty", text: "No Ethernet or Wi-Fi connections found." })); return; }
-      body.append(el("p", { class: "muted dm-intro", text: "Give the Pi a fixed (static) address so bookmarks, port-forwards and SSH always find it — or leave it on DHCP. Changes to the connection you're using are applied with a 2-minute safety timer." }));
+      body.append(el("p", { class: "muted dm-intro", text: "Give the Pi a fixed (static) address so bookmarks, port-forwards and SSH always find it, or leave it on DHCP. Changes to the connection you're using are applied with a 2-minute safety timer." }));
       conns.forEach((c) => {
         const live = (c.live_addresses[0] || c.addresses[0] || "");
         const s = { method: c.method === "manual" ? "manual" : "auto", address: c.addresses[0] || live, gateway: c.gateway_cfg || c.live_gateway || (o.gateway && o.gateway.ip) || "", dns: (c.dns_cfg.length ? c.dns_cfg : []).join(", ") };
@@ -2267,7 +2267,7 @@
           save.disabled = true;
           try {
             const r = await API.netIPv4({ uuid: c.uuid, method: s.method, address: s.address.trim(), gateway: s.gateway.trim(), dns: s.dns.split(/[\s,]+/).filter(Boolean) });
-            toast(r.pending ? "Applied — confirm to keep it" : "Applied", "good");
+            toast(r.pending ? "Applied, confirm to keep it" : "Applied", "good");
             pollPending($("#net-pending"), r.pending);
             if (r.pending && r.pending.new_url) setTimeout(() => { location.href = r.pending.new_url; }, 4500);
           } catch (e) { toast(e.message, "bad"); }
@@ -2297,7 +2297,7 @@
       const dev = el("select", { onchange: (e) => { f.device = e.target.value; } }, devs.map((d) => el("option", { value: d, text: d + (d === o.panel_iface ? " (you're using this)" : "") }))); dev.value = f.device;
       const band = el("select", { onchange: (e) => { f.band = e.target.value; } }, [el("option", { value: "bg", text: "2.4 GHz (best range)" }), el("option", { value: "a", text: "5 GHz (faster)" })]);
       body.append(status, netCard("wifi", "Turn the Pi into a Wi-Fi hotspot", "Great for travel, workshops or setting up gadgets with no router around.",
-        blocked ? el("div", { class: "dm-note" }, [icon("error", 15), el("span", { text: `You're reaching the panel through ${f.device}. A Wi-Fi chip can't be a hotspot and a client at the same time — plug in Ethernet or add a USB Wi-Fi adapter first.` })]) : null,
+        blocked ? el("div", { class: "dm-note" }, [icon("error", 15), el("span", { text: `You're reaching the panel through ${f.device}. A Wi-Fi chip can't be a hotspot and a client at the same time, plug in Ethernet or add a USB Wi-Fi adapter first.` })]) : null,
         el("div", { class: "dm-row2" }, [el("label", { class: "cw-lbl" }, ["Hotspot name", ss]), el("label", { class: "cw-lbl" }, ["Password", el("div", { class: "wp-pw" }, [pw, el("button", { type: "button", class: "btn btn-sm", text: "Generate", onclick: async () => { const r = await API.appPassword(); pw.value = r.password.replace(/[^A-Za-z0-9]/g, "").slice(0, 16); f.password = pw.value; } })])])]),
         el("div", { class: "dm-row2" }, [el("label", { class: "cw-lbl" }, ["Wi-Fi adapter", dev]), el("label", { class: "cw-lbl" }, ["Band", band])]),
         el("div", { class: "cw-actions" }, el("button", { class: "btn btn-primary", onclick: async () => {
@@ -2315,7 +2315,7 @@
       box.innerHTML = "";
       if (!d.devices.length) { box.append(el("p", { class: "empty", text: "No neighbours seen yet." })); return; }
       box.append(el("div", { class: "dm-count muted", text: `${d.devices.length} device(s)` }), simpleTable(["IP address", "Name", "Vendor", "MAC", "Status"], d.devices.map((x) => el("tr", {}, [
-        el("td", {}, el("code", { text: x.ip })), el("td", { text: x.hostname || "—" }), el("td", { class: "muted", text: x.vendor || "—" }),
+        el("td", {}, el("code", { text: x.ip })), el("td", { text: x.hostname || ", " }), el("td", { class: "muted", text: x.vendor || ", " }),
         el("td", { class: "muted" }, el("code", { text: x.mac })),
         el("td", {}, el("span", { class: `pill ${x.state === "reachable" ? "good" : "dim"}`, text: x.state === "reachable" ? "online" : "seen recently" })),
       ]))));
@@ -2327,11 +2327,11 @@
   const PORT_HINTS = { 22: "SSH", 53: "DNS", 80: "HTTP (web)", 443: "HTTPS (web)", 3306: "MariaDB", 5432: "PostgreSQL", 8088: "AuroraPanel", 139: "Samba", 445: "Samba", 137: "Samba names", 138: "Samba", 5353: "mDNS / .local", 111: "rpcbind", 631: "Printing (CUPS)", 25: "Mail (SMTP)", 953: "BIND control", 3389: "Remote desktop", 5900: "VNC" };
   function netPortsTab(body) {
     const box = el("div", {}, el("div", { class: "loading", text: "Listing listening ports…" }));
-    body.append(el("p", { class: "muted dm-intro", html: "Programs waiting for connections. Anything on <b>all interfaces</b> can be reached from your network — close what you don't use, or limit it with the Firewall." }), box);
+    body.append(el("p", { class: "muted dm-intro", html: "Programs waiting for connections. Anything on <b>all interfaces</b> can be reached from your network, close what you don't use, or limit it with the Firewall." }), box);
     API.netPorts().then((d) => {
       box.innerHTML = "";
       box.append(simpleTable(["Port", "Protocol", "What it is", "Program", "Reachable from"], d.ports.map((p) => el("tr", {}, [
-        el("td", {}, el("b", { text: p.port })), el("td", { class: "muted", text: p.proto.toUpperCase() }), el("td", { text: PORT_HINTS[p.port] || "—" }),
+        el("td", {}, el("b", { text: p.port })), el("td", { class: "muted", text: p.proto.toUpperCase() }), el("td", { text: PORT_HINTS[p.port] || ", " }),
         el("td", {}, el("code", { text: p.process })),
         el("td", {}, el("span", { class: `pill ${p.scope === "all interfaces" ? "warn" : p.scope === "this machine only" ? "good" : "dim"}`, text: p.scope })),
       ]))));
@@ -2345,7 +2345,7 @@
       body.append(netCard("home", "Hostname", "The Pi's name on your network. With mDNS you can reach it as name.local from most computers and phones.",
         el("label", { class: "cw-lbl" }, ["Hostname", i, el("span", { class: "dm-hint", text: "Letters, digits and hyphens. /etc/hosts is updated too." })]),
         el("div", { class: "cw-actions" }, el("button", { class: "btn btn-primary", onclick: async () => {
-          try { const r = await API.netHostname(i.value); toast(`Renamed to ${r.hostname} — now ${r.mdns}`, "good"); $("#host-badge").textContent = r.hostname; } catch (e) { toast(e.message, "bad"); }
+          try { const r = await API.netHostname(i.value); toast(`Renamed to ${r.hostname}, now ${r.mdns}`, "good"); $("#host-badge").textContent = r.hostname; } catch (e) { toast(e.message, "bad"); }
         } }, [icon("backup", 13), " Save hostname"]))));
     }).catch((e) => body.append(el("p", { class: "empty", text: e.message })));
   }
@@ -2353,7 +2353,7 @@
   function netLegacy(root) {
     // Ping tool
     const ping = el("div", { class: "card", style: "margin-bottom:16px" }, [
-      el("h3", { text: "Network test — ping" }),
+      el("h3", { text: "Network test, ping" }),
       el("div", { class: "toolbar", style: "margin:0" }, [
         el("input", { id: "ping-host", type: "text", placeholder: "host or IP (e.g. google.com)", value: "8.8.8.8", style: "flex:1;min-width:200px", onkeydown: (e) => { if (e.key === "Enter") doPing(); } }),
         el("button", { class: "btn btn-sm btn-primary", text: "Ping", onclick: doPing }),
@@ -2391,11 +2391,11 @@
         const rows = data.interfaces.map((n) => el("tr", {}, [
           el("td", { text: n.name }),
           el("td", {}, el("span", { class: `pill ${n.is_up ? "good" : "dim"}`, text: n.is_up ? "up" : "down" })),
-          el("td", { class: "muted", text: n.ipv4 || "—" }),
-          el("td", { class: "muted", text: n.mac || "—" }),
+          el("td", { class: "muted", text: n.ipv4 || ", " }),
+          el("td", { class: "muted", text: n.mac || ", " }),
           el("td", { text: fmtBytes(n.bytes_recv) }),
           el("td", { text: fmtBytes(n.bytes_sent) }),
-          el("td", { class: "muted", text: n.speed_mbps ? `${n.speed_mbps} Mbps` : "—" }),
+          el("td", { class: "muted", text: n.speed_mbps ? `${n.speed_mbps} Mbps` : ", " }),
         ]));
         body.append(el("div", { class: "table-wrap" }, el("table", {}, [
           el("thead", {}, el("tr", {}, ["Interface", "State", "IPv4", "MAC", "↓ Recv", "↑ Sent", "Speed"].map((h) => el("th", { text: h })))),
@@ -2454,7 +2454,7 @@
   // ======================================================================
   function jobPanel(root) {
     // A running job shows a bar (progress when the job reports it, a sliding orange bar when it doesn't) and one line of
-    // status; the full output sits under "Details", opened on request — or automatically when the job fails.
+    // status; the full output sits under "Details", opened on request, or automatically when the job fails.
     const panel = el("div", { class: "card jp", style: "margin-top:16px", hidden: true });
     const title = el("h3", {});
     const pre = el("pre", { class: "log" });
@@ -2630,7 +2630,7 @@
   //  Cron
   // ======================================================================
   // ======================================================================
-  //  Cron — expression engine (parse / describe / next runs)
+  //  Cron, expression engine (parse / describe / next runs)
   // ======================================================================
   const CRON_FIELDS = [
     { key: "minute", label: "minute", min: 0, max: 59 },
@@ -2693,7 +2693,7 @@
       return { ...cronParse(CRON_MACROS[s]), expr: s, macro: s };
     }
     const parts = s.split(" ");
-    if (parts.length !== 5) return { error: parts.length < 5 ? `Missing fields — need 5, got ${parts.length}` : `Too many fields — need 5, got ${parts.length}`, parts, badField: parts.length > 5 ? 5 : parts.length };
+    if (parts.length !== 5) return { error: parts.length < 5 ? `Missing fields, need 5, got ${parts.length}` : `Too many fields, need 5, got ${parts.length}`, parts, badField: parts.length > 5 ? 5 : parts.length };
     const sets = [];
     for (let i = 0; i < 5; i++) {
       try { sets.push(cronParseField(parts[i], CRON_FIELDS[i])); }
@@ -2786,11 +2786,11 @@
     const d = Math.floor(h / 24), hh = h % 24;
     return `in ${d}d${hh ? " " + hh + "h" : ""}`;
   }
-  // cron treats a bare % in the command as a newline — escape it.
+  // cron treats a bare % in the command as a newline, escape it.
   const cronEscape = (cmd) => cmd.replace(/(^|[^\\])%/g, "$1\\%").replace(/(^|[^\\])%/g, "$1\\%");
 
   // ======================================================================
-  //  Cron Jobs view — wizard + job list
+  //  Cron Jobs view, wizard + job list
   // ======================================================================
   const CRON_PRESETS = [
     ["Every minute", "* * * * *"], ["Every 5 min", "*/5 * * * *"], ["Every 15 min", "*/15 * * * *"],
@@ -2841,7 +2841,7 @@
     // ---- visual builder ----
     const builder = el("div", { class: "card cw-card" });
     const MODES = ["Minutes", "Hourly", "Daily", "Weekly", "Monthly", "Yearly"];
-    builder.innerHTML = `<div class="cw-card-h">${I("wizard", 16)}<div><h3>Build it visually</h3><p>Pick a rhythm — the expression updates as you go.</p></div></div>
+    builder.innerHTML = `<div class="cw-card-h">${I("wizard", 16)}<div><h3>Build it visually</h3><p>Pick a rhythm, the expression updates as you go.</p></div></div>
       <div class="cw-seg" id="cw-modes">${MODES.map((m, i) => `<button type="button" data-m="${i}" class="${i === 2 ? "active" : ""}">${m}</button>`).join("")}</div>
       <div class="cw-build" id="cw-build"></div>`;
 
@@ -2851,7 +2851,7 @@
       <div class="cw-templates">${CRON_TEMPLATES.map((t, i) => `<button type="button" class="cw-tpl" data-t="${i}">${I(t.icon, 14)}<span>${esc(t.label)}</span></button>`).join("")}</div>
       <label class="cw-lbl"><span>Name<span class="muted">(optional)</span></span><input id="cw-label" type="text" placeholder="e.g. Nightly backup" maxlength="80" /></label>
       <label class="cw-lbl">Command<textarea id="cw-cmd" rows="2" class="cw-mono" placeholder="/usr/bin/python3 ${esc(sysHome())}/script.py" spellcheck="false"></textarea></label>
-      <div class="cw-warn" id="cw-pct" hidden>${I("error", 13)} <span>cron treats <code>%</code> as a newline — it will be escaped to <code>\\%</code> automatically.</span></div>
+      <div class="cw-warn" id="cw-pct" hidden>${I("error", 13)} <span>cron treats <code>%</code> as a newline, it will be escaped to <code>\\%</code> automatically.</span></div>
       <div class="cw-lbl">Output</div>
       <div class="cw-seg cw-seg-sm" id="cw-out">
         <button type="button" data-o="keep" class="active">Keep (mail)</button>
@@ -2901,7 +2901,7 @@
         desc.textContent = `“${cronDescribe(p)}”`;
         const now = cronNow(), list = cronNext(p, now, 6);
         if (p.reboot) { next.textContent = "runs once each time the Pi boots"; runs.innerHTML = `<li class="muted">No clock schedule</li>`; }
-        else if (!list.length) { next.textContent = "never matches — check day/month combination"; runs.innerHTML = ""; }
+        else if (!list.length) { next.textContent = "never matches, check day/month combination"; runs.innerHTML = ""; }
         else {
           next.innerHTML = `next at <b>${esc(cronFmt(list[0], { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }))}</b> · ${cronRel(list[0] - now)}`;
           runs.innerHTML = list.map((d) => `<li><span>${esc(cronFmt(d, { weekday: "short", month: "short", day: "numeric" }))}</span><b>${esc(cronFmt(d, { hour: "2-digit", minute: "2-digit", hour12: false }))}</b></li>`).join("");
@@ -3045,7 +3045,7 @@
         const r = await API.cronRun(j.raw);
         const pre = el("pre", { class: "log", text: "Starting…" });
         const status = el("div", { class: "cw-runstate" }, [el("span", { class: "pill dim", text: "running" })]);
-        openModal(`Run now — ${j.label || j.command.split(/\s+/)[0]}`, el("div", {}, [status, pre]), []);
+        openModal(`Run now, ${j.label || j.command.split(/\s+/)[0]}`, el("div", {}, [status, pre]), []);
         const tick = async () => {
           if (!$("#modal")) { clearInterval(t); return; }
           try {
@@ -3163,7 +3163,7 @@
       catch (e) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); return; }
       duState.path = data.path; duState.parent = data.parent;
       $("#du-path").value = data.path;
-      $("#du-crumb").innerHTML = `<b>${esc(data.path)}</b> — total ${esc(fmtBytes(data.total))}`;
+      $("#du-crumb").innerHTML = `<b>${esc(data.path)}</b>, total ${esc(fmtBytes(data.total))}`;
       $("#du-up").disabled = !data.parent;
       body.innerHTML = "";
       if (!data.entries.length) { body.append(el("p", { class: "empty", text: "Empty." })); return; }
@@ -3275,7 +3275,7 @@
         const bar = el("div", { class: "bk-bar", hidden: true }, el("span"));
         const status = el("div", { class: "bk-job-line muted" });
         const zone = el("label", { class: "bk-drop" }, [input, icon("backup", 22),
-          el("b", { text: "Drop a .sql, .sql.gz or .tar.gz file here" }), el("span", { class: "muted", text: "or click to pick one — it lands in the backups folder, then you choose where it goes" })]);
+          el("b", { text: "Drop a .sql, .sql.gz or .tar.gz file here" }), el("span", { class: "muted", text: "or click to pick one, it lands in the backups folder, then you choose where it goes" })]);
         const send = (file) => {
           if (!file) return;
           bar.hidden = false; zone.classList.add("busy");
@@ -3383,10 +3383,10 @@
       if (b.kind === "plain") {
         const dest = el("input", { type: "text", value: b.parent || (data && data.home) || "/" });
         const note = el("p", { class: "dm-hint" });
-        const upd = () => { note.textContent = `“${b.top}” is recreated as ${dest.value.replace(/\/$/, "") || ""}/${b.top} — files with the same name are replaced, other files are left alone.`; };
+        const upd = () => { note.textContent = `“${b.top}” is recreated as ${dest.value.replace(/\/$/, "") || ""}/${b.top}, files with the same name are replaced, other files are left alone.`; };
         dest.addEventListener("input", upd); upd();
         put(el("h4", { text: "Restore this folder" }),
-          b.parent ? null : el("p", { class: "bk-warnline", text: "This archive doesn't say where it came from — pick the folder to restore into." }),
+          b.parent ? null : el("p", { class: "bk-warnline", text: "This archive doesn't say where it came from, pick the folder to restore into." }),
           b.guessed && b.parent ? el("p", { class: "muted", style: "margin:0 0 8px", text: `Original place guessed from the folder ${b.parent}/${b.top} that exists on this Pi.` }) : null,
           field("Restore into", dest), note,
           el("div", { class: "bk-row-btns" }, [
@@ -3415,8 +3415,8 @@
         };
         [engSel, target, wipe].forEach((x) => x.addEventListener(x === target ? "input" : "change", upd)); upd();
         put(el("h4", { text: "Restore or import this dump" }),
-          el("div", { class: "net-form" }, [b.engine ? null : field("Database server", engSel), field("Into database", target, b.db_guessed ? "Name suggested from the file — pick an existing database or type any new name." : `Original: ${b.db}. Type another name to import a copy.`), dl].filter(Boolean)),
-          el("label", { class: "dm-check", style: "margin:10px 0 4px" }, [wipe, el("span", { text: "Empty the database first (recommended — leftovers can clash with the dump)" })]),
+          el("div", { class: "net-form" }, [b.engine ? null : field("Database server", engSel), field("Into database", target, b.db_guessed ? "Name suggested from the file, pick an existing database or type any new name." : `Original: ${b.db}. Type another name to import a copy.`), dl].filter(Boolean)),
+          el("label", { class: "dm-check", style: "margin:10px 0 4px" }, [wipe, el("span", { text: "Empty the database first (recommended, leftovers can clash with the dump)" })]),
           note,
           el("div", { class: "bk-row-btns" }, [
             armed("Restore database", "Click again to confirm", async (x) => {
@@ -3438,7 +3438,7 @@
         const dest = el("input", { type: "text", value: "/" });
         const wipe = el("input", { type: "checkbox" }); wipe.checked = true;
         put(el("h4", { text: "Pick what to bring back" }),
-          kv([["Made", b.created ? new Date(b.created * 1000).toLocaleString() : "—"], ["On", b.host || "—"]]),
+          kv([["Made", b.created ? new Date(b.created * 1000).toLocaleString() : ", "], ["On", b.host || ", "]]),
           grp("Folders", b.paths || [], "path"), grp("MariaDB databases", b.mysql || [], "mysql"), grp("PostgreSQL databases", b.pgsql || [], "pgsql"),
           (b.paths || []).length ? field("Put folders under", dest, "/ = their original location. Any other folder keeps the full path inside it (e.g. /tmp/check/home/a51).") : null,
           ((b.mysql || []).length + (b.pgsql || []).length) ? el("label", { class: "dm-check", style: "margin:10px 0 4px" }, [wipe, el("span", { text: "Empty each database first (rename the target to import a copy instead)" })]) : null,
@@ -3635,9 +3635,9 @@
           if (kind === "full") {
             opts.append(el("p", { class: "muted", text: "Everything needed to rebuild this Pi's sites: your home folder, the web root, all databases and the server configuration (Apache/PHP/MariaDB/VPN/FTP/fail2ban/panel settings)." }),
               kv([["Folders", [...fileItems, ...o.configs].join(", ")], ["MariaDB databases", o.mysql.join(", ") || "none"], ["PostgreSQL databases", o.pgsql.join(", ") || "none"]]),
-              el("p", { class: "dm-hint", text: "The archive contains private keys and password hashes (VPN, FTP) — keep downloads somewhere safe." }));
+              el("p", { class: "dm-hint", text: "The archive contains private keys and password hashes (VPN, FTP), keep downloads somewhere safe." }));
           } else {
-            // append() would render a null as the text "null" — drop empty/hidden groups.
+            // append() would render a null as the text "null", drop empty/hidden groups.
             const add = (...nodes) => opts.append(...nodes.filter(Boolean));
             if (kind === "files" || kind === "custom") add(group("Folders", fileItems, "paths", kind === "files"), kind === "custom" ? group("Server configuration", o.configs, "paths", false) : null);
             if (kind === "databases" || kind === "custom") add(group("MariaDB / MySQL databases", o.mysql, "mysql", kind === "databases"), group("PostgreSQL databases", o.pgsql, "pgsql", kind === "databases"));
@@ -3658,8 +3658,8 @@
       }
 
       function restorePane(pane) {
-        if (!list.backups.length) { pane.append(el("p", { class: "empty", text: "No backups yet — create one first." })); return; }
-        const sel = el("select", {}, list.backups.map((b) => el("option", { value: b.name, text: `${b.name} — ${fmtBytes(b.size)} — ${new Date(b.modified * 1000).toLocaleString()}` })));
+        if (!list.backups.length) { pane.append(el("p", { class: "empty", text: "No backups yet, create one first." })); return; }
+        const sel = el("select", {}, list.backups.map((b) => el("option", { value: b.name, text: `${b.name}, ${fmtBytes(b.size)}, ${new Date(b.modified * 1000).toLocaleString()}` })));
         const detail = el("div");
         const show = async () => {
           detail.innerHTML = ""; detail.append(el("div", { class: "loading", text: "Reading backup…" }));
@@ -3767,7 +3767,7 @@
       if (!d.apache) { body.append(el("p", { class: "empty", text: "Directory Privacy needs Apache (System Applications)." })); return; }
       body.append(el("h2", { class: "section-title", text: `Protected folders (${d.folders.length})` }));
       body.append(d.folders.length ? simpleTable(["Folder", "Prompt", "Users", "Status", ""], d.folders.map((f) => row(
-        el("span", {}, [el("code", { class: "net-mono", text: f.path }), f.exists ? null : pill("missing", "bad")]), f.label || "—",
+        el("span", {}, [el("code", { class: "net-mono", text: f.path }), f.exists ? null : pill("missing", "bad")]), f.label || ", ",
         el("div", { class: "net-chips" }, f.users.map((u) => el("button", { type: "button", class: "net-chip", title: "Remove user", text: `${u} ✕`, onclick: async () => {
           if (!confirmInline(`Remove ${u} from ${f.path}?`)) return; try { await API.dirPrivacyUser({ path: f.path, name: u, remove: true }); toast("Removed", "good"); load(); } catch (e) { toast(e.message, "bad"); } } }))),
         pill(f.enabled ? "protected" : "off", f.enabled ? "good" : "dim"),
@@ -3790,12 +3790,12 @@
     });
     function showPw(user, password) {
       openModal("Folder protected", el("div", {}, [kv([["Username", user]]), el("div", { class: "net-cred" }, [el("span", { class: "net-k", text: "Password" }), el("input", { type: "text", readonly: "readonly", class: "net-mono net-pw-out", value: password }), btn("Copy", async () => toast(await copyText(password) ? "Copied" : "Copy failed", "good"))]),
-        el("p", { class: "dm-hint", text: "Browsers send these credentials unencrypted over plain http — use https (SSL/TLS) or the VPN for anything sensitive." })]), []);
+        el("p", { class: "dm-hint", text: "Browsers send these credentials unencrypted over plain http, use https (SSL/TLS) or the VPN for anything sensitive." })]), []);
     }
     function userDialog(path) {
       const user = el("input", { type: "text", maxlength: 32 }); const pw = passwordField();
       const go = btn("Save", async () => { const password = pw.value() || genPassword(); try { await API.dirPrivacyUser({ path, name: user.value.trim(), password }); closeModal(); load(); showPw(user.value.trim(), password); } catch (e) { toast(e.message, "bad"); } }, "btn-primary");
-      openModal(`Add user — ${path}`, el("div", {}, [field("Username (existing = change password)", user), field("Password", pw.node, "Leave empty to generate one.")]), [go]);
+      openModal(`Add user, ${path}`, el("div", {}, [field("Username (existing = change password)", user), field("Password", pw.node, "Leave empty to generate one.")]), [go]);
     }
     state.refreshHandler = load; load();
   }
@@ -3805,7 +3805,7 @@
   // ======================================================================
   function viewWebDisk(root) {
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
-    root.append(el("p", { class: "muted", style: "margin:0 0 14px", text: "Web Disk lets you open a folder of this Pi like a drive on your computer or phone (WebDAV) — drag files in and out with Explorer, Finder or the Files app." }), body);
+    root.append(el("p", { class: "muted", style: "margin:0 0 14px", text: "Web Disk lets you open a folder of this Pi like a drive on your computer or phone (WebDAV), drag files in and out with Explorer, Finder or the Files app." }), body);
     const url = (n, secure) => `${secure ? "https" : "http"}://${location.hostname}/webdisk/${n}/`;
     let certInfo = null;
     let pageCertSlot = null;
@@ -3825,7 +3825,7 @@
         pill(a.disabled ? "disabled" : "active", a.disabled ? "bad" : "good"),
         el("div", { class: "net-actions" }, [
           btn("Connect…", () => connectHelp(a.name)),
-          btn("Password", () => { const pw = passwordField(); openModal(`Password — ${a.name}`, field("New password", pw.node, "Leave empty to generate one."), [btn("Save", async () => { const password = pw.value() || genPassword(); try { await API.webdiskUpdate({ name: a.name, password }); closeModal(); openModal("New password", el("div", { class: "net-cred" }, [el("span", { class: "net-k", text: "Password" }), el("input", { type: "text", readonly: "readonly", class: "net-mono net-pw-out", value: password }), btn("Copy", async () => toast(await copyText(password) ? "Copied" : "Copy failed", "good"))]), []); } catch (e) { toast(e.message, "bad"); } }, "btn-primary")]); }),
+          btn("Password", () => { const pw = passwordField(); openModal(`Password, ${a.name}`, field("New password", pw.node, "Leave empty to generate one."), [btn("Save", async () => { const password = pw.value() || genPassword(); try { await API.webdiskUpdate({ name: a.name, password }); closeModal(); openModal("New password", el("div", { class: "net-cred" }, [el("span", { class: "net-k", text: "Password" }), el("input", { type: "text", readonly: "readonly", class: "net-mono net-pw-out", value: password }), btn("Copy", async () => toast(await copyText(password) ? "Copied" : "Copy failed", "good"))]), []); } catch (e) { toast(e.message, "bad"); } }, "btn-primary")]); }),
           btn(a.readonly ? "Allow writing" : "Make read-only", async () => { try { await API.webdiskUpdate({ name: a.name, readonly: !a.readonly }); load(); } catch (e) { toast(e.message, "bad"); } }, "btn-ghost"),
           btn(a.disabled ? "Enable" : "Disable", async () => { try { await API.webdiskUpdate({ name: a.name, disabled: !a.disabled }); load(); } catch (e) { toast(e.message, "bad"); } }, "btn-ghost"),
           btn("Delete", async () => { if (!confirmInline(`Delete Web Disk account ${a.name}? Files are kept.`)) return; try { await API.webdiskDelete(a.name); toast("Deleted", "good"); load(); } catch (e) { toast(e.message, "bad"); } }, "btn-danger")]),
@@ -3838,12 +3838,12 @@
         el("div", { class: "net-form" }, [field("Username", name), field("Password", pw.node, "Leave empty to generate one."), field("Folder", folder, "Created if it doesn't exist.")]),
         el("div", { class: "toolbar", style: "margin:10px 0 0" }, [el("label", { class: "dm-check" }, [ro, el("span", { text: "Read only" })]),
           btn("Create", async () => { const password = pw.value() || genPassword(); try { const r = await API.webdiskCreate({ name: name.value.trim(), password, path: folder.value.trim(), readonly: ro.checked }); load(); connectHelp(r.name, password); } catch (e) { toast(e.message, "bad"); } }, "btn-primary")]),
-        el("p", { class: "dm-hint", text: "Scripts are never run from the Web Disk — PHP and other files are always transferred as files." })]));
+        el("p", { class: "dm-hint", text: "Scripts are never run from the Web Disk, PHP and other files are always transferred as files." })]));
     });
     function connectHelp(n, password) {
       const secure = url(n, true), plain = url(n, false);
       const certSlot = el("div");
-      openModal(`Connect to Web Disk — ${n}`, el("div", {}, [
+      openModal(`Connect to Web Disk, ${n}`, el("div", {}, [
         kv([["Address (https)", el("code", { class: "net-mono", text: secure })], ["Address (http, LAN only)", el("code", { class: "net-mono", text: plain })], ["Username", n]]),
         password ? el("div", { class: "net-cred" }, [el("span", { class: "net-k", text: "Password" }), el("input", { type: "text", readonly: "readonly", class: "net-mono net-pw-out", value: password }), btn("Copy", async () => toast(await copyText(password) ? "Copied" : "Copy failed", "good"))]) : null,
         el("div", { class: "net-os" }, [el("h4", { text: "Windows" }), el("p", { class: "muted", text: "File Explorer → This PC → Map network drive → Folder: the https address → tick 'Connect using different credentials'. Windows only sends the password over https, and only after the certificate below is trusted." }), certSlot]),
@@ -3910,9 +3910,9 @@
       body.append(el("h2", { class: "section-title", text: `Repositories (${d.repos.length})` }));
       body.append(d.repos.length ? simpleTable(["Repository", "Branch", "Last commit", "Remote", "Deploys to", ""], d.repos.map((r) => row(
         el("div", {}, [el("b", { text: r.name }), el("div", { class: "dm-hint", text: `${r.path} · owner ${r.owner}` })]),
-        r.exists ? el("span", {}, [el("code", { text: r.branch || "—" }), r.dirty ? pill(`${r.dirty} changed`, "warn") : null]) : pill("missing", "bad"),
-        r.last ? el("div", {}, [el("span", { text: r.last.subject }), el("div", { class: "dm-hint", text: `${r.last.hash} · ${r.last.author} · ${ago(r.last.time)}` })]) : "—",
-        r.remote || "—", r.deploy_path || "—",
+        r.exists ? el("span", {}, [el("code", { text: r.branch || ", " }), r.dirty ? pill(`${r.dirty} changed`, "warn") : null]) : pill("missing", "bad"),
+        r.last ? el("div", {}, [el("span", { text: r.last.subject }), el("div", { class: "dm-hint", text: `${r.last.hash} · ${r.last.author} · ${ago(r.last.time)}` })]) : ", ",
+        r.remote || ", ", r.deploy_path || ", ",
         el("div", { class: "net-actions" }, [
           r.remote ? btn("Pull", async () => { try { const j = await API.gitPull(r.name); watchJob(jp, j.job, `Pull ${r.name}`, load); } catch (e) { toast(e.message, "bad"); } }) : null,
           btn("Deploy", async () => { try { const j = await API.gitDeploy(r.name); watchJob(jp, j.job, `Deploy ${r.name}`, load); } catch (e) { toast(e.message, "bad"); } }, "btn-primary"),
@@ -3937,7 +3937,7 @@
       });
       body.append(el("div", { class: "card" }, [el("h3", { text: "Create or clone a repository" }),
         el("div", { class: "net-form" }, [field("Name", name), field("Clone URL", url), field("Branch", branch), field("Owner (Linux user)", owner), field("Folder", path)]),
-        el("label", { class: "dm-check", style: "margin-top:10px" }, [priv, el("span", { text: "Private repository — create a deploy key (SSH)" })]), keyBox,
+        el("label", { class: "dm-check", style: "margin-top:10px" }, [priv, el("span", { text: "Private repository, create a deploy key (SSH)" })]), keyBox,
         el("div", { style: "margin-top:12px" }, btn("Create", async () => {
           const p = path.value.trim() || path.placeholder;
           try { const j = await API.gitCreate({ name: name.value.trim(), path: p, owner: owner.value.trim(), clone_url: url.value.trim() || null, branch: branch.value.trim() || null, use_key: priv.checked }); watchJob(jp, j.job, `Creating ${name.value.trim()}`, load); }
@@ -3950,7 +3950,7 @@
       const br = el("select", {}, d.branches.map((b) => el("option", { value: b, text: b }))); br.value = r.branch;
       const dp = el("input", { type: "text", value: d.deploy_path, placeholder: "/var/www/html/my-site (optional)" });
       const dc = el("input", { type: "text", value: d.deploy_cmd, placeholder: "e.g. npm ci && npm run build (optional)" });
-      openModal(`Repository — ${r.name}`, el("div", {}, [
+      openModal(`Repository, ${r.name}`, el("div", {}, [
         el("h4", { text: "Branch" }), el("div", { class: "toolbar" }, [br, btn("Switch", async () => { try { await API.gitCheckout(r.name, br.value); toast(`Now on ${br.value}`, "good"); closeModal(); load(); } catch (e) { toast(e.message, "bad"); } })]),
         el("h4", { text: "Deployment" }), el("p", { class: "dm-hint", text: "Deploy = pull, then copy the files (without .git) to the folder below and/or run the command, as the repository owner." }),
         el("div", { class: "net-form" }, [field("Copy to folder", dp), field("Then run", dc)]),
@@ -3968,7 +3968,7 @@
   // ======================================================================
   function viewInodes(root) {
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
-    root.append(el("p", { class: "muted", style: "margin:0 0 14px", text: "Every file and folder uses one inode. A disk can run out of inodes (\"no space left\") even with free gigabytes — typically from millions of tiny cache or session files. Drill down to find them." }), body);
+    root.append(el("p", { class: "muted", style: "margin:0 0 14px", text: "Every file and folder uses one inode. A disk can run out of inodes (\"no space left\") even with free gigabytes, typically from millions of tiny cache or session files. Drill down to find them." }), body);
     const go = (path) => guardedLoad(async () => {
       body.innerHTML = ""; body.append(el("div", { class: "loading", text: `Counting ${path}…` }));
       const d = await API.inodes(path);
@@ -4015,11 +4015,11 @@
                   : `Enable the firewall?\n\nSSH (22) and the panel (${location.port || (location.protocol === "https:" ? 443 : 80)}) will be auto-allowed first so you won't be locked out.`;
                 if (!confirmInline(msg)) return;
                 try { const r = await API.firewallToggle(!data.active);
-                  toast(!data.active && r.preallowed ? `Firewall on — allowed ${r.preallowed.join(", ")}` : "Done", "good"); load(); }
+                  toast(!data.active && r.preallowed ? `Firewall on, allowed ${r.preallowed.join(", ")}` : "Done", "good"); load(); }
                 catch (e) { toast(e.message, "bad"); } } }),
           ]),
           data.active ? null : el("p", { class: "muted", style: "margin:10px 0 0;font-size:12px",
-            text: "Safeguard: enabling here always allows SSH (22) + the panel port first — you can't lock yourself out via the panel." }),
+            text: "Safeguard: enabling here always allows SSH (22) + the panel port first, you can't lock yourself out via the panel." }),
         ]);
         const addForm = el("div", { class: "card", style: "margin-bottom:16px" }, [
           el("h3", { text: "Add rule" }),
@@ -4161,7 +4161,7 @@
       catch (e) { return el("div", { class: "card" }, [el("h3", { text: "Panel HTTPS" }), el("p", { class: "muted", text: e.message })]); }
       const pill = st.enabled
         ? el("span", { class: `pill ${st.pending ? "warn" : "good"}`, text: st.pending ? "waiting for confirmation" : "on" })
-        : el("span", { class: "pill bad", text: "off — plain HTTP" });
+        : el("span", { class: "pill bad", text: "off, plain HTTP" });
       const rows = [
         el("h3", { text: "Panel HTTPS" }),
         el("p", { class: "muted", style: "margin:0 0 14px",
@@ -4182,7 +4182,7 @@
       }
       if (st.enabled && st.covers === false && st.host) {
         rows.push(el("div", { class: "mx-note", style: "margin-top:12px" }, [icon("warning", 16), el("div", {}, [
-          el("span", { text: `You opened the panel as ${st.host}, but the certificate isn't valid for that name — browsers and scanners report “certificate does not match the host name”. ` }),
+          el("span", { text: `You opened the panel as ${st.host}, but the certificate isn't valid for that name, browsers and scanners report “certificate does not match the host name”. ` }),
           st.source === "self"
             ? el("button", { class: "btn btn-sm btn-primary", style: "margin-left:8px", text: `New certificate for ${st.host}`, onclick: () => enableHttps(st, "self", true) })
             : el("span", { text: `Open the panel as https://${st.source}:${st.port} (that's what the Let's Encrypt certificate is for), or switch to the self-signed certificate, which covers ${st.host}.` }),
@@ -4193,7 +4193,7 @@
           el("span", { text: "The panel still accepts older TLS 1.2 cipher suites and sends a “server: uvicorn” header. Hardening keeps only modern suites (no CBC / SHA-1) and drops the header; every browser since 2014 works. " }),
           el("button", { class: "btn btn-sm btn-primary", style: "margin-left:8px", text: "Harden TLS & restart", onclick: async (ev) => {
             ev.currentTarget.disabled = true;
-            try { await API.panelHttpsHarden(); toast("Restarting with strong ciphers — reloading in a moment", "good"); setTimeout(() => location.reload(), 4000); }
+            try { await API.panelHttpsHarden(); toast("Restarting with strong ciphers, reloading in a moment", "good"); setTimeout(() => location.reload(), 4000); }
             catch (e) { toast(e.message, "bad"); ev.currentTarget.disabled = false; }
           } }),
         ])]));
@@ -4205,7 +4205,7 @@
           el("span", { text: `Plain http://…:${st.port} is not redirected yet: a browser that goes there gets a “connection reset” instead of the panel. One restart turns the redirect on. ` }),
           el("button", { class: "btn btn-sm btn-primary", style: "margin-left:8px", text: "Redirect http → https & restart", onclick: async (ev) => {
             ev.currentTarget.disabled = true;
-            try { await API.panelHttpsRedirect(); toast("Restarting with the redirect — reloading in a moment", "good"); setTimeout(() => location.reload(), 4000); }
+            try { await API.panelHttpsRedirect(); toast("Restarting with the redirect, reloading in a moment", "good"); setTimeout(() => location.reload(), 4000); }
             catch (e) { toast(e.message, "bad"); ev.currentTarget.disabled = false; }
           } }),
         ])]));
@@ -4220,7 +4220,7 @@
     function enableHttps(st, source, regenerate) {
       const choice = el("select", { id: "https-src" }, [
         el("option", { value: "self", text: "Self-signed certificate (works on any LAN)" }),
-        ...st.letsencrypt.map((d) => el("option", { value: d, text: `Let's Encrypt — ${d}` })),
+        ...st.letsencrypt.map((d) => el("option", { value: d, text: `Let's Encrypt, ${d}` })),
       ]);
       const content = el("div", {}, [
         source ? null : el("label", { style: "display:flex;flex-direction:column;gap:6px;margin-bottom:12px" }, ["Certificate", choice]),
@@ -4355,7 +4355,7 @@
         const lsw = sw(listing, () => {}, { title: "Show the files when there is no index page" });
         body.append(el("div", { class: "card" }, [
           el("h3", { text: `Folder behaviour · /var/www/${db.dir}`.replace(/\/$/, "") }),
-          el("label", { class: "dm-check", style: "margin-bottom:14px" }, [lsw, el("span", {}, [el("b", { text: "Show a file list when there is no index page" }), el("span", { class: "muted", style: "display:block;font-size:12px", text: d.listing === null ? "Not set here yet — the server default applies (usually off). Off means visitors get 403 Forbidden instead." : `Currently ${listing ? "on" : "off"} for this folder.` })])]),
+          el("label", { class: "dm-check", style: "margin-bottom:14px" }, [lsw, el("span", {}, [el("b", { text: "Show a file list when there is no index page" }), el("span", { class: "muted", style: "display:block;font-size:12px", text: d.listing === null ? "Not set here yet, the server default applies (usually off). Off means visitors get 403 Forbidden instead." : `Currently ${listing ? "on" : "off"} for this folder.` })])]),
           el("div", { class: "cw-lbl" }, ["Index page order", di, el("span", { class: "dm-hint", text: "The first file in this list that exists is shown for the folder itself." })]),
           el("div", { style: "display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 14px" }, ORDERS.map(([v, l]) => el("button", { class: "btn btn-sm btn-ghost", title: v, onclick: () => { di.value = v; } }, [icon("listing", 12), ` ${l}`]))),
           el("div", { class: "toolbar", style: "margin:0" }, [btn("Save", async () => {
@@ -4388,7 +4388,7 @@
         const d = await API.apacheMime(db.dir);
         body.innerHTML = "";
         const custom = el("div", { class: "card", style: "margin-bottom:16px" }, [el("h3", { text: "Types set in this folder" })]);
-        if (!d.entries.length) custom.append(el("p", { class: "muted", text: "None yet — most files are already known to the server; add one only when a download comes out wrong." }));
+        if (!d.entries.length) custom.append(el("p", { class: "muted", text: "None yet, most files are already known to the server; add one only when a download comes out wrong." }));
         else custom.append(directiveTable(d.entries, "mime", db));
         body.append(custom);
         if (d.system && d.system.available) {
@@ -4399,7 +4399,7 @@
             const rows = (needle ? d.system.entries.filter((e) => e.type.toLowerCase().includes(needle) || e.extensions.toLowerCase().includes(needle)) : d.system.entries).slice(0, 150);
             list.innerHTML = "";
             list.append(rows.length ? el("div", { class: "table-wrap" }, el("table", {}, [el("thead", {}, el("tr", {}, [el("th", { text: "Type" }), el("th", { text: "Extensions" })])),
-              el("tbody", {}, rows.map((e) => el("tr", {}, [el("td", { text: e.type }), el("td", { class: "muted", text: e.extensions })])))])) : el("p", { class: "muted", text: "No built-in type matches — add it above." }));
+              el("tbody", {}, rows.map((e) => el("tr", {}, [el("td", { text: e.type }), el("td", { class: "muted", text: e.extensions })])))])) : el("p", { class: "muted", text: "No built-in type matches, add it above." }));
           };
           q.oninput = draw; draw();
           body.append(el("details", { class: "card" }, [el("summary", { style: "cursor:pointer" }, el("h3", { style: "display:inline;margin:0", text: `Already known to the server (${d.system.entries.length} types)` })), el("div", { style: "margin-top:12px" }, [q, list])]));
@@ -4415,7 +4415,7 @@
 
   // ---- Error Pages ----
   function viewErrorPages(root) {
-    const db = apacheDirBar("errorpages", "Your own page instead of the server's bare error text. Pick the error, say which page to show — the panel can create a simple one for you to edit.", () => load());
+    const db = apacheDirBar("errorpages", "Your own page instead of the server's bare error text. Pick the error, say which page to show, the panel can create a simple one for you to edit.", () => load());
     const CODES = [["404", "Page not found"], ["403", "Forbidden"], ["500", "Server error"], ["503", "Maintenance"], ["401", "Sign-in required"], ["400", "Bad request"], ["429", "Too many requests"], ["502", "Bad gateway"]];
     const LBL = Object.fromEntries(CODES);
     const code = el("select", { style: "max-width:220px" }, CODES.map(([c, l]) => el("option", { value: c, text: `${c} · ${l}` })));
@@ -4426,7 +4426,7 @@
     const addForm = el("div", { class: "card", style: "margin-bottom:16px" }, [
       el("h3", { text: "Set an error page" }),
       el("div", { class: "toolbar", style: "margin:0 0 10px" }, [code, doc, btn("Save", save, "btn-primary")]),
-      el("label", { class: "dm-check" }, [create, el("span", {}, ["Create the page if it doesn't exist yet — a simple styled page you can edit under ", el("b", { text: "Files → File Manager" })])]),
+      el("label", { class: "dm-check" }, [create, el("span", {}, ["Create the page if it doesn't exist yet, a simple styled page you can edit under ", el("b", { text: "Files → File Manager" })])]),
       el("p", { class: "dm-hint", text: "A path like /404.html is relative to the website's root; a full https:// address sends the visitor elsewhere." }),
     ]);
     const body = el("div", { id: "err-body" }, el("div", { class: "loading", text: "Loading…" }));
@@ -4438,7 +4438,7 @@
         const d = await API.apacheErrors(db.dir);
         body.innerHTML = "";
         const card = el("div", { class: "card" }, [el("h3", { text: "Error pages in this folder" })]);
-        if (!d.entries.length) card.append(el("p", { class: "muted", text: "None yet — visitors see the server's plain error text." }));
+        if (!d.entries.length) card.append(el("p", { class: "muted", text: "None yet, visitors see the server's plain error text." }));
         else {
           const host = location.hostname;
           const rows = d.entries.map((e) => el("tr", {}, [
@@ -4459,7 +4459,7 @@
       // the starter page is written into the picked folder: strip the folder's URL prefix from the path
       let file = "";
       if (create.checked && d0.startsWith("/") && !/^https?:/i.test(d0)) { file = d0; if (db.url && file.startsWith(db.url + "/")) file = file.slice(db.url.length); file = file.replace(/^\/+/, ""); }
-      try { const r = await API.apacheSetError({ dir: db.dir, code: code.value, document: d0, create: file }); toast(r.created === false ? "Saved" : "Saved — page created", "good"); load(); }
+      try { const r = await API.apacheSetError({ dir: db.dir, code: code.value, document: d0, create: file }); toast(r.created === false ? "Saved" : "Saved, page created", "good"); load(); }
       catch (e) { toast(e.message, "bad"); }
     }
     state.refreshHandler = load; load();
@@ -4470,9 +4470,9 @@
     const db = apacheDirBar("handlers", "Which program handles which files in a folder: run .cgi scripts, process includes in .shtml, treat .html as PHP… Written to that folder's .htaccess.", () => load());
     const HANDLERS = ["cgi-script", "server-parsed", "application/x-httpd-php", "default-handler", "send-as-is", "type-map", "imap-file"];
     const PRESETS = [
-      ["CGI scripts", "cgi-script", "cgi pl", "Perl / shell CGI programs — turn on “Run CGI programs” below too."],
-      ["Python CGI", "cgi-script", "py", "Python scripts as CGI — turn on “Run CGI programs” below too."],
-      ["Server-side includes", "server-parsed", "shtml shtm", "<!--#include --> in .shtml pages — turn on “Server-side includes” below too."],
+      ["CGI scripts", "cgi-script", "cgi pl", "Perl / shell CGI programs, turn on “Run CGI programs” below too."],
+      ["Python CGI", "cgi-script", "py", "Python scripts as CGI, turn on “Run CGI programs” below too."],
+      ["Server-side includes", "server-parsed", "shtml shtm", "<!--#include --> in .shtml pages, turn on “Server-side includes” below too."],
       ["PHP inside .html", "application/x-httpd-php", "html htm", "Run PHP code in .html files (needs mod_php)."],
       ["Serve, don't run", "default-handler", "php phtml", "Hand these files out as they are instead of running them."],
     ];
@@ -4490,7 +4490,7 @@
     root.append(db.bar, db.note, addCard, body);
     const OPTS = [["ExecCGI", "Run CGI programs", "Needed for the cgi-script handler. Off: CGI files are sent as plain text."],
       ["Includes", "Server-side includes", "Lets .shtml pages include files and run commands (with the server-parsed handler)."],
-      ["IncludesNOEXEC", "Includes, no exec", "Server-side includes with #exec refused — the safer choice."],
+      ["IncludesNOEXEC", "Includes, no exec", "Server-side includes with #exec refused, the safer choice."],
       ["FollowSymLinks", "Follow symbolic links", "Serve files reached through symlinks."],
       ["SymLinksIfOwnerMatch", "Follow own symlinks only", "Symlinks are followed only when link and target have the same owner."],
       ["MultiViews", "Content negotiation", "/page serves page.html or page.php, and picks the visitor's language."]];
@@ -4500,7 +4500,7 @@
         const [d, o] = await Promise.all([API.apacheHandlers(db.dir), API.apacheOptions(db.dir)]);
         body.innerHTML = "";
         const card = el("div", { class: "card", style: "margin-bottom:16px" }, [el("h3", { text: "Handlers in this folder" })]);
-        if (!d.entries.length) card.append(el("p", { class: "muted", text: "None yet — pick a preset above or type a handler." }));
+        if (!d.entries.length) card.append(el("p", { class: "muted", text: "None yet, pick a preset above or type a handler." }));
         else card.append(directiveTable(d.entries, "handlers", db));
         body.append(card);
         body.append(el("div", { class: "card" }, [el("h3", { text: "Folder options" }), el("p", { class: "dm-hint", style: "margin:0 0 10px", text: "Switch on what the handlers need. Anything left off follows the server's defaults." }),
@@ -4564,7 +4564,7 @@
           ]),
           el("div", { class: "av-quick" }, [["Home", sysHome()], ["Main site", "/var/www/html"], ["All sites", "/var/www"], ["Mail", "/var/mail"], ["Temp", "/tmp"], ["Whole system", "/"]].map(([l, p]) =>
             el("button", { class: "btn btn-sm btn-ghost", title: p, onclick: () => { $("#av-path").value = p; } }, [icon("folder", 12), ` ${l}`]))),
-          el("p", { class: "muted", style: "font-size:12px;margin:8px 0 0", text: "Scans run in the background — watch progress below." }),
+          el("p", { class: "muted", style: "font-size:12px;margin:8px 0 0", text: "Scans run in the background, watch progress below." }),
         ]));
         // every website's folder as a quick pick too
         API.sites().then((s) => { const q = $(".av-quick", body); if (!q) return; for (const x of (s.sites || []).filter((x) => !x.system && x.docroot)) q.append(el("button", { class: "btn btn-sm btn-ghost", title: x.docroot, onclick: () => { $("#av-path").value = x.docroot; } }, [icon("globe", 12), ` ${x.server_name}`])); }).catch(() => {});
@@ -4637,7 +4637,7 @@
           if (job.status !== "running") {
             stopScan();
             const inf = (job.output || "").split("\n").filter((l) => /FOUND\s*$/.test(l)).length;
-            toast(inf ? `Scan complete — ${inf} infected` : "Scan complete — clean", inf ? "bad" : "good");
+            toast(inf ? `Scan complete, ${inf} infected` : "Scan complete, clean", inf ? "bad" : "good");
           }
         } catch (e) { stopScan(); toast(e.message, "bad"); }
       };
@@ -4655,7 +4655,7 @@
     const TYPES = ["A", "AAAA", "CNAME", "MX", "TXT", "NS", "SOA", "CAA", "SRV"];
     const RES = [["system", "Ask this Pi"], ["cloudflare", "Cloudflare 1.1.1.1"], ["google", "Google 8.8.8.8"], ["quad9", "Quad9 9.9.9.9"], ["opendns", "OpenDNS"]];
     let hist = []; try { hist = JSON.parse(localStorage.getItem("aurora.dns.recent") || "[]"); } catch (e) {}
-    const input = el("input", { type: "text", placeholder: "domain or IP address — example.com", list: "dns-recent", style: "flex:1;min-width:240px", onkeydown: (e) => { if (e.key === "Enter") run("records"); } });
+    const input = el("input", { type: "text", placeholder: "domain or IP address, example.com", list: "dns-recent", style: "flex:1;min-width:240px", onkeydown: (e) => { if (e.key === "Enter") run("records"); } });
     const dl = el("datalist", { id: "dns-recent" }, hist.map((h) => el("option", { value: h })));
     const server = el("select", { title: "Which resolver answers", style: "max-width:220px;flex:0 1 220px" }, RES.map(([v, l]) => el("option", { value: v, text: l })));
     let types = new Set(["A", "AAAA", "CNAME", "MX", "TXT", "NS"]);
@@ -4666,8 +4666,8 @@
       typeChips.append(el("button", { type: "button", class: types.size === TYPES.length ? "active" : "", text: "All", onclick: () => { types = new Set(TYPES); drawTypes(); } }));
     };
     drawTypes();
-    const TOOLS = [["records", "Lookup", "btn-primary", "The chosen record types"], ["propagation", "Propagation", "", "Has a change reached the big public resolvers yet?"], ["mail", "Mail records", "", "MX, SPF, DKIM, DMARC — what a mail domain needs"],
-      ["ns", "Name servers", "", "Do all authoritative servers carry the same zone?"], ["whois", "WHOIS", "", "Registrar, dates, name servers — or the owner of an IP range"], ["reverse", "Reverse (PTR)", "", "The name behind an IP address"], ["trace", "Traceroute", "", "The path packets take from this Pi"]];
+    const TOOLS = [["records", "Lookup", "btn-primary", "The chosen record types"], ["propagation", "Propagation", "", "Has a change reached the big public resolvers yet?"], ["mail", "Mail records", "", "MX, SPF, DKIM, DMARC, what a mail domain needs"],
+      ["ns", "Name servers", "", "Do all authoritative servers carry the same zone?"], ["whois", "WHOIS", "", "Registrar, dates, name servers, or the owner of an IP range"], ["reverse", "Reverse (PTR)", "", "The name behind an IP address"], ["trace", "Traceroute", "", "The path packets take from this Pi"]];
     const quick = el("div", { class: "dns-quick" });
     const body = el("div", {});
     root.append(el("div", { class: "card", style: "margin-bottom:16px" }, [
@@ -4699,34 +4699,34 @@
           d = await API.dnsRecords(host, [...types], server.value);
           const all = Object.values(d.records).flat();
           card = el("div", { class: "card" }, [el("div", { style: "display:flex;align-items:center;gap:10px;margin-bottom:10px" }, [el("h3", { style: "margin:0", text: `${d.host} · answered by ${d.server}` }), el("span", { class: "grow" }), all.length ? copyBtn(Object.entries(d.records).map(([t, v]) => v.map((x) => `${t}\t${x}`).join("\n")).filter(Boolean).join("\n")) : null]),
-            table(["Type", "Value", ""], Object.entries(d.records).map(([t, v]) => el("tr", {}, [el("td", {}, el("b", { text: t })), el("td", { class: "muted" }, v.length ? vals(v) : el("span", { text: "—" })), el("td", { class: "actions" }, v.length ? copyBtn(v.join("\n")) : null)]))),
+            table(["Type", "Value", ""], Object.entries(d.records).map(([t, v]) => el("tr", {}, [el("td", {}, el("b", { text: t })), el("td", { class: "muted" }, v.length ? vals(v) : el("span", { text: ", " })), el("td", { class: "actions" }, v.length ? copyBtn(v.join("\n")) : null)]))),
             all.length ? null : el("p", { class: "dm-hint", style: "margin-top:10px", text: "Nothing came back. Typo? Not delegated yet? Try WHOIS to see whether the name is registered at all." })]);
         } else if (kind === "propagation") {
           const t = [...types][0] || "A";
           d = await API.dnsPropagation(host, t);
           card = el("div", { class: "card" }, [el("h3", { text: `${t} record of ${d.host}, as the world sees it` }),
-            el("div", { class: `mx-note ${d.agree ? "" : "warn"}`, style: "margin-bottom:12px" }, [icon(d.agree ? "check" : "warning", 16), el("span", { text: d.agree ? "Every resolver gives the same answer — the record has propagated." : "Resolvers disagree: a recent change is still spreading. Old answers live on until their TTL runs out — usually under an hour, up to a day." })]),
+            el("div", { class: `mx-note ${d.agree ? "" : "warn"}`, style: "margin-bottom:12px" }, [icon(d.agree ? "check" : "warning", 16), el("span", { text: d.agree ? "Every resolver gives the same answer, the record has propagated." : "Resolvers disagree: a recent change is still spreading. Old answers live on until their TTL runs out, usually under an hour, up to a day." })]),
             table(["Resolver", "Answer"], d.resolvers.map((r) => el("tr", {}, [el("td", { text: `${r.name}${r.ip ? ` · ${r.ip}` : ""}` }), el("td", { class: "muted" }, r.answers.length ? vals(r.answers) : el("span", { class: "pill warn", text: "no answer" }))])))]);
         } else if (kind === "mail") {
           d = await API.dnsMailCheck(host);
           const row = (ok, name, v, hint) => el("div", { class: "dns-mail-row" }, [el("span", { class: `pill ${ok ? "good" : "warn"}`, text: ok ? "ok" : "missing" }), el("div", { style: "min-width:0" }, [el("b", { text: name }), v.length ? vals(v) : el("p", { class: "muted", style: "margin:2px 0 0;font-size:12.5px", text: hint })])]);
           const n = Object.values(d.ok).filter(Boolean).length;
           card = el("div", { class: "card" }, [el("h3", { text: `Mail records of ${d.domain} · ${n} of 4 in place` }),
-            row(d.ok.mx, "MX — where mail for this domain is delivered", d.mx, "No MX record: nobody can send mail to this domain."),
-            row(d.ok.spf, "SPF — which servers may send as this domain", d.spf, "Add a TXT record such as   v=spf1 mx -all"),
-            row(d.ok.dmarc, "DMARC — what receivers do with forgeries", d.dmarc, `Add a TXT record at _dmarc.${d.domain}:   v=DMARC1; p=quarantine; rua=mailto:postmaster@${d.domain}`),
-            row(d.ok.dkim, "DKIM — signed mail", Object.entries(d.dkim).map(([sel, v]) => `${sel}: ${v.join(" ")}`), "No key under the usual selectors (default, mail, dkim, selector1, selector2, google, k1, s1). Your mail server's documentation names its selector."),
+            row(d.ok.mx, "MX, where mail for this domain is delivered", d.mx, "No MX record: nobody can send mail to this domain."),
+            row(d.ok.spf, "SPF, which servers may send as this domain", d.spf, "Add a TXT record such as   v=spf1 mx -all"),
+            row(d.ok.dmarc, "DMARC, what receivers do with forgeries", d.dmarc, `Add a TXT record at _dmarc.${d.domain}:   v=DMARC1; p=quarantine; rua=mailto:postmaster@${d.domain}`),
+            row(d.ok.dkim, "DKIM, signed mail", Object.entries(d.dkim).map(([sel, v]) => `${sel}: ${v.join(" ")}`), "No key under the usual selectors (default, mail, dkim, selector1, selector2, google, k1, s1). Your mail server's documentation names its selector."),
             el("p", { class: "dm-hint", style: "margin-top:10px", text: "For domains hosted here, Email → Deliverability shows the exact records to publish." })]);
         } else if (kind === "ns") {
           d = await API.dnsNsCheck(host);
           card = el("div", { class: "card" }, [el("h3", { text: `Name servers of ${d.domain}` }),
-            el("p", { class: "muted", style: "margin:0 0 10px", text: !d.ns.length ? "No NS records: the domain isn't delegated (or isn't a zone — try its parent domain)." : d.agree ? "All name servers answer and carry the same zone version (SOA serial)." : "The name servers carry different zone versions, or one doesn't answer — a change hasn't reached all of them yet." }),
-            d.ns.length ? table(["Name server", "Address", "Zone serial", "Answers"], d.servers.map((x) => el("tr", {}, [el("td", { text: x.ns }), el("td", { class: "muted", text: x.ip || "?" }), el("td", {}, el("code", { text: x.serial || "—" })), el("td", {}, el("span", { class: `pill ${x.ok ? "good" : "bad"}`, text: x.ok ? "yes" : "no" }))]))) : null]);
+            el("p", { class: "muted", style: "margin:0 0 10px", text: !d.ns.length ? "No NS records: the domain isn't delegated (or isn't a zone, try its parent domain)." : d.agree ? "All name servers answer and carry the same zone version (SOA serial)." : "The name servers carry different zone versions, or one doesn't answer, a change hasn't reached all of them yet." }),
+            d.ns.length ? table(["Name server", "Address", "Zone serial", "Answers"], d.servers.map((x) => el("tr", {}, [el("td", { text: x.ns }), el("td", { class: "muted", text: x.ip || "?" }), el("td", {}, el("code", { text: x.serial || ", " })), el("td", {}, el("span", { class: `pill ${x.ok ? "good" : "bad"}`, text: x.ok ? "yes" : "no" }))]))) : null]);
         } else if (kind === "whois") {
           d = await API.dnsWhois(host);
           const keys = Object.entries(d.summary);
           card = el("div", { class: "card" }, [el("h3", { text: `WHOIS · ${d.host}` }),
-            keys.length ? el("div", { class: "dns-kv" }, keys.map(([k, v]) => el("div", {}, [el("span", { class: "muted", text: k }), el("b", { text: v })]))) : el("p", { class: "muted", text: "No structured fields recognised — the full record is below." }),
+            keys.length ? el("div", { class: "dns-kv" }, keys.map(([k, v]) => el("div", {}, [el("span", { class: "muted", text: k }), el("b", { text: v })]))) : el("p", { class: "muted", text: "No structured fields recognised, the full record is below." }),
             el("details", { style: "margin-top:12px" }, [el("summary", { class: "muted", style: "cursor:pointer;font-size:13px", text: "Full record" }), el("pre", { class: "log", style: "margin-top:8px", text: d.text || "(empty)" })])]);
         } else if (kind === "reverse") {
           d = await API.dnsReverse(host);
@@ -4798,7 +4798,7 @@
       keysWrap.append(addForm);
       if (!data.keys.length) { keysWrap.append(el("p", { class: "empty", text: "No authorized keys." })); return; }
       const rows = data.keys.map((k) => el("tr", {}, [
-        el("td", { text: k.type }), el("td", { class: "muted", text: k.comment || "—" }),
+        el("td", { text: k.type }), el("td", { class: "muted", text: k.comment || ", " }),
         el("td", { class: "muted", style: "font-family:monospace;font-size:11px", text: k.fingerprint }),
         el("td", { class: "actions" }, el("button", { class: "btn btn-sm btn-danger", text: "Remove", onclick: async () => {
           if (!confirmInline("Remove this key?")) return;
@@ -4811,12 +4811,12 @@
 
   // ---- IP Blocker ----
   // ======================================================================
-  //  IP Blocker & Trust — bans (IPs / ranges, expiry), fail2ban bans, trusted list
+  //  IP Blocker & Trust, bans (IPs / ranges, expiry), fail2ban bans, trusted list
   // ======================================================================
   const BAN_DURATIONS = [[3600, "1 hour"], [86400, "1 day"], [604800, "1 week"], [2592000, "30 days"], [0, "Permanent"]];
   // one colour rule for every IP shown: banned = red, trusted = green, reported (and nothing else) = orange
   const ipCls = (st, rep) => (st === "banned" ? "ip-banned" : st === "trusted" ? "ip-trusted" : rep ? "ip-reported" : "");
-  const fmtDur = (s) => s == null ? "—" : s < 3600 ? `${Math.ceil(s / 60)} min` : s < 86400 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86400)} d`;
+  const fmtDur = (s) => s == null ? ", " : s < 3600 ? `${Math.ceil(s / 60)} min` : s < 86400 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86400)} d`;
   function rangeOf(ip, bits) {
     const p = String(ip).split(".").map(Number);
     if (p.length !== 4) return ip;
@@ -4824,7 +4824,7 @@
     if (bits === 16) return `${p[0]}.${p[1]}.0.0/16`;
     return ip;
   }
-  // Ban dialog (IP, its /24 or /16, or any custom range) — used by the Monitor and the IP Blocker.
+  // Ban dialog (IP, its /24 or /16, or any custom range), used by the Monitor and the IP Blocker.
   function banDialog(ip, done) {
     const target = el("input", { type: "text", value: ip || "", placeholder: "203.0.113.7  or  203.0.113.0/24" });
     const scope = isIPv4(ip) ? el("div", { class: "cw-seg cw-seg-sm" }, [["ip", `Just ${ip}`], [24, "Its /24 (256 addresses)"], [16, "Its /16 (65,536)"]].map(([k, l]) =>
@@ -4850,7 +4850,7 @@
     const note = el("input", { type: "text", maxlength: 120, placeholder: "e.g. my laptop / office network" });
     const go = btn("Trust", async () => {
       go.disabled = true;
-      try { const r = await API.guardTrust(target.value.trim(), note.value.trim()); closeModal(); toast(`Trusted${r.unbanned.length ? ` — lifted ${r.unbanned.length} ban(s)` : ""}`, "good"); done && done(); }
+      try { const r = await API.guardTrust(target.value.trim(), note.value.trim()); closeModal(); toast(`Trusted${r.unbanned.length ? `, lifted ${r.unbanned.length} ban(s)` : ""}`, "good"); done && done(); }
       catch (e) { toast(e.message, "bad"); go.disabled = false; }
     }, "btn-primary");
     openModal("Trust an address", el("div", {}, [field("Address or range", target), field("Note (optional)", note),
@@ -4860,7 +4860,7 @@
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
     root.append(el("div", { class: "toolbar" }, [btn("Ban an address…", () => banDialog("", load), "btn-danger"), btn("Trust an address…", () => trustDialog("", load), "btn-primary"),
       btn("Fail2ban settings", () => navigate("leech"), "btn-ghost"), btn("Network Monitor", () => navigate("netmon"), "btn-ghost")]), body);
-    const when = (ts) => (ts ? `${new Date(ts * 1000).toLocaleString()} (${ago(ts)})` : "—");
+    const when = (ts) => (ts ? `${new Date(ts * 1000).toLocaleString()} (${ago(ts)})` : ", ");
     const bare = (cidr) => String(cidr || "").replace(/\/(32|128)$/, "");
     const lookup = (ip) => { const f = (extraViews()._ui || {}).ipCard; if (f) f(ip, load); };
     const reportIp = (ip, done) => { const f = (extraViews()._ui || {}).reportIp; if (f) f(ip, done); };
@@ -4872,14 +4872,14 @@
       const bannedSet = new Set([...d.bans.map((b) => bare(b.cidr)), ...d.fail2ban.map((a) => a.ip)]);
       // "reported" pill: when the address was sent to its network's abuse desk (click it to read or send again)
       const repPill = (ip) => { const r = reported[ip]; return r ? el("button", { type: "button", class: "pill warn pill-btn-rep", text: `reported ${ago(r.ts)}`,
-        title: `Reported to ${(r.to || []).join(", ")} on ${new Date(r.ts * 1000).toLocaleString()} — click to read or send again`, onclick: () => reportIp(ip, load) }) : null; };
+        title: `Reported to ${(r.to || []).join(", ")} on ${new Date(r.ts * 1000).toLocaleString()}, click to read or send again`, onclick: () => reportIp(ip, load) }) : null; };
       const addr = (ip, cidr, st) => el("div", { class: "net-actions" }, [el("code", { class: `net-mono ${ipCls(st || "banned", reported[ip])}`, text: cidr || ip }), repPill(ip)]);
       body.innerHTML = "";
       if (!d.enabled) body.append(el("p", { class: "dm-hint", text: "The ban list is created the first time you ban or trust something." }));
       body.append(el("h2", { class: "section-title", text: `Banned by you (${d.bans.length})` }));
-      body.append(el("p", { class: "dm-hint", text: "Every ban made from the panel — the IP card, Network Monitor, WAF Firewall, Visitors or here — with when, from where and why. “reported” means its abuse desk was told." }));
+      body.append(el("p", { class: "dm-hint", text: "Every ban made from the panel, the IP card, Network Monitor, WAF Firewall, Visitors or here, with when, from where and why. “reported” means its abuse desk was told." }));
       body.append(d.bans.length ? simpleTable(["Address / range", "Banned at", "Banned from", "Reason", "Expires", "Blocked packets", ""], d.bans.map((b) => row(
-        addr(bare(b.cidr), b.cidr), when(b.created), el("span", { class: "pill dim", text: b.source || "IP Blocker" }), b.reason || "—",
+        addr(bare(b.cidr), b.cidr), when(b.created), el("span", { class: "pill dim", text: b.source || "IP Blocker" }), b.reason || ", ",
         b.expires ? `${new Date(b.expires * 1000).toLocaleString()} (in ${fmtDur(b.expires - Date.now() / 1000)})` : "never",
         b.packets, el("div", { class: "net-actions" }, [
           single(b.cidr) ? btn("Lookup", () => lookup(bare(b.cidr)), "btn-ghost") : null,
@@ -4895,18 +4895,18 @@
           unban(a.ip),
           btn("Ban permanently", () => banDialog(a.ip, load), "btn-ghost")].filter(Boolean)),
       ))) : el("p", { class: "empty", text: "Nothing is banned automatically right now." }));
-      // Reported to abuse desks — with whether the address is (still) banned here
+      // Reported to abuse desks, with whether the address is (still) banned here
       const reps = Object.entries(reported).sort((x, y) => y[1].ts - x[1].ts);
       body.append(el("h2", { class: "section-title", text: `Reported to abuse desks (${reps.length})` }));
       body.append(reps.length ? simpleTable(["Address", "Reported at", "To", "From", "Evidence", "Status here", ""], reps.map(([ip, r]) => row(
-        el("code", { class: `net-mono ${bannedSet.has(ip) ? "ip-banned" : "ip-reported"}`, text: ip }), when(r.ts), (r.to || []).join(", "), r.from || "—", r.events ? `${r.events} event${r.events === 1 ? "" : "s"}` : "—",
+        el("code", { class: `net-mono ${bannedSet.has(ip) ? "ip-banned" : "ip-reported"}`, text: ip }), when(r.ts), (r.to || []).join(", "), r.from || ", ", r.events ? `${r.events} event${r.events === 1 ? "" : "s"}` : ", ",
         bannedSet.has(ip) ? pill("banned", "bad") : pill("not banned", "dim"),
         el("div", { class: "net-actions" }, [btn("Lookup", () => lookup(ip), "btn-ghost"), btn("Read / send again", () => reportIp(ip, load), "btn-ghost"),
           bannedSet.has(ip) ? null : btn("Ban", () => banDialog(ip, load), "btn-danger")].filter(Boolean)),
-      ))) : el("p", { class: "empty", text: "No abuse reports sent yet. Report an attacker from its IP card, the WAF Firewall or Network Monitor — the owner's abuse desk gets the evidence by email." }));
+      ))) : el("p", { class: "empty", text: "No abuse reports sent yet. Report an attacker from its IP card, the WAF Firewall or Network Monitor, the owner's abuse desk gets the evidence by email." }));
       body.append(el("h2", { class: "section-title", text: `Trusted (${d.trusted.length})` }));
       body.append(d.trusted.length ? simpleTable(["Address / range", "Note", "Added", ""], d.trusted.map((t) => row(
-        el("code", { class: "net-mono ip-trusted", text: t.cidr }), t.note || "—", new Date(t.created * 1000).toLocaleDateString(),
+        el("code", { class: "net-mono ip-trusted", text: t.cidr }), t.note || ", ", new Date(t.created * 1000).toLocaleDateString(),
         el("div", { class: "net-actions" }, [btn("Remove", async () => { if (!confirmInline(`Stop trusting ${t.cidr}? It can then be banned by fail2ban again.`)) return; try { await API.guardUntrust(t.cidr); toast("Removed", "good"); load(); } catch (e) { toast(e.message, "bad"); } }, "btn-danger")]),
       ))) : el("p", { class: "empty", text: "No trusted addresses. Tip: trust your own devices (or your LAN range) so a mistyped password never locks you out." }));
       body.append(el("p", { class: "dm-hint", text: `Always protected: ${d.protected.join(", ")}.` }));
@@ -4934,8 +4934,8 @@
         body.append(el("p", { class: "muted", style: "margin:0 0 10px", text: `Self-signed certs are written to ${d.cert_dir}` }));
         if (!d.certs.length) { body.append(el("p", { class: "empty", text: "No certificates found." })); return; }
         const rows = d.certs.map((c) => el("tr", {}, [
-          el("td", { text: c.name }), el("td", { class: "muted", text: c.subject || "—" }),
-          el("td", { class: "muted", text: c.expires || "—" }),
+          el("td", { text: c.name }), el("td", { class: "muted", text: c.subject || ", " }),
+          el("td", { class: "muted", text: c.expires || ", " }),
           el("td", {}, el("span", { class: `pill ${c.self_signed ? "warn" : "good"}`, text: c.self_signed ? "self-signed" : "CA" })),
         ]));
         body.append(simpleTable(["File", "Subject", "Expires", "Type"], rows));
@@ -4982,7 +4982,7 @@
         const r = await API.tokenCreate(name);
         const ta = el("input", { type: "text", value: r.token, readonly: "readonly", style: "font-family:monospace;width:100%" });
         openModal("API token created", el("div", {}, [
-          el("p", { class: "muted", text: "Copy this token now — it will not be shown again:" }),
+          el("p", { class: "muted", text: "Copy this token now, it will not be shown again:" }),
           ta,
         ]), [el("button", { class: "btn btn-primary", text: "Copy", onclick: () => { ta.select(); try { document.execCommand("copy"); toast("Copied", "good"); } catch (e) {} } })]);
         $("#tok-name").value = ""; load();
@@ -5059,7 +5059,7 @@
 
   // ---- Leech Protection (fail2ban) ----
   // ======================================================================
-  //  Fail2ban — automatic brute-force protection
+  //  Fail2ban, automatic brute-force protection
   // ======================================================================
   function viewLeech(root) {
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
@@ -5082,7 +5082,7 @@
             if (d.active && !confirmInline("Turn fail2ban off? Brute-force attempts will no longer be banned.")) return;
             try { await API.fail2banService(!d.active); toast(d.active ? "fail2ban stopped" : "fail2ban is protecting this Pi", "good"); load(); } catch (e) { openModal("Couldn't change fail2ban", el("pre", { class: "log", text: e.message }), []); }
           }, d.active ? "btn-ghost" : "btn-primary")]),
-        !cfg.configured ? el("p", { class: "dm-hint", text: "Not yet managed by the panel — turning it on (or saving below) writes the panel's settings; the stock config is left untouched." }) : null,
+        !cfg.configured ? el("p", { class: "dm-hint", text: "Not yet managed by the panel, turning it on (or saving below) writes the panel's settings; the stock config is left untouched." }) : null,
       ]));
       // global
       const gf = {
@@ -5131,7 +5131,7 @@
           el("p", { class: "dm-hint", text: "Uses that jail's ban time and repeat-offender rules. For permanent or range bans use IP Blocker & Trust." })]) : null].filter(Boolean));
       if (d.installed) body.append(f2bActivity(d));
     });
-    // What fail2ban actually did: the failed attempts it noticed, the bans, the unbans — from its log.
+    // What fail2ban actually did: the failed attempts it noticed, the bans, the unbans, from its log.
     function f2bActivity(d) {
       const box = el("div", { class: "card", style: "margin-top:16px" }, [el("h3", { text: "Recent activity" }), el("div", { class: "loading", text: "Reading the log…" })]);
       const names = Object.fromEntries((d.jails || []).map((j) => [j.id, j.label]));
@@ -5193,7 +5193,7 @@
         const rows = r.actions.map((a) => el("tr", {}, [
           el("td", { text: a.action }), el("td", {}, el("span", { class: `pill ${a.ok ? "good" : "bad"}`, text: a.ok ? "ok" : "failed" })),
           el("td", { class: "muted", text: a.error || "" })]));
-        body.append(el("div", { class: "card" }, [el("h3", { text: `${r.user} — ${r.home}` }), simpleTable(["Action", "Result", "Detail"], rows)]));
+        body.append(el("div", { class: "card" }, [el("h3", { text: `${r.user}, ${r.home}` }), simpleTable(["Action", "Result", "Detail"], rows)]));
         toast(r.ok ? "Permissions fixed" : "Completed with warnings", r.ok ? "good" : "bad");
       } catch (e) { body.innerHTML = ""; toast(e.message, "bad"); }
     }
@@ -5201,7 +5201,7 @@
 
   // ---- Domains (vhosts) ----
   // ======================================================================
-  //  Domains — cPanel-style list + per-domain Manage page
+  //  Domains, cPanel-style list + per-domain Manage page
   // ======================================================================
   const domState = { manage: null };
   const zoneState = { manage: null };
@@ -5306,18 +5306,18 @@
           el("td", {}, el("div", { class: "dm-name" }, [
             el("a", { href: `${scheme}://${s.server_name}/`, target: "_blank", rel: "noopener", title: "Open site" }, [icon("link", 13), " ", s.server_name]),
             s.aliases.length ? el("span", { class: "dm-alias", text: "+ " + s.aliases.join(", ") }) : null,
-            // The two stock sites usually share one name — say which is the http and which the https one.
+            // The two stock sites usually share one name, say which is the http and which the https one.
             s.system ? el("span", { class: "dm-alias", text: s.has_http ? `${s.conf} · http (port 80)` : `${s.conf} · https (port 443)` }) : null,
             el("span", { class: "dm-tags" }, [
               s.system ? el("span", { class: "pill dim", text: "system" }) : null,
-              !s.managed && !s.system ? el("span", { class: "pill dim", title: "Hand-written config — saving it once lets AuroraPanel manage it (original is backed up)", text: "manual" }) : null,
+              !s.managed && !s.system ? el("span", { class: "pill dim", title: "Hand-written config, saving it once lets AuroraPanel manage it (original is backed up)", text: "manual" }) : null,
               !s.enabled ? el("span", { class: "pill warn", text: "disabled" }) : null,
               s.maintenance ? el("span", { class: "pill warn", text: "maintenance" }) : null,
             ]),
           ])),
-          el("td", {}, el("span", { class: "dm-root" }, [icon("home", 13), " ", s.docroot || "—"])),
+          el("td", {}, el("span", { class: "dm-root" }, [icon("home", 13), " ", s.docroot || ", "])),
           el("td", { class: s.redirect_url ? "" : "muted", text: s.redirect_url || "Not Redirected" }),
-          s.system && !s.has_http ? el("td", { class: "muted", title: "This is the https site itself — Force HTTPS is set on the http (port 80) row", text: "already https" }) : el("td", {}, sw(s.force_https, async (v, inp) => {
+          s.system && !s.has_http ? el("td", { class: "muted", title: "This is the https site itself, Force HTTPS is set on the http (port 80) row", text: "already https" }) : el("td", {}, sw(s.force_https, async (v, inp) => {
             if (v && s.ssl === "none" && !s.system && !confirmInline(`${s.server_name} has no certificate yet.\n\nA self-signed certificate will be created so HTTPS works now (browsers will warn). You can switch to a free Let's Encrypt certificate in Manage.\n\nContinue?`)) { inp.checked = false; return; }
             try { await API.siteToggle(s.system ? s.conf : s.server_name, "force_https", v); toast(`Force HTTPS ${v ? "on" : "off"} · ${s.server_name}`, "good"); load(); }
             catch (e) { inp.checked = !v; toast(e.message, "bad"); }
@@ -5347,7 +5347,7 @@
       const found = (folders.found || []).filter((f) => !q || f.name.toLowerCase().includes(q) || f.path.toLowerCase().includes(q));
       const box = el("div", { class: "dm-folders" }, [el("div", { class: "dm-folders-h" }, [
         icon("folder", 16), el("h3", { text: "Folder sites" }),
-        el("span", { class: "muted", style: "font-size:13px", text: `http(s)://${host}/name — no domain needed` }),
+        el("span", { class: "muted", style: "font-size:13px", text: `http(s)://${host}/name, no domain needed` }),
         el("span", { class: "grow" }),
         el("button", { class: "btn btn-sm", onclick: () => createDomainModal("folder") }, [icon("folder", 13), " New folder site"])])]);
       if (!items.length && !found.length) {
@@ -5360,7 +5360,7 @@
           el("td", {}, el("div", { class: "dm-name" }, [
             el("a", { href: `http://${host}/${f.name}/`, target: "_blank", rel: "noopener", title: "Open site" }, [icon("link", 13), ` ${host}/${f.name}/`]),
             el("span", { class: "dm-tags" }, [
-              f.alias ? el("span", { class: "pill dim", title: "Outside the default site's folder — served through an Apache Alias", text: "alias" }) : null,
+              f.alias ? el("span", { class: "pill dim", title: "Outside the default site's folder, served through an Apache Alias", text: "alias" }) : null,
               f.exists ? null : el("span", { class: "pill warn", text: "folder missing" }),
               // No index page + no file list = Apache answers 403 Forbidden.
               f.exists && !f.has_index && !f.indexes ? el("span", { class: "pill warn", title: "Visitors get 403 Forbidden at this address: add an index.html, or turn on the file list", text: "no index page" }) : null]),
@@ -5387,7 +5387,7 @@
             ]),
           ])),
           el("td", {}, el("span", { class: "dm-root" }, [icon("home", 13), " ", f.path])),
-          el("td", {}, el("span", { class: "muted", title: "Set it up to manage the file list here", text: "—" })),
+          el("td", {}, el("span", { class: "muted", title: "Set it up to manage the file list here", text: ", " })),
           el("td", { class: "actions" }, [
             el("button", { class: "btn btn-sm", onclick: () => { fmState.cwd = f.path; navigate("files"); } }, [icon("folder", 13), " Files"]),
             el("button", { class: "btn btn-sm btn-primary", disabled: f.addable ? null : "",
@@ -5407,18 +5407,18 @@
     const shadowBtn = (id) => {
       const s = (shadowInfo.sites || []).find((x) => x.id === id);
       const on = !!(s && s.enabled);
-      return el("button", { class: `btn btn-sm btn-ghost sh-btn ${on ? "on" : ""}`, title: on ? `Shadow copies on · ${s.usage.versions} versions, ${fmtBytes(s.usage.bytes)} — open the history` : "Shadow copies off — keep a version history of this site's files",
+      return el("button", { class: `btn btn-sm btn-ghost sh-btn ${on ? "on" : ""}`, title: on ? `Shadow copies on · ${s.usage.versions} versions, ${fmtBytes(s.usage.bytes)}, open the history` : "Shadow copies off, keep a version history of this site's files",
         onclick: () => navigate("shadow", { arg: id }) }, [icon("shadow", 13), on && s.usage.versions ? el("span", { class: "sh-badge", text: s.usage.versions > 999 ? "999+" : String(s.usage.versions) }) : null]);
     };
     const otherBox = el("div");
     root.append(otherBox);
     const jpFolder = jobPanel(root);
-    // Remove a folder site: stop serving it, and optionally delete its folder — after a backup that shows under Backups.
+    // Remove a folder site: stop serving it, and optionally delete its folder, after a backup that shows under Backups.
     function removeFolderSite(f) {
       const host = location.hostname;
       const delFiles = el("input", { type: "checkbox" });
       const bk = el("input", { type: "checkbox" }); bk.checked = true;
-      const bkRow = el("label", { class: "dm-check", style: "margin-left:26px" }, [bk, el("span", {}, ["Back up the folder first — the archive appears under ", el("b", { text: "Backups" }), " and can be restored any time"])]);
+      const bkRow = el("label", { class: "dm-check", style: "margin-left:26px" }, [bk, el("span", {}, ["Back up the folder first, the archive appears under ", el("b", { text: "Backups" }), " and can be restored any time"])]);
       bkRow.hidden = true;
       delFiles.onchange = () => { bkRow.hidden = !delFiles.checked; };
       const keepNote = f.alias ? `Without deleting the files, ${f.path} stays where it is.`
@@ -5477,10 +5477,10 @@
       if (k !== "local") {
         const ipKind = k === "ip";
         $("#nd-lbl", domainBox).firstChild.textContent = ipKind ? "IP address" : "Domain";
-        name.placeholder = ipKind ? "e.g. 192.168.0.50 — another address of this Pi" : "example.com, or a local name like mysite.test";
+        name.placeholder = ipKind ? "e.g. 192.168.0.50, another address of this Pi" : "example.com, or a local name like mysite.test";
         $("#nd-hint-ip", domainBox).hidden = !ipKind; $("#nd-hint-dom", domainBox).hidden = ipKind;
         // Let's Encrypt only certifies names: an IP site keeps a self-signed (or uploaded) certificate.
-        $("#nd-ssl-hint", domainBox).textContent = ipKind ? "(an IP address can't get a Let's Encrypt certificate — use a domain name for that)" : "(switch to Let's Encrypt later)";
+        $("#nd-ssl-hint", domainBox).textContent = ipKind ? "(an IP address can't get a Let's Encrypt certificate, use a domain name for that)" : "(switch to Let's Encrypt later)";
         ["#nd-www", "#nd-zone"].forEach((id) => { $(id, f).parentElement.hidden = ipKind; if (ipKind) $(id, f).checked = false; });
         if (!ipKind) $("#nd-www", f).checked = true;
         if (name.value.trim() && isIp(name.value.trim()) !== ipKind) { name.value = ""; name.dispatchEvent(new Event("input")); }
@@ -5488,7 +5488,7 @@
       setTimeout(() => (k === "local" ? fName : name).focus(), 30);
     };
     kind.append(
-      el("button", { type: "button", "data-k": "local", text: `Local · ${location.hostname}/name`, title: "A folder on this Pi's address — no domain needed", onclick: () => setKind("local") }),
+      el("button", { type: "button", "data-k": "local", text: `Local · ${location.hostname}/name`, title: "A folder on this Pi's address, no domain needed", onclick: () => setKind("local") }),
       el("button", { type: "button", "data-k": "ip", text: "IP address", title: "A site of its own on an IP address", onclick: () => setKind("ip") }),
       el("button", { type: "button", "data-k": "domain", text: "Domain", title: "A domain name, or a local name like mysite.test", onclick: () => setKind("domain") }));
     folderBox.innerHTML = `
@@ -5508,8 +5508,8 @@
       <label class="dm-check"><input id="nd-www" type="checkbox" checked /> Also answer on <b id="nd-www-l">www.example.com</b></label>
       <label class="dm-check"><input id="nd-ssl" type="checkbox" /> Create a self-signed certificate &amp; force HTTPS <span class="muted" id="nd-ssl-hint">(switch to Let's Encrypt later)</span></label>
       <label class="dm-check"><input id="nd-zone" type="checkbox" /> Create a DNS zone for it in the Zone Editor</label>
-      <p class="muted" id="nd-hint-dom" style="font-size:12px;margin:4px 0 0">Local names like <code>mysite.test</code> work too — you'll get the hosts-file line to add on your computer.</p>
-      <p class="muted" id="nd-hint-ip" hidden style="font-size:12px;margin:4px 0 0">The site answers on <code>http://&lt;ip&gt;/</code>. For this Pi's own address (<code>${esc(location.hostname)}</code>), which Apache's built-in site already uses, enter a folder such as <code>/var/www/html/mysite</code> and it's served at <code>http://${esc(location.hostname)}/mysite/</code> — or use <b>Local</b>.</p>`;
+      <p class="muted" id="nd-hint-dom" style="font-size:12px;margin:4px 0 0">Local names like <code>mysite.test</code> work too, you'll get the hosts-file line to add on your computer.</p>
+      <p class="muted" id="nd-hint-ip" hidden style="font-size:12px;margin:4px 0 0">The site answers on <code>http://&lt;ip&gt;/</code>. For this Pi's own address (<code>${esc(location.hostname)}</code>), which Apache's built-in site already uses, enter a folder such as <code>/var/www/html/mysite</code> and it's served at <code>http://${esc(location.hostname)}/mysite/</code>, or use <b>Local</b>.</p>`;
     const name = $("#nd-name", domainBox), rootIn = $("#nd-root", domainBox);
     // The document root fills itself in from the name until it's edited by hand.
     let rootTouched = false;
@@ -5592,7 +5592,7 @@
           try { await API.siteToggle(d.conf, "enabled", !d.enabled); toast(`${d.settings.server_name} ${d.enabled ? "disabled" : "enabled"}`, "good"); load(); }
           catch (err) { toast(err.message, "bad"); e.target.disabled = false; }
         } })]));
-      else if (!d.managed) root.append(el("div", { class: "dm-note" }, [icon("error", 15), el("span", { html: `This site uses a hand-written config (<code>${esc(d.conf)}</code>). Settings below were read from it — saving once lets AuroraPanel manage it, and the original is kept as <code>${esc(d.conf)}.aurora-bak</code>.` })]));
+      else if (!d.managed) root.append(el("div", { class: "dm-note" }, [icon("error", 15), el("span", { html: `This site uses a hand-written config (<code>${esc(d.conf)}</code>). Settings below were read from it, saving once lets AuroraPanel manage it, and the original is kept as <code>${esc(d.conf)}.aurora-bak</code>.` })]));
       // sites-enabled/<conf> is a regular file someone copied and edited there, not the link a2ensite makes:
       // Apache serves it, but on/off can't work until the layout is put right. Explain, and do it on request.
       function fixLayout() {
@@ -5601,11 +5601,11 @@
           go.disabled = true;
           try {
             const r = await API.siteSystemAdopt(d.conf); closeModal();
-            toast(r.changed ? `${d.conf} is a normal link again — the site can be turned on and off` : `${d.conf} already has the normal layout`, "good"); load();
+            toast(r.changed ? `${d.conf} is a normal link again, the site can be turned on and off` : `${d.conf} already has the normal layout`, "good"); load();
           } catch (e) { toast(e.message, "bad"); go.disabled = false; }
         } });
         openModal(`Fix the layout of ${d.conf}`, el("div", { class: "em-form" }, [
-          el("p", { class: "muted", html: `<code>sites-enabled/${esc(d.conf)}</code> is a regular file that was copied and edited by hand, not the link to <code>sites-available/${esc(d.conf)}</code> that Apache's tools expect. Apache loads it fine, but <code>a2dissite</code> / <code>a2ensite</code> — what “Disable site” and “Enable site” use — can't manage it. The panel can put it right in one go:` }),
+          el("p", { class: "muted", html: `<code>sites-enabled/${esc(d.conf)}</code> is a regular file that was copied and edited by hand, not the link to <code>sites-available/${esc(d.conf)}</code> that Apache's tools expect. Apache loads it fine, but <code>a2dissite</code> / <code>a2ensite</code>, what “Disable site” and “Enable site” use, can't manage it. The panel can put it right in one go:` }),
           el("ol", { style: "margin:0 0 12px 18px;padding:0;display:grid;gap:6px;font-size:13px" }, [
             el("li", { html: `Back up both files to <code>/var/lib/aurora/site-backups</code>.` }),
             el("li", { html: `Keep exactly what Apache serves now: the text of the hand-edited copy becomes <code>sites-available/${esc(d.conf)}</code>.` }),
@@ -5657,12 +5657,12 @@
             } else if (e.key === "Backspace" && !inp.value && s.aliases.length) { s.aliases.pop(); drawChips(); dirty(); chips.querySelector("input").focus(); }
           } });
           chips.append(inp);
-        } else if (!s.aliases.length) chips.append(el("span", { class: "muted", text: "None — the built-in sites answer on any name that reaches this Pi." }));
+        } else if (!s.aliases.length) chips.append(el("span", { class: "muted", text: "None, the built-in sites answer on any name that reaches this Pi." }));
       };
       drawChips();
       left.append(card("globe", "Update the domain", "Where the files live and which names this site answers on.",
         field("Document root", text("docroot", "/var/www/" + s.server_name), "Apache serves files from this folder. It's created if missing."),
-        el("div", { class: "cw-lbl" }, ["Aliases", chips, el("span", { class: "dm-hint", text: "Extra hostnames for this site — press Enter after each." })]),
+        el("div", { class: "cw-lbl" }, ["Aliases", chips, el("span", { class: "dm-hint", text: "Extra hostnames for this site, press Enter after each." })]),
         ipSite ? null : el("div", { class: "cw-lbl" }, ["www handling", seg("www", [["none", "Leave as is"], ["force_www", "Always www"], ["force_bare", "Never www"]]),
           el("span", { class: "dm-hint", text: "Pick one canonical address so search engines don't see duplicates (301 redirect)." })]),
         toggleRow("enabled", "Site enabled", "Turn off to take the site offline without deleting anything."),
@@ -5684,10 +5684,10 @@
       const drawSsl = () => {
         sslDetail.innerHTML = "";
         if (s.ssl === "none") sslDetail.append(el("p", { class: "dm-hint", text: "Visitors can only reach the site over plain http://. Pick a certificate to enable HTTPS." }));
-        if (s.ssl === "selfsigned") sslDetail.append(...[el("p", { class: "dm-hint", text: "A certificate is generated on this Pi (covers the domain + aliases). Encrypts traffic, but browsers show a warning — fine for LAN/.test sites." }),
+        if (s.ssl === "selfsigned") sslDetail.append(...[el("p", { class: "dm-hint", text: "A certificate is generated on this Pi (covers the domain + aliases). Encrypts traffic, but browsers show a warning, fine for LAN/.test sites." }),
           !sysSsl && savedSsl === "selfsigned" ? el("div", {}, regenBtn()) : null].filter(Boolean));
         if (sysSsl) { sslDetail.innerHTML = ""; sslDetail.append(el("p", { class: "dm-hint", text: (viaHttps ? `https:// for this address is served by Apache's built-in https site (${sslConf}); this changes its certificate. ` : "") +
-          (s.ssl === "none" ? `None turns ${sslConf} (https on port 443) off. http:// keeps working.` : s.ssl === "selfsigned" ? "A certificate is generated on this Pi for its address. Browsers show a warning — fine on a LAN." : "Point to your own certificate and key files.") })); }
+          (s.ssl === "none" ? `None turns ${sslConf} (https on port 443) off. http:// keeps working.` : s.ssl === "selfsigned" ? "A certificate is generated on this Pi for its address. Browsers show a warning, fine on a LAN." : "Point to your own certificate and key files.") })); }
         if (s.ssl === "custom") sslDetail.append(field("Certificate file (.crt / fullchain.pem)", text("cert", "/etc/ssl/certs/site.crt", sysSsl)), field("Private key", text("key", "/etc/ssl/private/site.key", sysSsl)), field("Chain (optional)", text("chain", "", sysSsl)));
         if (sysSsl) {
           const apply = el("button", { class: "btn btn-primary btn-sm", type: "button", onclick: async () => {
@@ -5704,7 +5704,7 @@
           return;
         }
         if (s.ssl === "letsencrypt") {
-          const email = el("input", { type: "email", placeholder: "you@gmail.com — optional", value: (() => { try { return localStorage.getItem("aurora-le-email") || ""; } catch (e) { return ""; } })() });
+          const email = el("input", { type: "email", placeholder: "you@gmail.com, optional", value: (() => { try { return localStorage.getItem("aurora-le-email") || ""; } catch (e) { return ""; } })() });
           const withAliases = el("input", { type: "checkbox" }); withAliases.checked = true;
           const force = el("input", { type: "checkbox" });
           const log = el("pre", { class: "log", hidden: true });
@@ -5717,7 +5717,7 @@
             const em = email.value.trim();
             if (em && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) { email.focus(); return toast("That email address doesn't look right", "bad"); }
             if (em && /@(.*\.(local|lan|home|internal|intranet|localdomain|localhost|test|example|invalid|home\.arpa)|[0-9.]+|[^.]+)$/i.test(em)) {
-              email.focus(); return toast("Let's Encrypt only accepts an email on a real internet domain — use your normal address, or leave it empty", "bad");
+              email.focus(); return toast("Let's Encrypt only accepts an email on a real internet domain, use your normal address, or leave it empty", "bad");
             }
             // Picking "Let's Encrypt" (and its Force HTTPS / HSTS switches) is saved once the certificate
             // exists; any other unsaved edits are saved first, keeping the current certificate for now.
@@ -5748,7 +5748,7 @@
             }, 1300);
           }
           sslDetail.append(...[
-            el("p", { class: "dm-hint", html: d.le_available ? "✅ A Let's Encrypt certificate exists for this domain — save to use it. It renews automatically via certbot's timer." : "Free, trusted certificate. The domain must already point at this Pi's <b>public IP</b> and port <b>80</b> must be forwarded to it, so Let's Encrypt can verify it." }),
+            el("p", { class: "dm-hint", html: d.le_available ? "✅ A Let's Encrypt certificate exists for this domain, save to use it. It renews automatically via certbot's timer." : "Free, trusted certificate. The domain must already point at this Pi's <b>public IP</b> and port <b>80</b> must be forwarded to it, so Let's Encrypt can verify it." }),
             field("Email for expiry notices (optional)", email, "A real address (not @…local). Empty is fine: certificates still renew automatically, you just won't get Let's Encrypt's reminder emails."),
             el("label", { class: "dm-check" }, [withAliases, " Include aliases (", s.aliases.filter((a) => !a.startsWith("*")).join(", ") || "none", ")"]),
             d.le_available ? el("label", { class: "dm-check" }, [force, " Renew now, even if it isn't due yet ", el("span", { class: "muted", text: "(Let's Encrypt allows only a few of these per week)" })]) : null,
@@ -5758,9 +5758,9 @@
         }
       };
       drawSsl();
-      // System sites: Force HTTPS applies right away (no save bar — the rest of the page is read-only).
+      // System sites: Force HTTPS applies right away (no save bar, the rest of the page is read-only).
       const sysForce = () => el("div", { class: "dm-trow" }, [
-        el("div", {}, [el("b", { text: "Force HTTPS redirect" }), el("span", { text: d.has_http ? "Send every http:// visit to https:// (301). Applied immediately." : "This is the HTTPS site — use Force HTTPS on the default (http) site." })]),
+        el("div", {}, [el("b", { text: "Force HTTPS redirect" }), el("span", { text: d.has_http ? "Send every http:// visit to https:// (301). Applied immediately." : "This is the HTTPS site, use Force HTTPS on the default (http) site." })]),
         sw(d.settings.force_https, async (v, inp) => {
           try { await API.siteToggle(d.conf, "force_https", v); toast(`Force HTTPS ${v ? "on" : "off"}`, "good"); load(); }
           catch (e) { inp.checked = !v; toast(e.message, "bad"); }
@@ -5775,7 +5775,7 @@
       if (ro) httpsToggles.querySelectorAll(".dm-trow")[1].hidden = true;  // HSTS isn't set on the built-in sites
       left.append(card("lock", "HTTPS / SSL", "Encrypt traffic and choose where the certificate comes from.",
         seg("ssl", [["none", "None"], ["selfsigned", "Self-signed"], ...(ipSite || sysSsl ? [] : [["letsencrypt", "Let's Encrypt"]]), ["custom", "Custom"]], (v) => { if (v === "none" && !sysSsl) { s.force_https = false; s.hsts = false; httpsToggles.querySelectorAll(".sw-in").forEach((i) => { i.checked = false; }); } drawSsl(); syncHttps(); }, sysSsl),
-        ipSite ? el("p", { class: "dm-hint", text: "Why no Let's Encrypt? It only issues certificates for domain names that point at this server from the internet — never for an IP address like this one. For a trusted certificate, point a domain (even a free one, e.g. from DuckDNS) at this server and add it as a domain site; or upload your own certificate with Custom." }) : null,
+        ipSite ? el("p", { class: "dm-hint", text: "Why no Let's Encrypt? It only issues certificates for domain names that point at this server from the internet, never for an IP address like this one. For a trusted certificate, point a domain (even a free one, e.g. from DuckDNS) at this server and add it as a domain site; or upload your own certificate with Custom." }) : null,
         certRow, sslDetail, httpsToggles));
       syncHttps();
 
@@ -5787,7 +5787,7 @@
 
       // ---- Performance & security ----
       left.append(card("shield", "Performance & security", "One-click Apache tuning for this site.",
-        toggleRow("gzip", "Gzip compression", "Compress HTML, CSS, JS and JSON — pages load faster."),
+        toggleRow("gzip", "Gzip compression", "Compress HTML, CSS, JS and JSON, pages load faster."),
         toggleRow("cache_static", "Browser caching", "Let browsers keep images, fonts, CSS and JS for a week/month."),
         toggleRow("security_headers", "Security headers", "X-Frame-Options, nosniff and a safe Referrer-Policy."),
         toggleRow("indexes", "Directory listing", "Show a file list for folders without an index page."),
@@ -5804,7 +5804,7 @@
         try { await API.siteSystemCustom(d.conf, custom.value); toast("Directives applied & Apache reloaded", "good"); load(); }
         catch (e) { openModal("Couldn't apply the directives", el("pre", { class: "log", text: e.message }), []); applyCustom.disabled = false; }
       } }, [icon("backup", 13), " Apply directives"]) : null;
-      left.append(card("terminal", "Advanced", ro ? `Raw directives added inside the ${d.has_http ? "http (port 80)" : "https (port 443)"} VirtualHost of ${d.conf}, in a marked block — the rest of the file is left alone. Validated with apache2ctl first.` : "Raw directives added inside the VirtualHost. Validated with apache2ctl before saving.",
+      left.append(card("terminal", "Advanced", ro ? `Raw directives added inside the ${d.has_http ? "http (port 80)" : "https (port 443)"} VirtualHost of ${d.conf}, in a marked block, the rest of the file is left alone. Validated with apache2ctl first.` : "Raw directives added inside the VirtualHost. Validated with apache2ctl before saving.",
         custom, applyCustom ? el("div", {}, applyCustom) : null,
         el("div", {}, el("button", { class: "btn btn-sm btn-ghost", type: "button", onclick: () => {
           // Full-file editor: checked with apache2ctl and put back if Apache rejects it.
@@ -5823,7 +5823,7 @@
       const info = (k, v) => el("div", { class: "info-row" }, [el("span", { class: "k", text: k }), el("span", { class: "v" }, v)]);
       right.append(el("div", { class: "card" }, [el("h3", { text: "Domain information" }), el("div", { class: "info-list" }, [
         info("Domain", d.settings.server_name),
-        info("Aliases", d.settings.aliases.join(", ") || "—"),
+        info("Aliases", d.settings.aliases.join(", ") || ", "),
         info("Redirects to", d.settings.redirect_url || "Not Redirected"),
         info("Document root", d.settings.docroot),
         info("SSL", sslPill({ ...d.settings, cert_expires: d.cert && d.cert.expires })),
@@ -5852,7 +5852,7 @@
         saveBtn.disabled = true;
         try {
           const r = await API.siteSave(name, s);
-          toast(r.adopted ? "Saved — AuroraPanel now manages this site" : "Saved & Apache reloaded", "good");
+          toast(r.adopted ? "Saved, AuroraPanel now manages this site" : "Saved & Apache reloaded", "good");
           name = s.server_name; load();
         } catch (e) { openModal("Couldn't save", el("pre", { class: "log", text: e.message }), []); saveBtn.disabled = false; }
       } }, [icon("backup", 14), " Save changes"]);
@@ -5874,7 +5874,7 @@
     if (w.expiry) rows.push(infoRow("Expires", w.expiry));
     if (w.registrar) rows.push(infoRow("Registrar", w.registrar));
     if (w.created) rows.push(infoRow("Created", w.created));
-    rows.push(infoRow("Resolves to", d.resolved_ip || "—"));
+    rows.push(infoRow("Resolves to", d.resolved_ip || ", "));
     rows.push(infoRow("This Pi (LAN)", d.local_ip));
     if (d.public_ip) rows.push(infoRow("This Pi (public)", d.public_ip));
 
@@ -5882,7 +5882,7 @@
 
     if (d.mode === "local") {
       content.append(el("div", { class: "card", style: "margin-bottom:14px" }, [
-        el("h3", { text: "🖥 Local / virtual domain — access it from your computer" }),
+        el("h3", { text: "🖥 Local / virtual domain, access it from your computer" }),
         el("p", { class: "muted", style: "margin:0 0 8px", text: "This domain isn't publicly registered/pointed here. To open it in your browser, add this line to your hosts file:" }),
         el("pre", { class: "log", text: d.hosts_line }),
         el("p", { class: "muted", style: "font-size:12px", text: "Windows: C:\\Windows\\System32\\drivers\\etc\\hosts   ·   macOS/Linux: /etc/hosts   (edit as administrator/root)" }),
@@ -5891,7 +5891,7 @@
       content.append(el("div", { class: "card" }, [
         el("h3", { text: "🌐 Make this domain live" }),
         el("p", { class: "muted", style: "margin:0 0 8px", text: "At your registrar's DNS, create this record so the domain points at this Pi:" }),
-        el("pre", { class: "log", text: d.dns_record ? `${d.dns_record.type}   ${d.dns_record.name}   →   ${d.dns_record.value}` : "(public IP unavailable — check the Pi's internet)" }),
+        el("pre", { class: "log", text: d.dns_record ? `${d.dns_record.type}   ${d.dns_record.name}   →   ${d.dns_record.value}` : "(public IP unavailable, check the Pi's internet)" }),
         el("p", { class: "muted", style: "font-size:12px", text: "Then forward ports 80/443 on your router to this Pi, and issue an SSL cert (Security → SSL/TLS). " + (d.resolves_here_wan ? "✅ It already points here!" : "") }),
       ]));
     }
@@ -5902,7 +5902,7 @@
   //  Network: VPN servers, Dynamic DNS, Port Checker, Network Monitor
   //  Security note: data here includes attacker-controlled text (usernames
   //  from failed logins, log lines, provider replies). It is only ever put
-  //  into the DOM via el(..., { text }) / textContent — never `html:`.
+  //  into the DOM via el(..., { text }) / textContent, never `html:`.
   // ======================================================================
   const ago = (ts) => {
     if (!ts) return "never";
@@ -5912,7 +5912,7 @@
     if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
     return `${Math.floor(s / 86400)}d ago`;
   };
-  const when = (ts) => ts ? new Date(ts * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }) : "—";
+  const when = (ts) => ts ? new Date(ts * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }) : ", ";
   const isIPv4 = (s) => /^\d{1,3}(\.\d{1,3}){3}$/.test(String(s || ""));
   function downloadText(filename, text, mime) {
     const url = URL.createObjectURL(new Blob([text], { type: mime || "text/plain" }));
@@ -5921,10 +5921,10 @@
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
   const pill = (text, kind) => el("span", { class: `pill ${kind || "dim"}`, text });
-  const row = (...cells) => el("tr", {}, cells.map((c) => el("td", {}, c == null ? "—" : (typeof c === "object" ? c : String(c)))));
+  const row = (...cells) => el("tr", {}, cells.map((c) => el("td", {}, c == null ? ", " : (typeof c === "object" ? c : String(c)))));
   const btn = (text, onclick, cls) => el("button", { class: `btn btn-sm ${cls || ""}`, text, onclick });
   const kv = (pairs) => el("div", { class: "net-kv" }, pairs.filter(Boolean).map(([k, v]) =>
-    el("div", {}, [el("span", { class: "net-k", text: k }), typeof v === "object" && v ? v : el("span", { class: "net-v", text: v == null ? "—" : String(v) })])));
+    el("div", {}, [el("span", { class: "net-k", text: k }), typeof v === "object" && v ? v : el("span", { class: "net-v", text: v == null ? ", " : String(v) })])));
   function field(label, input, hint) {
     return el("label", { class: "net-field" }, [el("span", { text: label }), input, hint ? el("small", { class: "dm-hint", text: hint }) : null]);
   }
@@ -5942,13 +5942,13 @@
 
   const VPN_INFO = {
     wireguard: { name: "WireGuard", view: "wireguard", icon: "tunnel",
-      desc: "Modern, fast and simple. Best choice for phones and laptops — scan a QR code and you're in. Apps for every OS.",
+      desc: "Modern, fast and simple. Best choice for phones and laptops, scan a QR code and you're in. Apps for every OS.",
       ports: (s) => [{ port: s.port, proto: "udp" }] },
     openvpn: { name: "OpenVPN", view: "openvpn", icon: "key",
       desc: "The classic. Works almost everywhere, can run over TCP to get through strict networks. One .ovpn file per device.",
       ports: (s) => [{ port: s.port, proto: s.proto }] },
     ipsec: { name: "IPsec / IKEv2", view: "ipsec", icon: "shield",
-      desc: "Built into iPhone, Mac, Windows and Android (strongSwan app) — no extra VPN app needed. Username + password login.",
+      desc: "Built into iPhone, Mac, Windows and Android (strongSwan app), no extra VPN app needed. Username + password login.",
       ports: () => [{ port: 500, proto: "udp" }, { port: 4500, proto: "udp" }] },
   };
 
@@ -5972,7 +5972,7 @@
       ]),
       el("div", { class: "toolbar", style: "margin:12px 0 0" }, [
         btn("Save", async () => {
-          try { await API.vpnSettings({ endpoint: ep.value.trim(), dns: dns.value.trim() }); toast("Saved — re-download client configs to pick up changes", "good"); onSaved && onSaved(); }
+          try { await API.vpnSettings({ endpoint: ep.value.trim(), dns: dns.value.trim() }); toast("Saved, re-download client configs to pick up changes", "good"); onSaved && onSaved(); }
           catch (e) { toast(e.message, "bad"); }
         }, "btn-primary"),
         btn("Set up Dynamic DNS", () => navigate("dyndns"), "btn-ghost"),
@@ -5982,7 +5982,7 @@
 
   // ---- VPN Overview ----
   function viewVPNOverview(root) {
-    root.append(el("p", { class: "muted", style: "margin:0 0 14px", text: "Run your own VPN server on this Pi so your devices can reach home — and browse through your home connection — from anywhere. Pick any (or all) of the three; each is independent." }));
+    root.append(el("p", { class: "muted", style: "margin:0 0 14px", text: "Run your own VPN server on this Pi so your devices can reach home, and browse through your home connection, from anywhere. Pick any (or all) of the three; each is independent." }));
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
     root.append(body);
     const load = () => guardedLoad(async () => {
@@ -6100,7 +6100,7 @@
         const head = el("div");
         const list = el("div");
         const name = el("input", { type: "text", placeholder: "e.g. phone", maxlength: 32 });
-        const tunnel = el("select", {}, [el("option", { value: "full", text: "Full tunnel — all traffic via home" }), el("option", { value: "split", text: "Split — only home network via VPN" })]);
+        const tunnel = el("select", {}, [el("option", { value: "full", text: "Full tunnel, all traffic via home" }), el("option", { value: "split", text: "Split, only home network via VPN" })]);
         const add = btn("Add client", async () => {
           try { const r = await API.vpnClientAdd("wireguard", { name: name.value.trim(), tunnel: tunnel.value }); name.value = ""; toast(`Client ${r.name} added (${r.ip})`, "good"); await reload(); showWgConfig(r.name); }
           catch (e) { toast(e.message, "bad"); }
@@ -6110,12 +6110,12 @@
           head.innerHTML = ""; head.append(vpnServerCard("wireguard", st, reload, jp));
           list.innerHTML = "";
           list.append(el("h2", { class: "section-title", text: `Clients (${st.peers.length})` }));
-          if (!st.peers.length) { list.append(el("p", { class: "empty", text: "No clients yet — add one below." })); return; }
+          if (!st.peers.length) { list.append(el("p", { class: "empty", text: "No clients yet, add one below." })); return; }
           list.append(simpleTable(["Name", "VPN IP", "Status", "Last handshake", "Connected from", "Received / Sent", "Routing", ""],
             st.peers.map((p) => row(
               el("b", { text: p.name }), p.ip,
               p.disabled ? pill("disabled") : pill(p.online ? "online" : "offline", p.online ? "good" : "dim"),
-              ago(p.latest_handshake), p.endpoint || "—", `${fmtBytes(p.rx)} / ${fmtBytes(p.tx)}`, p.tunnel,
+              ago(p.latest_handshake), p.endpoint || ", ", `${fmtBytes(p.rx)} / ${fmtBytes(p.tx)}`, p.tunnel,
               el("div", { class: "net-actions" }, [
                 btn("Config / QR", () => showWgConfig(p.name)),
                 btn(p.disabled ? "Enable" : "Disable", async () => { try { await API.wgToggle(p.name, !p.disabled); reload(); } catch (e) { toast(e.message, "bad"); } }, "btn-ghost"),
@@ -6133,12 +6133,12 @@
       const c = await API.vpnClientConfig("wireguard", name);
       // QR is shown through <img src=data:>: an SVG loaded as an image can't run script.
       const qr = c.qr_svg ? el("img", { class: "net-qr", alt: "QR code", src: "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(c.qr_svg))) }) : null;
-      openModal(`WireGuard — ${name}`, el("div", { class: "net-cfg" }, [
+      openModal(`WireGuard, ${name}`, el("div", { class: "net-cfg" }, [
         qr ? el("div", { class: "net-qr-wrap" }, [qr, el("p", { class: "dm-hint", text: "Scan with the WireGuard app (Android / iOS): + → Scan from QR code." })]) : null,
         el("div", {}, [
           el("p", { class: "muted", text: "Desktop: install WireGuard, then Import tunnel from file." }),
           el("pre", { class: "log", text: c.config }),
-          el("p", { class: "dm-hint", text: "This file contains the device's private key — treat it like a password." }),
+          el("p", { class: "dm-hint", text: "This file contains the device's private key, treat it like a password." }),
         ]),
       ]), [btn("Download .conf", () => downloadText(c.filename, c.config), "btn-primary")]);
     } catch (e) { toast(e.message, "bad"); }
@@ -6150,7 +6150,7 @@
     const proto = el("select", {}, [el("option", { value: "udp", text: "UDP (faster, recommended)" }), el("option", { value: "tcp", text: "TCP (gets through strict firewalls)" })]);
     proto.value = s.proto;
     const subnet = subnetInput(s.subnet);
-    const redirect = el("select", {}, [el("option", { value: "1", text: "Full tunnel — all traffic via home" }), el("option", { value: "0", text: "Split — only home network via VPN" })]);
+    const redirect = el("select", {}, [el("option", { value: "1", text: "Full tunnel, all traffic via home" }), el("option", { value: "0", text: "Split, only home network via VPN" })]);
     redirect.value = s.redirect ? "1" : "0";
     const go = btn(label, () => onGo({ port: +port.value, proto: proto.value, subnet: subnet.value.trim(), redirect: redirect.value === "1" }, go), "btn-primary");
     return el("div", {}, [
@@ -6221,18 +6221,18 @@
           addCard.hidden = !st.logins_enabled;
           list.innerHTML = "";
           list.append(el("h2", { class: "section-title", text: `Users (${st.clients.length})` }));
-          if (!st.clients.length) { list.append(el("p", { class: "empty", text: "No users yet — add one below." })); return; }
+          if (!st.clients.length) { list.append(el("p", { class: "empty", text: "No users yet, add one below." })); return; }
           list.append(simpleTable(["User", "Login type", "Status", "Connected from", "VPN IP", "Received / Sent", ""],
             st.clients.map((c) => row(
               el("b", { text: c.name }),
               pill(c.mode_label || c.mode, c.mode === "cert+password" ? "good" : "dim"),
               c.disabled ? pill("disabled", "bad") : pill(c.online ? (c.sessions > 1 ? `online ×${c.sessions}` : "online") : "offline", c.online ? "good" : "dim"),
-              c.real_address || "—", c.virtual_address || "—", c.online ? `${fmtBytes(c.rx)} / ${fmtBytes(c.tx)}` : "—",
+              c.real_address || ", ", c.virtual_address || ", ", c.online ? `${fmtBytes(c.rx)} / ${fmtBytes(c.tx)}` : ", ",
               el("div", { class: "net-actions" }, [
                 btn("Profile", () => downloadOvpn(c.name)),
                 c.mode !== "cert" ? btn("Password", () => ovpnPasswordDialog(c.name, reload)) : null,
                 st.logins_enabled ? btn("Login type", () => ovpnModeDialog(c, reload), "btn-ghost") : null,
-                st.logins_enabled ? btn(c.disabled ? "Enable" : "Disable", act(() => API.ovpnUserToggle(c.name, !c.disabled), c.disabled ? `${c.name} enabled` : `${c.name} disabled — disconnected`), "btn-ghost") : null,
+                st.logins_enabled ? btn(c.disabled ? "Enable" : "Disable", act(() => API.ovpnUserToggle(c.name, !c.disabled), c.disabled ? `${c.name} enabled` : `${c.name} disabled, disconnected`), "btn-ghost") : null,
                 btn("Delete", async () => {
                   if (!confirmInline(`Delete user ${c.name}? They are disconnected and their profile stops working for good.`)) return;
                   await act(() => API.vpnClientRemove("openvpn", c.name), `${c.name} deleted`)();
@@ -6254,9 +6254,9 @@
     "cert+password": { label: "Certificate + password (most secure)",
       help: "The user needs their own profile AND their password. A copied .ovpn file alone is useless." },
     "password": { label: "Password only",
-      help: "Everybody can use the same kind of profile — the username + password decide who gets in. Easiest to hand out." },
+      help: "Everybody can use the same kind of profile, the username + password decide who gets in. Easiest to hand out." },
     "cert": { label: "Certificate only (no password)",
-      help: "Whoever has the profile file is in — no password prompt. Keep the file safe." },
+      help: "Whoever has the profile file is in, no password prompt. Keep the file safe." },
   };
 
   // Random password from the browser's CSPRNG (works on plain-http LAN too).
@@ -6322,15 +6322,15 @@
     return { node: el("div", { class: "net-pw" }, [inp, el("div", { class: "net-pw-btns" }, [gen, show])]),
       value: () => inp.value, clear: () => { inp.value = ""; setShown(false); }, input: inp };
   }
-  // Shown once after create / password change — the panel never shows it again.
+  // Shown once after create / password change, the panel never shows it again.
   function ovpnCredentials(r, title) {
     const rows = [["Username", r.name], ["Login type", (OVPN_MODES[r.mode] || {}).label || r.mode]];
     const body = [kv(rows)];
     if (r.password) {
       const pwBox = el("input", { type: "text", readonly: "readonly", class: "net-mono net-pw-out", value: r.password });
       body.push(el("div", { class: "net-cred" }, [el("span", { class: "net-k", text: "Password" }), pwBox,
-        btn("Copy", async () => toast(await copyText(r.password) ? "Password copied" : "Copy failed — select it manually", "good"))]));
-      body.push(el("p", { class: "dm-hint", text: "Write it down or send it to the user now — for security it is stored only as a hash and can't be shown again (you can always set a new one)." }));
+        btn("Copy", async () => toast(await copyText(r.password) ? "Password copied" : "Copy failed, select it manually", "good"))]));
+      body.push(el("p", { class: "dm-hint", text: "Write it down or send it to the user now, for security it is stored only as a hash and can't be shown again (you can always set a new one)." }));
     }
     if (r.new_profile || title === "User created") body.push(el("p", { class: "muted", text: "Give the user their .ovpn profile and import it in OpenVPN Connect." + (r.password ? " The app asks for the username and password when connecting." : "") }));
     openModal(title, el("div", {}, body), [btn(`Download ${r.name}.ovpn`, () => downloadOvpn(r.name), "btn-primary")]);
@@ -6342,7 +6342,7 @@
       try { const r = await API.ovpnUserPassword(name, pw.value()); closeModal(); reload(); ovpnCredentials({ ...r, mode: null }, `New password for ${name}`); }
       catch (e) { toast(e.message, "bad"); save.disabled = false; }
     }, "btn-primary");
-    openModal(`Change password — ${name}`, el("div", {}, [
+    openModal(`Change password, ${name}`, el("div", {}, [
       field("New password (8+ characters)", pw.node, "Leave empty to generate a strong one."),
       el("p", { class: "dm-hint", text: "The user is disconnected right away and must log in with the new password. Their profile file stays the same." }),
     ]), [save]);
@@ -6362,7 +6362,7 @@
       try { const r = await API.ovpnUserMode(c.name, sel.value, pw.value()); closeModal(); reload(); ovpnCredentials(r, `${c.name}: login type changed`); }
       catch (e) { toast(e.message, "bad"); save.disabled = false; }
     }, "btn-primary");
-    openModal(`Login type — ${c.name}`, el("div", {}, [field("Login type", sel), help, pwWrap,
+    openModal(`Login type, ${c.name}`, el("div", {}, [field("Login type", sel), help, pwWrap,
       el("p", { class: "muted", text: "The user is disconnected and needs to import their new profile (download it on the next screen)." })]), [save]);
   }
 
@@ -6378,7 +6378,7 @@
         }, "btn-primary");
         return el("div", { class: "card" }, [
           el("h3", { text: "Set up the IPsec / IKEv2 server" }),
-          el("p", { class: "muted", text: `Creates a certificate authority and a server certificate for ${s.endpoint || "your public address"} (set Dynamic DNS first if your IP changes — the certificate is tied to the name), then starts strongSwan. Users log in with username + password (EAP-MSCHAPv2).` }),
+          el("p", { class: "muted", text: `Creates a certificate authority and a server certificate for ${s.endpoint || "your public address"} (set Dynamic DNS first if your IP changes, the certificate is tied to the name), then starts strongSwan. Users log in with username + password (EAP-MSCHAPv2).` }),
           el("div", { class: "net-form" }, [field("VPN subnet", subnet)]),
           el("div", { style: "margin-top:14px" }, go),
         ]);
@@ -6402,11 +6402,11 @@
           ]));
           list.innerHTML = "";
           list.append(el("h2", { class: "section-title", text: `Users (${st.users.length})` }));
-          if (!st.users.length) { list.append(el("p", { class: "empty", text: "No users yet — add one below." })); return; }
+          if (!st.users.length) { list.append(el("p", { class: "empty", text: "No users yet, add one below." })); return; }
           list.append(simpleTable(["User", "Status", "Connected from", "VPN IP", "Received / Sent", "Since", ""],
             st.users.map((u) => row(
               el("b", { text: u.name }), pill(u.online ? "online" : "offline", u.online ? "good" : "dim"),
-              u.remote || "—", u.virtual_address || "—", u.online ? `${fmtBytes(u.rx)} / ${fmtBytes(u.tx)}` : "—", u.since ? ago(u.since) : "—",
+              u.remote || ", ", u.virtual_address || ", ", u.online ? `${fmtBytes(u.rx)} / ${fmtBytes(u.tx)}` : ", ", u.since ? ago(u.since) : ", ",
               el("div", { class: "net-actions" }, [
                 btn("Profiles", () => showIpsecProfiles(u.name)),
                 btn("Remove", async () => { if (!confirmInline(`Remove user ${u.name}?`)) return; try { await API.vpnClientRemove("ipsec", u.name); toast("Removed", "good"); reload(); } catch (e) { toast(e.message, "bad"); } }, "btn-danger"),
@@ -6424,7 +6424,7 @@
       const c = await API.vpnClientConfig("ipsec", name);
       const pwBox = el("code", { class: "net-mono", text: "••••••••" });
       const block = (title, text, dl) => el("div", { class: "net-os" }, [el("h4", { text: title }), el("p", { class: "muted", text }), dl]);
-      openModal(`IKEv2 — ${name}`, el("div", {}, [
+      openModal(`IKEv2, ${name}`, el("div", {}, [
         kv([["Server", c.host], ["Username", c.name], ["Password", el("span", {}, [pwBox, " ", btn("Show", (e) => { pwBox.textContent = c.password; e.target.remove(); }, "btn-ghost")])], ["Type", "IKEv2, EAP-MSCHAPv2"]]),
         block("iPhone / iPad / Mac", "Download the profile, open it, then install it under Settings → Profile Downloaded (Mac: System Settings → Profiles). CA + VPN + login in one step.",
           btn("Download .mobileconfig", () => downloadText(`aurora-${c.name}.mobileconfig`, c.mobileconfig, "application/x-apple-aspen-config"), "btn-primary")),
@@ -6440,13 +6440,13 @@
   // ---- Dynamic DNS ----
   function viewDynDNS(root) {
     const statusBox = el("div"), formBox = el("div");
-    root.append(el("p", { class: "muted", style: "margin:0 0 14px", text: "Home internet IPs change. Dynamic DNS gives you a fixed hostname (e.g. myhome.duckdns.org) that this Pi keeps pointed at your current IP — every 5 minutes, even when the panel is closed. VPN clients then connect to the hostname." }), statusBox, formBox);
+    root.append(el("p", { class: "muted", style: "margin:0 0 14px", text: "Home internet IPs change. Dynamic DNS gives you a fixed hostname (e.g. myhome.duckdns.org) that this Pi keeps pointed at your current IP, every 5 minutes, even when the panel is closed. VPN clients then connect to the hostname." }), statusBox, formBox);
     let d = null, chosen = null;
     function drawStatus() {
       statusBox.innerHTML = "";
       const c = d.config || {}, last = d.last || {};
       if (d.ddclient_active) statusBox.append(el("div", { class: "card net-warn" }, [
-        el("p", { text: "The old ddclient service is also running. Two updaters for the same name fight each other — stop ddclient once you use this page." }),
+        el("p", { text: "The old ddclient service is also running. Two updaters for the same name fight each other, stop ddclient once you use this page." }),
         btn("Stop & disable ddclient", async () => { try { d = await API.ddnsStopDdclient(); drawStatus(); toast("ddclient stopped", "good"); } catch (e) { toast(e.message, "bad"); } }),
       ]));
       if (!c.provider) return;
@@ -6458,7 +6458,7 @@
           ["Provider", (d.providers[c.provider] || {}).name || c.provider],
           ["Public IP", last.ip],
           ["Hostname resolves to", el("span", {}, [el("span", { text: d.resolved_ip || "not resolving yet" }), " ", d.resolved_ip ? pill(match ? "matches" : "stale (DNS TTL, wait a few min)", match ? "good" : "warn") : null])],
-          ["Last update", `${ago(last.ts)} — ${last.message || ""}`],
+          ["Last update", `${ago(last.ts)}, ${last.message || ""}`],
           ["Automatic updates", pill(d.timer_active ? "every 5 min" : "off", d.timer_active ? "good" : "dim")],
         ]),
         el("div", { class: "toolbar", style: "margin:14px 0 0" }, [
@@ -6477,10 +6477,10 @@
       const inputs = {};
       const fields = prov.fields.map(([key, label, ph, secret]) => {
         const same = c.provider === chosen;
-        const inp = el("input", { type: secret ? "password" : "text", placeholder: secret && same && c[key + "_set"] ? "(saved — leave empty to keep)" : ph || "", autocomplete: "off",
+        const inp = el("input", { type: secret ? "password" : "text", placeholder: secret && same && c[key + "_set"] ? "(saved, leave empty to keep)" : ph || "", autocomplete: "off",
           value: !secret && same && c[key] ? (chosen === "duckdns" && key === "hostname" ? String(c[key]).replace(/\.duckdns\.org$/, "") : c[key]) : "" });
         inputs[key] = inp;
-        const [lbl, hint] = String(label).split(" — ");
+        const [lbl, hint] = String(label).split(", ");
         return field(lbl, inp, hint || "");
       });
       const save = btn(c.provider ? "Save & update" : "Save & get my address online", async () => {
@@ -6549,16 +6549,16 @@
     function draw(r) {
       result.innerHTML = "";
       const P = `${r.proto.toUpperCase()} ${r.port}`;
-      const verdict = { open: ["Open — reachable from the internet", "good"], closed: ["Closed — not reachable from the internet", "bad"], unverified: ["Can't be verified automatically (UDP)", "warn"] }[r.verdict];
+      const verdict = { open: ["Open, reachable from the internet", "good"], closed: ["Closed, not reachable from the internet", "bad"], unverified: ["Can't be verified automatically (UDP)", "warn"] }[r.verdict];
       const L = r.listen || {}, F = r.firewall || {}, U = r.upnp || {};
       const checks = [
         line(L.listening ? true : r.temp_listener ? null : false, "Service on this Pi",
-          L.listening ? `${L.process || "Something"} is listening on ${L.address}` : r.temp_listener ? "Nothing listens here — a temporary listener was used for the test" : `Nothing is listening on ${P}`),
-        line(!F.active || F.allowed ? true : false, "Pi firewall (ufw)", !F.installed ? "Not installed" : !F.active ? "Inactive — not blocking" : F.allowed ? `Allows ${P}` : `Active and does NOT allow ${P}`),
+          L.listening ? `${L.process || "Something"} is listening on ${L.address}` : r.temp_listener ? "Nothing listens here, a temporary listener was used for the test" : `Nothing is listening on ${P}`),
+        line(!F.active || F.allowed ? true : false, "Pi firewall (ufw)", !F.installed ? "Not installed" : !F.active ? "Inactive, not blocking" : F.allowed ? `Allows ${P}` : `Active and does NOT allow ${P}`),
         line(r.nat ? false : U.available ? true : null, "Router / NAT",
           r.nat === "double" ? `Double NAT: your router (${r.gateway}) gets ${U.router_wan_ip} from another router in front of it` :
           r.nat === "cgnat" ? `Carrier-grade NAT: router WAN ${U.router_wan_ip} is not a public address` :
-          U.available ? `Router holds the public IP ${r.public_ip}` : "Router doesn't answer UPnP — can't inspect it (that's fine)"),
+          U.available ? `Router holds the public IP ${r.public_ip}` : "Router doesn't answer UPnP, can't inspect it (that's fine)"),
         r.inner_hop != null ? line(r.inner_hop, `Forward on your router (${r.gateway})`, r.inner_hop ? `Works: ${U.router_wan_ip}:${r.port} reaches this Pi` : `${U.router_wan_ip}:${r.port} does not reach this Pi`) : null,
         line(r.external, "From the internet", r.evidence ? r.evidence : r.external === true ? `${r.public_ip}:${r.port} answered the outside probe` : r.external === false ? `${r.public_ip}:${r.port} did not answer the outside probe` :
           "UDP has no handshake an outside prober can see. It counts as proven once a VPN client connects from outside (e.g. phone on mobile data)."),
@@ -6579,7 +6579,7 @@
         el("h3", { text: "What to do" }), steps,
         kv([["This Pi (LAN)", r.lan_ip], ["Router", r.gateway], ["Public IP", r.public_ip], ["Protocol", r.proto.toUpperCase()], ["Port", r.port]]),
         el("div", { class: "toolbar", style: "margin:14px 0 0" }, [...links, ...upnp, btn("Check again", () => check(), "btn-primary")]),
-        U.available && r.nat === "double" ? el("p", { class: "dm-hint", text: "UPnP only opens your own router — the upstream one still needs a manual forward." }) : null,
+        U.available && r.nat === "double" ? el("p", { class: "dm-hint", text: "UPnP only opens your own router, the upstream one still needs a manual forward." }) : null,
       ]));
     }
     if (preset.port) check();
@@ -6590,7 +6590,7 @@
     let hours = 24, scope = "internet";
     const ctrl = el("div", { class: "card net-mon-ctrl" });
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
-    root.append(el("p", { class: "muted", style: "margin:0 0 14px", text: "Who tried to reach this Pi: every new inbound connection attempt (also on closed or firewalled ports), plus logins and VPN handshakes — successful and failed." }), ctrl, body);
+    root.append(el("p", { class: "muted", style: "margin:0 0 14px", text: "Who tried to reach this Pi: every new inbound connection attempt (also on closed or firewalled ports), plus logins and VPN handshakes, successful and failed." }), ctrl, body);
     const segOf = (opts, cur, set) => el("div", { class: "cw-seg cw-seg-sm" }, opts.map(([v, l]) => el("button", { type: "button", class: v === cur ? "active" : "", text: l,
       onclick: (e) => { set(v); e.target.parentNode.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b === e.target)); load(); } })));
     const tile = (label, value, kind) => el("div", { class: `nm-tile ${kind || ""}` }, [el("div", { class: "nm-tile-v", text: String(value) }), el("div", { class: "nm-tile-l", text: label })]);
@@ -6604,7 +6604,7 @@
         btn("Unban", async () => { try { await API.guardUnban(ip); toast(`${ip} unbanned`, "good"); load(); } catch (e) { toast(e.message, "bad"); } }, "btn-ghost")]);
       const rep = reported[ip];
       return el("div", { class: "net-actions" }, [
-        scope === "internet" ? (rep ? el("button", { type: "button", class: "pill warn pill-btn-rep", title: `Reported to ${(rep.to || []).join(", ")} — click to read or send again`, text: "reported", onclick: (e) => reportIp(ip, null) })
+        scope === "internet" ? (rep ? el("button", { type: "button", class: "pill warn pill-btn-rep", title: `Reported to ${(rep.to || []).join(", ")}, click to read or send again`, text: "reported", onclick: (e) => reportIp(ip, null) })
           : btn("Report", (e) => reportIp(ip, e.currentTarget), "btn-ghost")) : null,
         btn("Ban", () => banDialog(ip, load), "btn-danger"), btn("Trust", () => trustDialog(ip, load), "btn-ghost")].filter(Boolean));
     }
@@ -6616,7 +6616,7 @@
       try { p = await API.abusePreview(ip); }
       catch (e) { toast(e.message, "bad"); if (button) { button.disabled = false; button.textContent = "Report"; } return; }
       if (button) { button.disabled = false; button.textContent = "Report"; }
-      if (!p.mail_ready) { toast("Reports go out through this server's mail — set up Email first", "bad"); return; }
+      if (!p.mail_ready) { toast("Reports go out through this server's mail, set up Email first", "bad"); return; }
       if (!p.info.contacts.length) { toast(`No abuse contact is published for ${ip}`, "bad"); return; }
       const from = el("select", {}, p.accounts.map((a) => el("option", { value: a, text: a })));
       if (p.from) from.value = p.from;
@@ -6626,12 +6626,12 @@
       const toList = el("datalist", { id: "nm-abuse-to" }, sugg.map((a) => el("option", { value: a })));
       const to = el("input", { type: "email", class: "em-select", value: p.info.contacts[0] || "", list: "nm-abuse-to", autocomplete: "off", spellcheck: "false" });
       const whois = p.info.whois_url ? el("p", { class: "muted mx-small", style: "margin:4px 0 0" },
-        [el("a", { href: p.info.whois_url, target: "_blank", rel: "noopener noreferrer", text: p.info.whois_label || "Look up the registry record" }), " — check the abuse address if it looks wrong."]) : null;
+        [el("a", { href: p.info.whois_url, target: "_blank", rel: "noopener noreferrer", text: p.info.whois_label || "Look up the registry record" }), ", check the abuse address if it looks wrong."]) : null;
       openModal(`Report ${ip}`, el("div", { class: "em-form" }, [
-        kv([["Network", `${p.info.network || "—"}${p.info.country ? ` (${p.info.country})` : ""}`],
+        kv([["Network", `${p.info.network || ", "}${p.info.country ? ` (${p.info.country})` : ""}`],
           ["Evidence", p.summary || `${p.events} event${p.events === 1 ? "" : "s"} in the last 7 days`]]),
         p.reported ? el("div", { class: "dm-note" }, [icon("info", 15), el("span", { text: `Reported to ${p.reported.to.join(", ")} on ${new Date(p.reported.ts * 1000).toLocaleString()} from ${p.reported.from}. Sending again repeats the report.` })]) : null,
-        p.accounts.length ? el("div", { class: "mx-grid2" }, [field("Send from", from, "Remembered for next time."), field("To (abuse contact)", el("div", { style: "display:contents" }, [to, toList]), "Pre-filled from the registry — edit it if the desk differs.")])
+        p.accounts.length ? el("div", { class: "mx-grid2" }, [field("Send from", from, "Remembered for next time."), field("To (abuse contact)", el("div", { style: "display:contents" }, [to, toList]), "Pre-filled from the registry, edit it if the desk differs.")])
           : el("p", { class: "empty", text: "Create an email account first (Email → Email Accounts)." }),
         el("h4", { class: "em-sub", text: "The message" }), el("pre", { class: "log", style: "max-height:260px", text: p.body }),
         whois,
@@ -6652,7 +6652,7 @@
           pill(d.logging ? "recording" : "off", d.logging ? "good" : "dim"),
           d.logging ? btn("Turn off", async () => { try { await API.netmonLogging(false); load(); } catch (e) { toast(e.message, "bad"); } }, "btn-ghost")
                     : btn("Turn on", async () => { try { await API.netmonLogging(true); toast("Recording new connection attempts", "good"); load(); } catch (e) { toast(e.message, "bad"); } }, "btn-primary")]),
-        !d.logging ? el("p", { class: "dm-hint", text: d.nft ? "Off: only logins and VPN events are shown. Turn on to also record every inbound connection attempt (rate-limited, stored in the system journal)." : "nftables is not installed — install any VPN first to enable connection logging." }) : null,
+        !d.logging ? el("p", { class: "dm-hint", text: d.nft ? "Off: only logins and VPN events are shown. Turn on to also record every inbound connection attempt (rate-limited, stored in the system journal)." : "nftables is not installed, install any VPN first to enable connection logging." }) : null,
         el("div", { class: "toolbar", style: "margin:12px 0 0" }, [
           segOf([["internet", "Internet only"], ["all", "Everything"], ["lan", "LAN only"]], scope, (v) => { scope = v; }),
           segOf([[1, "1 h"], [24, "24 h"], [168, "7 days"]], hours, (v) => { hours = v; }),
@@ -6663,13 +6663,13 @@
       body.append(el("div", { class: "nm-tiles" }, [
         tile("connection attempts", d.total), tile("unique sources", d.sources.length),
         tile("failed logins", d.failed_logins, d.failed_logins ? "bad" : ""), tile("blocked by bans", d.blocked_total || 0),
-        tile(top && top.service ? `most targeted · ${top.service}` : "most targeted", top ? (top.port != null ? `:${top.port}` : top.service || "—") : "—"),
+        tile(top && top.service ? `most targeted · ${top.service}` : "most targeted", top ? (top.port != null ? `:${top.port}` : top.service || ", ") : ", "),
       ]));
       body.append(el("div", { class: "toolbar" }, [btn("Bans & trusted list", () => navigate("ipblocker"), "btn-ghost"), btn("Fail2ban", () => navigate("leech"), "btn-ghost")]));
       body.append(el("h2", { class: "section-title", text: "Logins & VPN events" }));
       body.append(d.events.length ? simpleTable(["When", "Via", "Result", "User", "From", ""],
         d.events.slice(0, 150).map((e) => {
-          const tr = row(when(e.ts), e.source, outcomePill(e.outcome), e.user || "—", el("span", {}, [el("span", { class: `net-mono ${ipCls(e.status, reported[e.ip])}`, text: e.ip || "—" }), " ", e.scope ? scopePill(e.scope) : null]),
+          const tr = row(when(e.ts), e.source, outcomePill(e.outcome), e.user || ", ", el("span", {}, [el("span", { class: `net-mono ${ipCls(e.status, reported[e.ip])}`, text: e.ip || ", " }), " ", e.scope ? scopePill(e.scope) : null]),
             ipActions(e.ip, e.status, e.scope));
           tr.title = e.detail || "";
           return tr;
@@ -6683,12 +6683,12 @@
         : el("p", { class: "empty", text: d.logging ? "No connection attempts recorded in this period." : "Connection logging is off." }));
       if (d.ports.length) {
         body.append(el("h2", { class: "section-title", text: "Targeted ports" }));
-        body.append(simpleTable(["Port", "Service", "Attempts", "Sources"], d.ports.map((p) => row(`${p.port ?? "—"}/${p.proto}`, p.service || "—", p.count, p.sources))));
+        body.append(simpleTable(["Port", "Service", "Attempts", "Sources"], d.ports.map((p) => row(`${p.port ?? ", "}/${p.proto}`, p.service || ", ", p.count, p.sources))));
       }
       if (d.recent.length) {
         body.append(el("h2", { class: "section-title", text: "Latest attempts" }));
         body.append(simpleTable(["When", "From", "To port", "Service", "Result"],
-          d.recent.slice(0, 100).map((c) => row(when(c.ts), c.src, `${c.port ?? "—"}/${c.proto}`, c.service || "—",
+          d.recent.slice(0, 100).map((c) => row(when(c.ts), c.src, `${c.port ?? ", "}/${c.proto}`, c.service || ", ",
             c.blocked ? pill("blocked (banned)", "bad") : pill("reached the Pi", "dim")))));
       }
     });
@@ -6698,13 +6698,13 @@
   }
 
   // ======================================================================
-  //  Zone Editor — structured DNS records
+  //  Zone Editor, structured DNS records
   // ======================================================================
   const REC_TYPES = ["A", "AAAA", "CNAME", "MX", "TXT", "NS", "SRV", "CAA"];
   const REC_HELP = {
     A: "Points a name at an IPv4 address.", AAAA: "Points a name at an IPv6 address.",
     CNAME: "Makes a name an alias of another hostname.", MX: "Where email for the domain is delivered.",
-    TXT: "Free text — SPF, DKIM, DMARC, site verification…", NS: "Delegates a name to nameservers.",
+    TXT: "Free text, SPF, DKIM, DMARC, site verification…", NS: "Delegates a name to nameservers.",
     SRV: "Service location (e.g. _sip._tcp).", CAA: "Which CAs may issue certificates.",
   };
   const TTL_OPTS = [[300, "5 min"], [3600, "1 hour"], [14400, "4 hours"], [86400, "1 day"]];
@@ -6785,8 +6785,8 @@
     body.innerHTML = `
       <label class="cw-lbl">Domain<input id="zc-d" type="text" placeholder="example.com" /></label>
       <div class="cw-lbl">Start from</div>
-      <label class="dm-check"><input type="radio" name="zc-m" value="default" checked /> <span><b>Point at this Pi</b> — NS, A, www, mail, MX and SPF records like a fresh cPanel zone</span></label>
-      <label class="dm-check"><input type="radio" name="zc-m" value="import" /> <span><b>Import current public DNS</b> — copies what the internet sees today (A, AAAA, CNAME, MX, TXT, NS, CAA)</span></label>
+      <label class="dm-check"><input type="radio" name="zc-m" value="default" checked /> <span><b>Point at this Pi</b>, NS, A, www, mail, MX and SPF records like a fresh cPanel zone</span></label>
+      <label class="dm-check"><input type="radio" name="zc-m" value="import" /> <span><b>Import current public DNS</b>, copies what the internet sees today (A, AAAA, CNAME, MX, TXT, NS, CAA)</span></label>
       <label class="cw-lbl" id="zc-ipw">IP address for the records<input id="zc-ip" type="text" placeholder="this Pi's LAN IP" /></label>
       <p class="dm-hint">Use your <b>public IP</b> if the domain should be reachable from the internet, or the LAN IP for a home-only domain.</p>`;
     const dIn = $("#zc-d", body); dIn.value = domain || "";
@@ -6801,8 +6801,8 @@
   }
 
   function zoneBanner(bind) {
-    if (bind) return el("div", { class: "dm-note good" }, [icon("shield", 15), el("span", { text: "BIND9 is running on this Pi — saved zones are served immediately." })]);
-    return el("div", { class: "dm-note" }, [icon("error", 15), el("span", { html: "BIND9 isn't installed, so this Pi isn't answering DNS yet. Zones are still validated and saved — <b>Export</b> them to your registrar's DNS panel, or install BIND9 to serve them yourself." }),
+    if (bind) return el("div", { class: "dm-note good" }, [icon("shield", 15), el("span", { text: "BIND9 is running on this Pi, saved zones are served immediately." })]);
+    return el("div", { class: "dm-note" }, [icon("error", 15), el("span", { html: "BIND9 isn't installed, so this Pi isn't answering DNS yet. Zones are still validated and saved, <b>Export</b> them to your registrar's DNS panel, or install BIND9 to serve them yourself." }),
       el("button", { class: "btn btn-sm", onclick: async (e) => {
         if (!confirmInline("Install BIND9 (apt-get install bind9)?")) return;
         e.target.disabled = true;
@@ -6816,7 +6816,7 @@
     const search = el("input", { type: "search", placeholder: "Filter by domain…", class: "dm-search" });
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
     const bannerBox = el("div");
-    root.append(el("p", { class: "muted dm-intro", text: "DNS turns domain names into IP addresses. Create a zone per domain and manage its records here — every change is checked with named-checkzone before it's saved." }),
+    root.append(el("p", { class: "muted dm-intro", text: "DNS turns domain names into IP addresses. Create a zone per domain and manage its records here, every change is checked with named-checkzone before it's saved." }),
       bannerBox, el("div", { class: "dm-bar" }, [search, el("span", { class: "grow" }), el("button", { class: "btn btn-primary", onclick: () => createZoneModal("", null) }, [icon("zone", 15), " Create a zone"])]), body);
     let data;
     function render() {
@@ -6827,7 +6827,7 @@
         ...data.without_zone.map((d) => ({ domain: d, zone: null })),
       ].filter((x) => !q || x.domain.includes(q)).sort((a, b) => a.domain.localeCompare(b.domain));
       body.append(el("div", { class: "dm-count muted", text: `Displaying ${rows.length} domain${rows.length === 1 ? "" : "s"}` }));
-      if (!rows.length) { body.append(el("div", { class: "cw-empty" }, [icon("zone", 28), el("b", { text: "No zones yet" }), el("span", { class: "muted", text: "Create a zone for a domain you own — or add a site in Domains first." })])); return; }
+      if (!rows.length) { body.append(el("div", { class: "cw-empty" }, [icon("zone", 28), el("b", { text: "No zones yet" }), el("span", { class: "muted", text: "Create a zone for a domain you own, or add a site in Domains first." })])); return; }
       body.append(el("div", { class: "table-wrap" }, el("table", { class: "dm-table" }, [
         el("thead", {}, el("tr", {}, ["Domain", "Zone", "Actions"].map((h) => el("th", { text: h })))),
         el("tbody", {}, rows.map((x) => el("tr", {}, [
@@ -6864,7 +6864,7 @@
     const det = Object.entries(d.detected);
     box.append(el("div", { class: "card", style: "margin-top:16px" }, [
       el("h3", { text: "Secondary DNS (zone transfers)" }),
-      el("p", { class: "muted", style: "margin:0 0 12px", text: "Servers allowed to copy your zones — e.g. your hosting provider's DNS when this server is the master. They're told at once whenever a zone changes. Everyone else is refused, and this server only answers lookups for itself, its local network and VPN clients." }),
+      el("p", { class: "muted", style: "margin:0 0 12px", text: "Servers allowed to copy your zones, e.g. your hosting provider's DNS when this server is the master. They're told at once whenever a zone changes. Everyone else is refused, and this server only answers lookups for itself, its local network and VPN clients." }),
       el("div", { class: "em-toggle" }, [autoSw, el("div", {}, [el("b", { text: "Detect automatically from NS records (recommended)" }),
         el("span", { class: "muted", text: det.length ? det.map(([h, ips]) => `${h} (${ips.join(", ")})`).join(" · ") : "No other nameservers in your zones yet." })])]),
       field("Also allow these IP addresses", extra, "Comma separated. For providers that fetch from an address that isn't one of their nameservers."),
@@ -6906,7 +6906,7 @@
         el("span", { class: "muted", text: "Nameservers in this zone:" }), ...(z.ns_zone.length ? z.ns_zone.map((n) => el("span", { class: "zn-nschip", text: n })) : [el("span", { class: "muted", text: "none" })]),
         el("span", { class: "zn-sep" }),
         el("span", { class: "muted", text: "Live (registrar):" }), ...(z.ns_live.length ? z.ns_live.map((n) => el("span", { class: `zn-nschip ${nsMatch ? "ok" : "live"}`, text: n })) : [el("span", { class: "muted", text: "not resolving" })]),
-        !nsMatch && z.ns_live.length ? el("span", { class: "dm-hint", text: "Live DNS is served elsewhere — copy records there, or point the registrar at your nameservers." }) : null,
+        !nsMatch && z.ns_live.length ? el("span", { class: "dm-hint", text: "Live DNS is served elsewhere, copy records there, or point the registrar at your nameservers." }) : null,
       ]));
 
       const typeChips = el("div", { class: "zn-typef" }, ["All", ...REC_TYPES].map((t) => {
@@ -6916,7 +6916,7 @@
       }));
       const q = el("input", { type: "search", class: "dm-search", placeholder: "Filter by name…", value: filt.q, oninput: (e) => { filt.q = e.target.value; drawTable(); } });
       const addSel = el("select", { class: "zn-addsel", onchange: (e) => { if (e.target.value) { editing = "new:" + e.target.value; drawTable(); } e.target.value = ""; } },
-        [el("option", { value: "", text: "+ Add Record" }), ...REC_TYPES.map((t) => el("option", { value: t, text: `${t} — ${REC_HELP[t].split(" —")[0].replace(/\.$/, "")}` }))]);
+        [el("option", { value: "", text: "+ Add Record" }), ...REC_TYPES.map((t) => el("option", { value: t, text: `${t}, ${REC_HELP[t].split(", ")[0].replace(/\.$/, "")}` }))]);
       root.append(el("div", { class: "dm-bar" }, [q, typeChips, el("span", { class: "grow" }), addSel,
         el("button", { class: "btn btn-sm", onclick: exportZone }, [icon("mime", 13), " Export"]),
         el("button", { class: "btn btn-sm btn-danger", title: "Delete zone", onclick: async () => {
@@ -6925,7 +6925,7 @@
         } }, icon("error", 13))]));
       const tableBox = el("div");
       root.append(tableBox);
-      root.append(el("p", { class: "dm-hint zn-foot", text: `SOA serial ${z.soa.serial} · refresh ${z.soa.refresh}s · default TTL ${z.ttl}s — the serial is bumped automatically on every save.` }));
+      root.append(el("p", { class: "dm-hint zn-foot", text: `SOA serial ${z.soa.serial} · refresh ${z.soa.refresh}s · default TTL ${z.ttl}s, the serial is bumped automatically on every save.` }));
 
       function drawTable() {
         tableBox.innerHTML = "";
@@ -6975,7 +6975,7 @@
     function exportZone() {
       const pre = el("pre", { class: "log", text: z.zone_text });
       const copy = el("button", { class: "btn btn-primary", text: "Copy", onclick: async () => { try { await navigator.clipboard.writeText(z.zone_text); toast("Zone file copied", "good"); } catch (e) { toast("Select the text and copy it manually", "bad"); } } });
-      openModal(`db.${domain}`, el("div", {}, [el("p", { class: "dm-hint", text: "Standard BIND zone file — most registrars and DNS hosts (Cloudflare, Namecheap…) can import it." }), pre]), [copy]);
+      openModal(`db.${domain}`, el("div", {}, [el("p", { class: "dm-hint", text: "Standard BIND zone file, most registrars and DNS hosts (Cloudflare, Namecheap…) can import it." }), pre]), [copy]);
     }
     load();
   }
@@ -6988,7 +6988,7 @@
   // Shared bits of the MariaDB and PostgreSQL pages.
   const dbChk = (label, checked, hint) => {
     const c = el("input", { type: "checkbox" }); c.checked = !!checked;
-    return { input: c, node: el("label", { class: "dm-check" }, [c, el("span", {}, [label, hint ? el("span", { class: "muted", text: ` — ${hint}` }) : null].filter(Boolean))]) };
+    return { input: c, node: el("label", { class: "dm-check" }, [c, el("span", {}, [label, hint ? el("span", { class: "muted", text: `, ${hint}` }) : null].filter(Boolean))]) };
   };
   const dbPwField = () => {
     const inp = el("input", { type: "text", class: "pw-secret", placeholder: "password (6+ characters)", autocomplete: "new-password", spellcheck: "false", style: "min-width:0;flex:1" });
@@ -7007,7 +7007,7 @@
     root.append(body);
     const jp = jobPanel(root);
     state.cleanups.push(jp.stop);
-    // Every action reloads afterwards — also on failure, so a server that went away shows the install/start card.
+    // Every action reloads afterwards, also on failure, so a server that went away shows the install/start card.
     const call = async (fn, okMsg) => {
       try { const r = await fn(); if (okMsg) toast(okMsg, "good"); load(); return r || true; }
       catch (e) { toast(e.message, "bad"); load(); return null; }
@@ -7032,9 +7032,9 @@
       return el("div", { class: "card", style: "margin-bottom:16px" }, [
         el("div", { class: "net-card-h" }, [icon("database", 20), el("h3", { text: "phpMyAdmin" }), el("span", { style: "flex:1" }), status]),
         el("p", { class: "muted", style: "margin:6px 0 10px", text: p.installed
-          ? "Web tool for browsing tables and running SQL. Log in with a user below that has a password — root has none (it only works from the Pi's own terminal). Tick “Admin” on a user for full access to every database."
+          ? "Web tool for browsing tables and running SQL. Log in with a user below that has a password, root has none (it only works from the Pi's own terminal). Tick “Admin” on a user for full access to every database."
           : "Optional web tool for browsing tables and running SQL. Needs Apache; it's added at /phpmyadmin." }),
-        p.installed && !p.apache ? el("p", { class: "dm-hint", text: "Apache isn't running — start it in System Applications to use phpMyAdmin." }) : null,
+        p.installed && !p.apache ? el("p", { class: "dm-hint", text: "Apache isn't running, start it in System Applications to use phpMyAdmin." }) : null,
         el("div", { class: "toolbar", style: "margin:0" }, actions),
       ]);
     }
@@ -7052,15 +7052,15 @@
       const uName = el("input", { type: "text", placeholder: "myapp_user", autocomplete: "off", style: "min-width:0" });
       const uHost = myHostSelect();
       const uPw = dbPwField();
-      const uDb = el("select", {}, [el("option", { value: "", text: "— none —" }),
+      const uDb = el("select", {}, [el("option", { value: "", text: ", none, " }),
         ...d.databases.filter((x) => !x.system && !x.app).map((x) => el("option", { value: x.name, text: x.name }))]);
       const uAdmin = dbChk("Admin", false, "every privilege on every database; use for phpMyAdmin");
       const userCard = el("div", { class: "db-form" }, [
         el("h3", { text: "Create user" }),
         field("Username", uName),
         field("Allow connections from", uHost, MY_HOST_HINT),
-        field("Password", uPw.node, "Save it somewhere — it can be changed later but not shown again."),
-        field("Give full access to", uDb, "Optional — you can grant access to more databases later."),
+        field("Password", uPw.node, "Save it somewhere, it can be changed later but not shown again."),
+        field("Give full access to", uDb, "Optional, you can grant access to more databases later."),
         el("div", { style: "margin:4px 0 12px" }, uAdmin.node),
         btn("Create user", async () => {
           const user = uName.value.trim(); if (!user) return toast("Enter a username", "bad");
@@ -7074,7 +7074,7 @@
     function manageDb(db, d) {
       const users = d.users.filter(manageable);
       const list = el("div", { style: "display:flex;flex-direction:column;gap:6px" }, users.length ? users.map((u) => {
-        const c = dbChk(`${u.user}@${u.host}`, db.access.includes(u.account) || u.admin, u.admin ? "admin — always has access" : "");
+        const c = dbChk(`${u.user}@${u.host}`, db.access.includes(u.account) || u.admin, u.admin ? "admin, always has access" : "");
         if (u.admin) c.input.disabled = true;
         c.input.onchange = async () => {
           c.input.disabled = true;
@@ -7083,7 +7083,7 @@
           c.input.disabled = false; load();
         };
         return c.node;
-      }) : [el("p", { class: "muted", text: "No users yet — create one first." })]);
+      }) : [el("p", { class: "muted", text: "No users yet, create one first." })]);
       openModal(`Database ${db.name}`, el("div", { style: "display:flex;flex-direction:column;gap:14px;min-width:min(520px,80vw)" }, [
         kv([["Size", db.size], ["Tables", String(db.tables)], ["Character set", db.charset]]),
         el("div", {}, [el("h4", { text: "Users with full access", style: "margin:0 0 6px" }), list,
@@ -7195,7 +7195,7 @@
       field("Database name", name, "Letters, digits and underscore."),
       field(spec.userLabel, user, spec.userHint),
       host ? field("Allow connections from", host, MY_HOST_HINT) : null,
-      field("Password", pw.node, "Click Generate for a strong one, and save it — it can't be shown again later."),
+      field("Password", pw.node, "Click Generate for a strong one, and save it, it can't be shown again later."),
       el("div", {}, createBtn),
     ].filter(Boolean));
     const wiz = el("div", { class: "card", hidden: true }, [
@@ -7206,7 +7206,7 @@
       out.innerHTML = "";
       form.hidden = true;
       out.append(
-        el("div", { class: "net-card-h", style: "margin-bottom:10px" }, [pill("created", "good"), el("span", { class: "muted", text: "Save these details now — the password isn't stored anywhere you can see it again." })]),
+        el("div", { class: "net-card-h", style: "margin-bottom:10px" }, [pill("created", "good"), el("span", { class: "muted", text: "Save these details now, the password isn't stored anywhere you can see it again." })]),
         kv([...spec.result(r, vals), ["Password", vals.password]]),
         el("h4", { text: "Connect from an app", style: "margin:14px 0 6px" }),
         el("pre", { class: "log", style: "margin:0 0 14px;white-space:pre-wrap", text: spec.conn(vals) }),
@@ -7227,7 +7227,7 @@
   function viewMySQLWizard(root) {
     dbWizard(root, {
       app: "mariadb", title: "MariaDB Database Wizard", manage: "mysql", host: true,
-      intro: "Creates a new database and a new user in one step, and gives that user full access to the database — what most apps (WordPress, Nextcloud, …) ask for.",
+      intro: "Creates a new database and a new user in one step, and gives that user full access to the database, what most apps (WordPress, Nextcloud, …) ask for.",
       userLabel: "Username", userHint: "The account your app logs in with.",
       fetch: () => API.mysql(),
       create: (v) => API.mysqlWizard({ db: v.db, user: v.user, host: v.host, password: v.password }),
@@ -7288,7 +7288,7 @@
     state.cleanups.push(jp.stop);
     const chk = (label, checked, hint) => {
       const c = el("input", { type: "checkbox" }); c.checked = !!checked;
-      return { input: c, node: el("label", { class: "dm-check" }, [c, el("span", {}, [label, hint ? el("span", { class: "muted", text: ` — ${hint}` }) : null].filter(Boolean))]) };
+      return { input: c, node: el("label", { class: "dm-check" }, [c, el("span", {}, [label, hint ? el("span", { class: "muted", text: `, ${hint}` }) : null].filter(Boolean))]) };
     };
     const pwField = (id) => {
       const inp = el("input", { id, type: "text", class: "pw-secret", placeholder: "password (6+ characters)", autocomplete: "new-password", style: "min-width:0;flex:1" });
@@ -7334,9 +7334,9 @@
       return el("div", { class: "card", style: "margin-bottom:16px" }, [
         el("div", { class: "net-card-h" }, [icon("database", 20), el("h3", { text: "phpPgAdmin" }), el("span", { style: "flex:1" }), status]),
         el("p", { class: "muted", style: "margin:6px 0 10px", text: p.installed
-          ? "Web tool for browsing tables and running SQL. Log in with a user below that has a password — the built-in postgres account has none and is blocked. Tick “Superuser” on a user for full admin rights."
+          ? "Web tool for browsing tables and running SQL. Log in with a user below that has a password, the built-in postgres account has none and is blocked. Tick “Superuser” on a user for full admin rights."
           : "Optional web tool for browsing tables and running SQL. It's opened to your local network and VPN automatically (never the internet)." }),
-        p.installed && !p.apache ? el("p", { class: "dm-hint", text: "Apache isn't running — start it in System Applications to use phpPgAdmin." }) : null,
+        p.installed && !p.apache ? el("p", { class: "dm-hint", text: "Apache isn't running, start it in System Applications to use phpPgAdmin." }) : null,
         el("div", { class: "toolbar", style: "margin:0" }, actions),
       ]);
     }
@@ -7358,13 +7358,13 @@
       const uName = el("input", { type: "text", placeholder: "myapp_user", autocomplete: "off", style: "min-width:0" });
       const uPw = pwField("pg-new-pw");
       const cdb = chk("Can create databases"), csu = chk("Superuser", false, "full admin; use for phpPgAdmin");
-      const uDb = el("select", {}, [el("option", { value: "", text: "— none —" }),
+      const uDb = el("select", {}, [el("option", { value: "", text: ", none, " }),
         ...d.databases.filter((x) => !x.system).map((x) => el("option", { value: x.name, text: x.name }))]);
       const userCard = el("div", { class: "db-form" }, [
         el("h3", { text: "Create user" }),
         field("Username", uName),
-        field("Password", uPw.node, "Save it somewhere — it can be changed later but not shown again."),
-        field("Give full access to", uDb, "Optional — you can grant access to more databases later."),
+        field("Password", uPw.node, "Save it somewhere, it can be changed later but not shown again."),
+        field("Give full access to", uDb, "Optional, you can grant access to more databases later."),
         el("div", { style: "display:flex;flex-direction:column;gap:6px;margin:4px 0 12px" }, [cdb.node, csu.node]),
         btn("Create user", async () => {
           const name = uName.value.trim(); if (!name) return toast("Enter a username", "bad");
@@ -7385,7 +7385,7 @@
         ...users.map((r) => el("option", { value: r.name, text: r.name }))]);
       owner.value = db.owner;
       const list = el("div", { style: "display:flex;flex-direction:column;gap:6px" }, users.length ? users.filter((r) => r.name !== db.owner).map((r) => {
-        const c = chk(r.name, db.access.includes(r.name) || r.superuser, r.superuser ? "superuser — always has access" : "");
+        const c = chk(r.name, db.access.includes(r.name) || r.superuser, r.superuser ? "superuser, always has access" : "");
         if (r.superuser) c.input.disabled = true;
         c.input.onchange = async () => {
           c.input.disabled = true;
@@ -7394,7 +7394,7 @@
           c.input.disabled = false; load();
         };
         return c.node;
-      }) : [el("p", { class: "muted", text: "No users yet — create one first." })]);
+      }) : [el("p", { class: "muted", text: "No users yet, create one first." })]);
       const host = location.hostname;
       openModal(`Database ${db.name}`, el("div", { style: "display:flex;flex-direction:column;gap:14px;min-width:min(520px,80vw)" }, [
         kv([["Size", db.size], ["Encoding", db.encoding], ["Open connections", String(db.connections)]]),
@@ -7453,11 +7453,11 @@
         el("td", {}, [el("b", { text: r.name }), r.system ? el("span", { class: "pill dim", style: "margin-left:6px", text: "built-in" }) : null].filter(Boolean)),
         el("td", {}, flags(r).length ? flags(r) : el("span", { class: "muted", text: "regular user" })),
         el("td", {}, r.has_password ? pill("set", "good") : el("span", { class: "muted", text: r.system ? "none (local only)" : "none" })),
-        el("td", { class: "muted", text: r.owns.join(", ") || "—" }),
+        el("td", { class: "muted", text: r.owns.join(", ") || ", " }),
         el("td", { class: "actions" }, r.system ? "" : [
           btn("Password", () => setPassword(r)), btn("Edit", () => editRole(r)),
           el("button", { class: "btn btn-sm btn-danger", text: "Delete", onclick: () => {
-            if (!confirmInline(`Delete user "${r.name}"?${r.owns.length ? `\n\nIt owns ${r.owns.join(", ")} — ownership goes to postgres; the data is kept.` : ""}`)) return;
+            if (!confirmInline(`Delete user "${r.name}"?${r.owns.length ? `\n\nIt owns ${r.owns.join(", ")}, ownership goes to postgres; the data is kept.` : ""}`)) return;
             call(() => API.pgRoleDrop(r.name), `Deleted ${r.name}`); } })]),
       ]));
       body.append(el("div", { class: "card" }, [el("h3", { text: "Users" }),
@@ -7481,7 +7481,7 @@
   function viewPgWizard(root) {
     dbWizard(root, {
       app: "postgresql", title: "PostgreSQL Database Wizard", manage: "pgsql", host: false,
-      intro: "Creates a new database and a new user in one step, and makes that user the database's owner — what most apps (Django, Rails, Nextcloud, …) ask for.",
+      intro: "Creates a new database and a new user in one step, and makes that user the database's owner, what most apps (Django, Rails, Nextcloud, …) ask for.",
       userLabel: "Username", userHint: "The account your app logs in with (PostgreSQL calls it a role).",
       fetch: () => API.pg(),
       create: (v) => API.pgWizard({ db: v.db, role: v.user, password: v.password }),
@@ -7552,7 +7552,7 @@
     state.refreshHandler = load; load();
   }
   async function appCtl(name, action, done) { try { await API.appControl(name, action); toast(`${action} → ${name}`, "good"); done && setTimeout(done, 500); } catch (e) { toast(e.message, "bad"); } }
-  async function showAppLogs(name) { try { const r = await API.appLogs(name); openModal(`Logs — ${name}`, el("pre", { class: "log", text: r.output }), []); } catch (e) { toast(e.message, "bad"); } }
+  async function showAppLogs(name) { try { const r = await API.appLogs(name); openModal(`Logs, ${name}`, el("pre", { class: "log", text: r.output }), []); } catch (e) { toast(e.message, "bad"); } }
 
   // ======================================================================
   //  Software: System Applications (one-click web servers / PHP-FPM / DB / FTP)
@@ -7561,7 +7561,7 @@
     const appArg = (state.viewArg || "").split(":")[0];
     if (appArg) return viewAppConfig(root, appArg);
     const intro = el("p", { class: "muted", style: "margin:0 0 14px",
-      text: "Install and manage server software with one click. Only one web server can use port 80 at a time — switching stops the running one. Uninstall keeps config files and website content." });
+      text: "Install and manage server software with one click. Only one web server can use port 80 at a time, switching stops the running one. Uninstall keeps config files and website content." });
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
     const jp = jobPanel(root);
     root.prepend(intro, body);
@@ -7616,7 +7616,7 @@
       const configure = server && a.installed ? el("button", { class: "btn btn-sm btn-primary", text: "Configure", onclick: () => navigate(a.view) }) : null;
       const btns = a.job ? [el("button", { class: "btn btn-sm", text: "Show progress", onclick: () => watch(a.job, `Installing ${a.name}…`) })]
         : !a.installed
-        ? [el("button", { class: "btn btn-sm btn-primary", text: a.broken ? "Repair" : "Install", title: a.broken ? "The last install stopped part-way — finish it" : (a.needs || []).length ? `Also installs: ${a.needs.join(", ")}` : "", onclick: () => doInstall(a) })]
+        ? [el("button", { class: "btn btn-sm btn-primary", text: a.broken ? "Repair" : "Install", title: a.broken ? "The last install stopped part-way, finish it" : (a.needs || []).length ? `Also installs: ${a.needs.join(", ")}` : "", onclick: () => doInstall(a) })]
         : server ? [configure,
             a.ext ? el("a", { class: "btn btn-sm btn-ghost", href: `https://${location.hostname}${a.ext}`, target: "_blank", rel: "noopener", text: "Open ↗" }) : null,
             noUnits ? null : a.active ? el("button", { class: "btn btn-sm", text: "Restart", onclick: () => doCtl(a, "restart") })
@@ -7670,9 +7670,9 @@
   // ======================================================================
   const APP_NAMES = { apache: "Apache", nginx: "Nginx", lighttpd: "Lighttpd", caddy: "Caddy", phpfpm: "PHP-FPM", mariadb: "MariaDB", postgresql: "PostgreSQL", vsftpd: "vsftpd (FTP)" };
   function viewAppConfig(root, id) {
-    $("#view-title").textContent = `${APP_NAMES[id] || id} — configuration`;
+    $("#view-title").textContent = `${APP_NAMES[id] || id}, configuration`;
     document.title = `${APP_NAMES[id] || id} · AuroraPanel`;
-    const head = el("div", { class: "toolbar" }, [btn("← All applications", () => navigate("sysapps")), el("span", { class: "muted", text: "Changes are checked before they're applied — if the app rejects them, the previous config is restored automatically." })]);
+    const head = el("div", { class: "toolbar" }, [btn("← All applications", () => navigate("sysapps")), el("span", { class: "muted", text: "Changes are checked before they're applied, if the app rejects them, the previous config is restored automatically." })]);
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
     root.append(head, body);
     (async () => {
@@ -7706,7 +7706,7 @@
               if (!Object.keys(ch).length) { toast("Nothing changed", "good"); return; }
               save.disabled = true;
               try { await API.appSettingsSave(id, ch); toast(`${APP_NAMES[id]} updated`, "good"); pane.innerHTML = ""; appSettingsTab(pane); }
-              catch (e) { toast("Not applied — see details", "bad"); openModal("Settings not applied", el("pre", { class: "log", text: e.message }), []); save.disabled = false; }
+              catch (e) { toast("Not applied, see details", "bad"); openModal("Settings not applied", el("pre", { class: "log", text: e.message }), []); save.disabled = false; }
             }, "btn-primary");
             pane.append(form.node, el("div", { class: "sf-actions" }, [save]));
           } catch (e) { pane.innerHTML = ""; pane.append(el("p", { class: "empty", text: e.message })); }
@@ -7725,7 +7725,7 @@
           list.innerHTML = "";
           list.append(simpleTable(["Module", "What it does", "Enabled"], rows.map((m) => {
             const c = el("input", { type: "checkbox", class: "sf-switch" }); c.checked = m.enabled; c.disabled = m.protected && m.enabled;
-            c.title = m.protected ? "Required — can't be turned off here" : "";
+            c.title = m.protected ? "Required, can't be turned off here" : "";
             c.onchange = async () => {
               c.disabled = true;
               try { await API.appModule(id, m.name, c.checked); m.enabled = c.checked; toast(`${m.name} ${c.checked ? "enabled" : "disabled"}`, "good"); }
@@ -7749,7 +7749,7 @@
           if (ta.value === orig) { toast("Nothing changed", "good"); return; }
           save.disabled = true;
           try { await API.appFileSave(id, sel.value, ta.value); orig = ta.value; toast("Saved, checked and applied", "good"); }
-          catch (e) { openModal("Not saved — the file was left as it was", el("pre", { class: "log", text: e.message }), []); }
+          catch (e) { openModal("Not saved, the file was left as it was", el("pre", { class: "log", text: e.message }), []); }
           save.disabled = false;
         }, "btn-primary");
         pane.append(el("div", { class: "card net-warn" }, [el("p", { text: "Advanced: edit the raw configuration. It's validated before saving; if the application refuses it, the old file is put back." })]),
@@ -7788,8 +7788,8 @@
       const lan = (await API.vpnOverview().catch(() => ({ settings: {} }))).settings || {};
       box.append(el("div", { class: "card" }, [
         el("div", { class: "net-card-h" }, [icon("folder", 20), el("h3", { text: "FTP server" }), el("span", { style: "flex:1" }), pill(s.active ? "running" : "stopped", s.active ? "good" : "bad")]),
-        kv([["Host (LAN)", location.hostname], ["Host (internet)", lan.effective_endpoint || "—"], ["Port", s.port],
-            ["Encryption", s.ssl ? "FTPS available (explicit TLS)" : "Off — plain FTP sends passwords unencrypted"],
+        kv([["Host (LAN)", location.hostname], ["Host (internet)", lan.effective_endpoint || ", "], ["Port", s.port],
+            ["Encryption", s.ssl ? "FTPS available (explicit TLS)" : "Off, plain FTP sends passwords unencrypted"],
             ["Passive ports", s.passive[0] ? `${s.passive[0]}–${s.passive[1]}` : "any (set a range for access from the internet)"],
             ["Who can log in", s.only_listed ? "Only the FTP accounts below" : "Any Linux user on this Pi"]]),
         el("div", { class: "toolbar", style: "margin:12px 0 0" }, [
@@ -7841,7 +7841,7 @@
       const pwBox = el("input", { type: "text", readonly: "readonly", class: "net-mono net-pw-out", value: c.password });
       openModal(`FTP account ${c.name} created`, el("div", {}, [
         kv([["Host", c.host], ["Port", c.server.port], ["Username", c.name], ["Folder", c.folder], ["Encryption", c.server.ssl ? "FTPS (explicit TLS) available" : "none"]]),
-        el("div", { class: "net-cred" }, [el("span", { class: "net-k", text: "Password" }), pwBox, btn("Copy", async () => toast(await copyText(c.password) ? "Password copied" : "Copy failed — select it manually", "good"))]),
+        el("div", { class: "net-cred" }, [el("span", { class: "net-k", text: "Password" }), pwBox, btn("Copy", async () => toast(await copyText(c.password) ? "Password copied" : "Copy failed, select it manually", "good"))]),
         el("p", { class: "dm-hint", text: "The password isn't shown again. In FileZilla: File → Site Manager → Host, port, Logon type Normal." }),
       ]), []);
     }
@@ -7853,7 +7853,7 @@
         try { await API.ftpPassword(nm, password); closeModal(); openModal(`New password for ${nm}`, el("div", {}, [el("div", { class: "net-cred" }, [el("span", { class: "net-k", text: "Password" }), el("input", { type: "text", readonly: "readonly", class: "net-mono net-pw-out", value: password }), btn("Copy", async () => toast(await copyText(password) ? "Copied" : "Copy failed", "good"))])]), []); }
         catch (e) { toast(e.message, "bad"); save.disabled = false; }
       }, "btn-primary");
-      openModal(`Change password — ${nm}`, field("New password (8+ characters)", pw.node, "Leave empty to generate one."), [save]);
+      openModal(`Change password, ${nm}`, field("New password (8+ characters)", pw.node, "Leave empty to generate one."), [save]);
       setTimeout(() => pw.input.focus(), 30);
     }
     function ftpEditDialog(a) {
@@ -7926,7 +7926,7 @@
         } else if (f.type === "int" || f.type === "port") {
           inp = el("input", { type: "number", value: v == null ? "" : v, min: f.min ?? (f.type === "port" ? 1 : null), max: f.max ?? (f.type === "port" ? 65535 : null) });
         } else if (f.type === "password") {
-          inp = el("input", { type: "password", value: "", placeholder: v ? "(set — leave empty to keep)" : "", autocomplete: "new-password" });
+          inp = el("input", { type: "password", value: "", placeholder: v ? "(set, leave empty to keep)" : "", autocomplete: "new-password" });
         } else if (f.type === "textarea") {
           inp = el("textarea", { rows: 4, class: "cw-mono" }); inp.value = v == null ? "" : String(v);
         } else {
@@ -7975,7 +7975,7 @@
       if (!ov.supported || !ov.versions.length) { body.append(el("p", { class: "empty", text: "No PHP installed. Install Apache + PHP from System Applications or Packages." })); return; }
       const webVers = ov.versions.filter((v) => v.sapis.some((s) => s !== "cli"));
       ver = ver || ov.apache || (webVers[0] || ov.versions[ov.versions.length - 1]).version;
-      const verSel = el("select", { onchange: () => { ver = verSel.value; load(); } }, ov.versions.map((v) => el("option", { value: v.version, text: `PHP ${v.version}${v.version === ov.apache ? " — used by Apache" : v.sapis.includes("fpm") ? " — PHP-FPM" : v.sapis.length === 1 && v.sapis[0] === "cli" ? " — command line only" : ""}` })));
+      const verSel = el("select", { onchange: () => { ver = verSel.value; load(); } }, ov.versions.map((v) => el("option", { value: v.version, text: `PHP ${v.version}${v.version === ov.apache ? ", used by Apache" : v.sapis.includes("fpm") ? ", PHP-FPM" : v.sapis.length === 1 && v.sapis[0] === "cli" ? ", command line only" : ""}` })));
       verSel.value = ver;
       body.append(el("div", { class: "toolbar php-head" }, [el("span", { class: "muted", text: "Version:" }), verSel]));
       const host = el("div");
@@ -7997,7 +7997,7 @@
         return el("label", { class: "dm-check" }, [c, el("span", { text: labels[s] || s })]);
       })]);
       const formHost = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
-      pane.append(el("p", { class: "muted", text: `Showing the values PHP ${ver} uses for ${labels[primary] || primary}. Changes are saved as overrides — php.ini itself is never edited, and "reset" returns a value to the php.ini default.` }), targetBox, formHost);
+      pane.append(el("p", { class: "muted", text: `Showing the values PHP ${ver} uses for ${labels[primary] || primary}. Changes are saved as overrides, php.ini itself is never edited, and "reset" returns a value to the php.ini default.` }), targetBox, formHost);
       (async () => {
         try {
           const d = await API.phpSettings(ver, primary);
@@ -8007,7 +8007,7 @@
             const changes = form.changes(), resets = form.resets();
             if (!Object.keys(changes).length && !resets.length) { toast("Nothing changed", "good"); return; }
             save.disabled = true;
-            try { const r = await API.phpSettingsSave(ver, sapis, changes, resets); toast(`Saved${r.reloaded.length ? " — reloaded " + r.reloaded.join(", ") : ""}`, "good"); phpSettingsTabReload(); }
+            try { const r = await API.phpSettingsSave(ver, sapis, changes, resets); toast(`Saved${r.reloaded.length ? ", reloaded " + r.reloaded.join(", ") : ""}`, "good"); phpSettingsTabReload(); }
             catch (e) { toast(e.message, "bad"); }
             save.disabled = false;
           }, "btn-primary");
@@ -8154,7 +8154,7 @@
         el("div", { class: "toolbar", style: "margin:16px 0 0" }, [check, viewChanges,
           el("a", { class: "btn btn-sm btn-ghost", href: GITHUB_URL, target: "_blank", rel: "noopener noreferrer", text: "GitHub repository ↗" }),
           el("a", { class: "btn btn-sm btn-ghost", href: FORUM_URL, target: "_blank", rel: "noopener noreferrer", text: "Feedback on the Raspberry Pi Forums ↗" })]),
-        el("div", { class: "about-privacy" }, [icon("lock", 14), el("span", { text: "The panel never contacts the internet on its own — it only asks aurora51.com for the latest version or the change log when you click one of these buttons." })]),
+        el("div", { class: "about-privacy" }, [icon("lock", 14), el("span", { text: "The panel never contacts the internet on its own, it only asks aurora51.com for the latest version or the change log when you click one of these buttons." })]),
       ]), changes, result);
 
       function showChanges(c) {
@@ -8208,13 +8208,13 @@
             pre.scrollTop = pre.scrollHeight;
             if (s.version === r.latest) {
               clearInterval(t); title.textContent = `Updated to ${r.latest_label}`;
-              pct = 100; label = `Updated to ${r.latest_label} — reloading`; prog.classList.add("ok"); draw("ok");
-              toast(`Updated to ${r.latest_label} — reloading`, "good");
+              pct = 100; label = `Updated to ${r.latest_label}, reloading`; prog.classList.add("ok"); draw("ok");
+              toast(`Updated to ${r.latest_label}, reloading`, "good");
               setTimeout(() => location.reload(), 1500);
               return;
             } else if (!s.running && s.log.some((l) => l.startsWith("✖"))) {
-              clearInterval(t); title.textContent = "Update failed — the previous version was kept";
-              prog.classList.add("bad"); label = "Update failed — the previous version was kept"; draw("bad");
+              clearInterval(t); title.textContent = "Update failed, the previous version was kept";
+              prog.classList.add("bad"); label = "Update failed, the previous version was kept"; draw("bad");
               pre.hidden = false; logBtn.textContent = "Hide log";
               return;
             }
@@ -8251,10 +8251,10 @@
             el("span", { class: "muted", text: "Downloads from aurora51.com, checks the file's checksum, and installs it." })]) : null,
           progress,
           el("h4", { text: r.auto_update ? "Or update manually" : "How to update" }),
-          el("p", { class: "muted", text: "Run this in the Terminal (Advanced → Terminal) or over SSH. It downloads the new version over this install and re-runs the installer — your admin account, settings, VPNs and sites are kept." }),
+          el("p", { class: "muted", text: "Run this in the Terminal (Advanced → Terminal) or over SSH. It downloads the new version over this install and re-runs the installer, your admin account, settings, VPNs and sites are kept." }),
           cmd,
           el("div", { class: "toolbar", style: "margin:10px 0 0" }, [
-            btn("Copy command", async () => toast(await copyText(cmd.textContent) ? "Command copied" : "Copy failed — select it manually", "good"), "btn-primary"),
+            btn("Copy command", async () => toast(await copyText(cmd.textContent) ? "Command copied" : "Copy failed, select it manually", "good"), "btn-primary"),
             btn("Open Terminal", () => navigate("terminal"), "btn-ghost"),
             el("a", { class: "btn btn-sm btn-ghost", href: r.download, text: "Download zip" })]),
         ]));
@@ -8265,7 +8265,7 @@
   function viewLanguage(root) {
     root.append(el("div", { class: "card" }, [
       el("h3", { text: "Change language" }),
-      el("p", { class: "muted", style: "margin:0 0 12px", text: "Interface language. Only English is bundled right now — more can be added." }),
+      el("p", { class: "muted", style: "margin:0 0 12px", text: "Interface language. Only English is bundled right now, more can be added." }),
       el("select", { id: "lang-sel", style: "max-width:220px", onchange: async () => { try { await API.prefsSet({ language: $("#lang-sel").value }); toast("Saved", "good"); } catch (e) {} } },
         [["en", "English"]].map(([v, t]) => el("option", { value: v, text: t }))),
     ]));
@@ -8277,7 +8277,7 @@
   function openModal(title, bodyNode, footButtons) {
     closeModal();
     // A click beside the window closes it only when there's nothing to lose (no fields to fill).
-    // A form stays open and gives a small bump instead — ✕, Close or Esc close it. A press that
+    // A form stays open and gives a small bump instead, ✕, Close or Esc close it. A press that
     // started inside (selecting text in a field, released outside) never counts as an outside click.
     let downInside = false;
     const backdrop = el("div", { class: "modal-backdrop", id: "modal",
@@ -8323,7 +8323,7 @@
   const KIND_LABEL = {
     cli: ["1-click setup", "good", "Fully set up here, admin account included."],
     web: ["Setup page", "warn", "Unpacked and given a database here; you finish in its own setup page."],
-    static: ["Ready to use", "good", "Nothing to set up — it works right away."],
+    static: ["Ready to use", "good", "Nothing to set up, it works right away."],
     composer: ["Composer", "dim", "Created with Composer, PHP's package manager."],
     unavailable: ["Not available", "bad", ""],
   };
@@ -8350,7 +8350,7 @@
     root.append(hero, body);
     hero.append(el("div", { class: "ax-hero-txt" }, [
       el("h2", {}, ["App Installer ", el("span", { class: "ax-spark", text: "✦" })]),
-      el("p", { text: "Pick an app, choose where it lives, and AuroraPanel downloads the latest release, makes its database and sets it up — blogs, shops, forums, wikis, clouds and frameworks." }),
+      el("p", { text: "Pick an app, choose where it lives, and AuroraPanel downloads the latest release, makes its database and sets it up, blogs, shops, forums, wikis, clouds and frameworks." }),
       el("div", { class: "wp-checks", id: "ax-checks" }, el("span", { class: "loading", style: "padding:0", text: "Checking PHP & MariaDB…" })),
     ]));
     const search = el("input", { type: "search", class: "ax-search", placeholder: "Search apps…  (WordPress, forum, wiki, cloud…)", oninput: (e) => { q = e.target.value.trim().toLowerCase(); draw(); } });
@@ -8399,7 +8399,7 @@
       const mine = appMine(st, a.id).length;
       return el("div", { class: `ax-card${a.kind === "unavailable" ? " off" : ""}`, style: `--c:${a.color || "#ff7a1a"}` }, [
         el("div", { class: "ax-card-top" }, [el("div", { class: "ax-tile-wrap" }, [appTile(a),
-            mine ? el("button", { type: "button", class: "ax-count", title: `${mine} installed — show them`, "aria-label": `${mine} installed`, text: String(mine), onclick: () => navigate("app", { arg: a.id }) }) : null]),
+            mine ? el("button", { type: "button", class: "ax-count", title: `${mine} installed, show them`, "aria-label": `${mine} installed`, text: String(mine), onclick: () => navigate("app", { arg: a.id }) }) : null]),
           el("div", { class: "ax-card-name" }, [el("b", { text: a.name }), el("span", { class: `pill ${kc}`, title: kd || a.why || "", text: kl })])]),
         el("p", { text: a.tagline }),
         el("div", { class: "ax-card-btns" }, [
@@ -8429,7 +8429,7 @@
   function myApps(C, st) {
     const box = el("div");
     if (!st || !st.installed.length) {
-      box.append(el("div", { class: "cw-empty" }, [icon("apps", 28), el("b", { text: "No apps installed yet" }), el("span", { class: "muted", text: "Pick one from the catalog — it takes a minute." })]));
+      box.append(el("div", { class: "cw-empty" }, [icon("apps", 28), el("b", { text: "No apps installed yet" }), el("span", { class: "muted", text: "Pick one from the catalog, it takes a minute." })]));
       return box;
     }
     box.append(el("h3", { class: "ax-h", text: "My apps" }), installedList(st.installed, C, () => { APPX.stAt = 0; state.refreshHandler && state.refreshHandler(); }));
@@ -8511,7 +8511,7 @@
     const ex = $("#ax-wiz"); if (ex) ex.remove();
     const w = { mode: "local", name: a.id.replace(/[^a-z0-9]/g, ""), www: true, ssl: false, setup: true, subfolder: a.id.replace(/[^a-z0-9]/g, ""), host: location.hostname };
     let st = APPX.st, step = 0, job = null, timer = null, closed = false;
-    // Clicking outside doesn't close it (too easy to lose what was typed) — the box just nudges.
+    // Clicking outside doesn't close it (too easy to lose what was typed), the box just nudges.
     const overlay = el("div", { class: "ax-wiz-back", id: "ax-wiz", onclick: (e) => {
       if (e.target !== overlay) return;
       sheet.classList.remove("nudge"); void sheet.offsetWidth; sheet.classList.add("nudge");
@@ -8527,7 +8527,7 @@
     const onKey = (e) => { if (e.key === "Escape") close(); };
     document.addEventListener("keydown", onKey);
     function close() {
-      if (job && job.status === "running") toast(`${a.name} keeps installing in the background — you'll get a message when it's done`, "good");
+      if (job && job.status === "running") toast(`${a.name} keeps installing in the background, you'll get a message when it's done`, "good");
       closed = true; overlay.remove(); document.removeEventListener("keydown", onKey);
       if (!(job && job.status === "running")) clearInterval(timer);
     }
@@ -8572,30 +8572,30 @@
         const base = (st && st.folder_base) || "/var/www/html";
         const path = el("input", { type: "text", class: "cw-mono", value: w.pathTouched ? w.path : `${base}/${w.name || ""}`, oninput: (e) => { w.path = e.target.value.trim(); w.pathTouched = !!w.path; check(); } });
         const name = inp("name", "blog", { oninput: (e) => { w.name = e.target.value.trim().toLowerCase(); if (!w.pathTouched) path.value = `${base}/${w.name}`; check(); } });
-        box.append(lab("Site name", el("div", { class: "dm-prefix" }, [el("span", { text: `${location.hostname}/` }), name]), "No domain needed — it answers on this Pi's address."),
+        box.append(lab("Site name", el("div", { class: "dm-prefix" }, [el("span", { text: `${location.hostname}/` }), name]), "No domain needed, it answers on this Pi's address."),
           lab("Folder", path, "Created for you. Change it only if you want the files elsewhere."));
       }
       if (w.mode === "ip") box.append(lab("IP address", inp("ip", "192.168.0.50"), `Another address of this Pi. This Pi's own address (${location.hostname}) becomes ${location.hostname}/${w.name || a.id} instead.`));
-      if (w.mode === "new_domain") box.append(lab("Domain", inp("domain", "myblog.com  or  blog.test")), chk("www", "Also answer on <b>www.</b>"), chk("ssl", "Turn on HTTPS now <span class='muted'>(self-signed — switch to Let's Encrypt in Domains)</span>"));
+      if (w.mode === "new_domain") box.append(lab("Domain", inp("domain", "myblog.com  or  blog.test")), chk("www", "Also answer on <b>www.</b>"), chk("ssl", "Turn on HTTPS now <span class='muted'>(self-signed, switch to Let's Encrypt in Domains)</span>"));
       if (w.mode === "subdomain") {
         const sites2 = userSites().filter((s) => !isIp(s.server_name));
         const sel = el("select", { onchange: (e) => { w.parent = e.target.value; check(); } }, sites2.map((s) => el("option", { value: s.server_name.replace(/^www\./, ""), text: s.server_name.replace(/^www\./, "") })));
         if (!w.parent && sites2.length) w.parent = sel.value; else if (w.parent) sel.value = w.parent;
-        box.append(el("div", { class: "wp-row" }, [lab("Subdomain", inp("subdomain", "blog")), el("span", { class: "wp-dot", text: "." }), lab("Of domain", sites2.length ? sel : el("span", { class: "muted", text: "No domains yet — add one in Domains" }))]),
+        box.append(el("div", { class: "wp-row" }, [lab("Subdomain", inp("subdomain", "blog")), el("span", { class: "wp-dot", text: "." }), lab("Of domain", sites2.length ? sel : el("span", { class: "muted", text: "No domains yet, add one in Domains" }))]),
           chk("ssl", "Turn on HTTPS now (self-signed)"), el("p", { class: "dm-hint", text: "Add the subdomain in DNS (Zone Editor → A record) or your computer's hosts file." }));
       }
       if (w.mode === "existing") {
         const opts2 = [];
-        (st ? st.sites.filter((s) => s.system && s.has_http && s.enabled) : []).forEach((s) => opts2.push([s.conf, `${location.hostname} — this Pi's address (${s.docroot})`]));
-        (st ? st.folder_sites : []).forEach((f) => opts2.push([`folder:${f.name}`, `${location.hostname}/${f.name} — folder site (${f.path})`]));
-        userSites().forEach((s) => opts2.push([s.server_name, `${s.server_name} — ${s.docroot}`]));
+        (st ? st.sites.filter((s) => s.system && s.has_http && s.enabled) : []).forEach((s) => opts2.push([s.conf, `${location.hostname}, this Pi's address (${s.docroot})`]));
+        (st ? st.folder_sites : []).forEach((f) => opts2.push([`folder:${f.name}`, `${location.hostname}/${f.name}, folder site (${f.path})`]));
+        userSites().forEach((s) => opts2.push([s.server_name, `${s.server_name}, ${s.docroot}`]));
         const sel = el("select", { onchange: (e) => { w.site = e.target.value; check(); } }, opts2.map(([v, t]) => el("option", { value: v, text: t })));
         if (!w.site && opts2.length) w.site = sel.value; else if (w.site) sel.value = w.site;
         box.append(lab("Site", opts2.length ? sel : el("span", { class: "muted", text: "No sites yet" })),
           lab("Sub-folder", inp("subfolder", `${a.id}  →  example.com/${a.id}`), "Leave empty to install at the site's root."), chk("overwrite", "Install even if the folder already has files"));
       }
       if (w.mode === "folder") box.append(lab("Folder", inp("path", "/var/www/html/blog", { class: "cw-mono" })),
-        lab("Its address (optional)", inp("url", `${location.hostname}/blog`), "Leave empty: AuroraPanel finds it — or, if nothing serves that folder yet, makes it a local site at /<folder name>."),
+        lab("Its address (optional)", inp("url", `${location.hostname}/blog`), "Leave empty: AuroraPanel finds it, or, if nothing serves that folder yet, makes it a local site at /<folder name>."),
         chk("overwrite", "Install even if the folder already has files"));
       content.append(el("h4", { class: "ax-q", text: "Where should it live?" }), seg, box, preview);
       check();
@@ -8611,7 +8611,7 @@
         el("div", { class: "dm-row2 wp-two" }, [a.fixed_user ? lab("Admin username", el("input", { type: "text", value: a.fixed_user, disabled: "" }), `${a.name} always names the first account “${a.fixed_user}”.`)
           : lab("Admin username", inp("admin_user", "not “admin”", { autocomplete: "off" })), lab("Admin email", inp("admin_email", "you@example.com", { type: "email" }))]),
         el("label", { class: "cw-lbl" }, ["Admin password", el("div", { class: "wp-pw" }, [pw, eye, gen]), pwMeter,
-          el("span", { class: "dm-hint", text: a.strong_pw ? "Mix upper- and lower-case letters and a number. Save it in your password manager — AuroraPanel doesn't keep a copy." : "Save it in your password manager — AuroraPanel doesn't keep a copy." })]),
+          el("span", { class: "dm-hint", text: a.strong_pw ? "Mix upper- and lower-case letters and a number. Save it in your password manager, AuroraPanel doesn't keep a copy." : "Save it in your password manager, AuroraPanel doesn't keep a copy." })]),
         a.id === "wordpress" ? chk("hide_search", "Ask search engines not to index this site (good for test sites)") : null,
       ]);
       content.append(el("h4", { class: "ax-q", text: a.kind === "cli" && a.admin !== false ? "Your site and admin account" : "Your site" }));
@@ -8675,7 +8675,7 @@
             if (j.status === "done") {
               bar.parentNode.classList.add("ok"); bar.firstChild.style.width = "100%";
               stage.innerHTML = ""; stage.append(el("span", { class: "bk-badge good", text: "✓" }), el("b", { text: `${a.name} is installed` }), el("span", { class: "muted", text: ` · took ${Math.round(secs)}s` }));
-              if (closed) toast(`${a.name} is installed — ${j.result.url}/`, "good");
+              if (closed) toast(`${a.name} is installed, ${j.result.url}/`, "good");
               step = 3; drawSteps();  // every step ticked
               showDone(j.result); onDone && onDone();
               goBtn.replaceWith(el("button", { class: "btn btn-primary", text: "Done", onclick: close }));
@@ -8685,7 +8685,7 @@
               stage.innerHTML = ""; stage.append(el("span", { class: "bk-badge bad", text: "!" }), el("b", { text: "Install failed" }));
               result.innerHTML = ""; result.append(el("div", { class: "ax-fail" }, [el("b", { text: last.replace(/^✖\s*/, "") }), el("span", { class: "muted", text: "Nothing was left half-installed. Fix the problem and try again." })]));
               log.hidden = false; logBtn.textContent = "Hide log";
-              if (closed) toast(`${a.name} install failed — open the app page to retry`, "bad");
+              if (closed) toast(`${a.name} install failed, open the app page to retry`, "bad");
               goBtn.disabled = false; goBtn.textContent = "Try again";
               if (backBtn) backBtn.style.visibility = "";
             }
@@ -8705,7 +8705,7 @@
             el("a", { class: "btn btn-sm", href: e.url + "/", target: "_blank", rel: "noopener" }, [icon("link", 13), " Visit"]),
             e.setup_url ? el("a", { class: "btn btn-sm btn-primary", href: e.setup_url, target: "_blank", rel: "noopener" }, [icon("wand", 13), " Finish setup"]) : null,
             !e.setup_url && e.admin_url ? el("a", { class: "btn btn-sm btn-primary", href: e.admin_url, target: "_blank", rel: "noopener" }, [icon("lock", 13), " Open admin"]) : null]),
-          rows.length ? el("div", { class: "ax-creds" }, [el("span", { class: "dm-hint", text: "The setup page asks for these — copy them now (the password isn't shown again):" }),
+          rows.length ? el("div", { class: "ax-creds" }, [el("span", { class: "dm-hint", text: "The setup page asks for these, copy them now (the password isn't shown again):" }),
             ...rows.map(([k, v]) => el("div", {}, [el("span", { text: k }), el("code", { text: v }), copy(v)]))]) : null,
           ...(e.notes || []).map((n) => el("p", { class: "dm-hint", text: "• " + n })),
           /\.(test|local|localhost)(\/|:|$)/.test(e.url) ? el("p", { class: "dm-hint", text: "Local domain: add it to your computer's hosts file (Domains → 🔍 shows the exact line)." }) : null,

@@ -4,7 +4,7 @@ const API = (() => {
     const opts = { method, credentials: "same-origin", headers: {} };
     if (body !== undefined) {
       if (isForm) {
-        opts.body = body; // FormData — let the browser set the boundary.
+        opts.body = body; // FormData, let the browser set the boundary.
       } else {
         opts.headers["Content-Type"] = "application/json";
         opts.body = JSON.stringify(body);
@@ -136,7 +136,7 @@ const API = (() => {
         if (xhr.status >= 200 && xhr.status < 300) resolve(data);
         else reject(new Error((data && data.detail) || xhr.statusText || "Upload failed"));
       };
-      xhr.onerror = () => reject(new Error("Upload failed — connection lost"));
+      xhr.onerror = () => reject(new Error("Upload failed, connection lost"));
       xhr.send(form);
     }),
     backupDownloadUrl: (name) => `/api/backups/download?name=${encodeURIComponent(name)}`,
