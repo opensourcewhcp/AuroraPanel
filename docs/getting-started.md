@@ -6,7 +6,7 @@ On a Raspberry Pi (Raspberry Pi OS Bookworm or newer) or an Ubuntu/Debian server
 Python 3.10+:
 
 ```bash
-git clone https://github.com/aurora51dotcom/AuroraPanel ~/AuroraPanel
+git clone https://github.com/opensourcewhcp/AuroraPanel ~/AuroraPanel
 cd ~/AuroraPanel
 sudo bash install.sh
 ```
