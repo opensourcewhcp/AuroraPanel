@@ -1,21 +1,81 @@
-# AuroraPanel
+<p align="center">
+  <img src="docs/screenshots/hero.png" alt="AuroraPanel dashboard on a Raspberry Pi" width="100%">
+</p>
 
-A lightweight web hosting control panel for **Raspberry Pi** (and any Linux
-box), laid out like cPanel: system monitoring, your own VPN server, websites,
-databases, fail2ban, FTP, backups, Git and more — all from your browser.
+<h1 align="center">AuroraPanel</h1>
 
-Built with **FastAPI** (Python) + a dependency-free **vanilla JS** frontend, so
-there's nothing to compile on the Pi.
+<p align="center"><b>The control panel your Raspberry Pi deserves.</b><br>
+Websites, email, VPN, backups, security and monitoring, all from one browser tab.<br>
+Free, open source, MIT licensed.</p>
 
-**Version: v1.1.11** (`1.1.11`) — a free, open-source hobby project (MIT License). Website: https://aurora51.com
+<p align="center">
+  <a href="https://github.com/opensourcewhcp/AuroraPanel/releases"><img alt="Version 1.1.17" src="https://img.shields.io/badge/version-1.1.17-ff7a1a"></a>
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-green"></a>
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-blue">
+  <img alt="Runs on Raspberry Pi" src="https://img.shields.io/badge/runs%20on-Raspberry%20Pi%20%7C%20Debian%20%7C%20Ubuntu-c51a4a">
+  <a href="https://forums.raspberrypi.com/viewtopic.php?p=2388892"><img alt="Raspberry Pi Forums thread" src="https://img.shields.io/badge/community-Raspberry%20Pi%20Forums-555"></a>
+</p>
+
+AuroraPanel is a lightweight web hosting control panel for **Raspberry Pi** (and any
+Debian or Ubuntu box), laid out like cPanel: system monitoring, your own VPN server,
+websites, databases, a full mail server, fail2ban, FTP, backups, Git and more, all
+from your browser.
+
+Built with **FastAPI** (Python) and a dependency-free **vanilla JS** frontend, so
+there is nothing to compile on the Pi. A Raspberry Pi 3 B+ runs it comfortably.
+
+Website: https://aurora51.com. Guides for the bigger features are in [`docs/`](docs/README.md).
+
+**Feedback, bugs and ideas:** please share them in the
+[Raspberry Pi Forums thread](https://forums.raspberrypi.com/viewtopic.php?p=2388892).
+
+## Why AuroraPanel
+
+- **Everything in one place.** Sites, email, DNS, databases, VPN, firewall, backups and
+  metrics live under one login, with one search box (`Ctrl+K`) that jumps to any tool.
+- **Made for small hardware.** Pages load fast on a Pi 3, and the panel itself needs
+  under 100 MB of RAM. Services such as Apache, PHP or MariaDB are installed
+  only when a page needs them, with a progress bar.
+- **Your own VPN in minutes.** WireGuard with QR codes, OpenVPN and IPsec/IKEv2, each
+  with an end-to-end self-test and router instructions for home connections.
+- **Mail that actually delivers.** Postfix, Dovecot, Rspamd and Roundcube in one click,
+  with DKIM, SPF, DMARC and PTR checks, spam filters, mailing lists and webmail.
+- **Safe by default.** HTTPS out of the box, two-factor login, fail2ban jails, a WAF
+  with the OWASP Core Rule Set, per-site isolation and an activity log of every change.
+- **Alerts where you already are.** Email, Telegram, Discord, Slack, ntfy or any webhook,
+  including attack reports you can answer with Ban, Trust or Allow buttons.
+- **Backups you can trust.** Scheduled, AES-256 encrypted backups to another disk, S3,
+  Backblaze B2, SFTP, WebDAV or any rclone remote, plus a wizard to move in from cPanel.
+- **One-click apps.** WordPress, Nextcloud, Joomla, Drupal, phpBB, MediaWiki, OpenCart,
+  Moodle and more, with Docker apps for everything else.
+
+## Install in one minute
+
+```bash
+git clone https://github.com/opensourcewhcp/AuroraPanel.git ~/AuroraPanel
+cd ~/AuroraPanel
+sudo bash install.sh
+```
+
+Open `https://<pi-ip>:8088`, create your admin account and you are in. Works on
+Raspberry Pi OS Bookworm or newer and on any Debian or Ubuntu server with systemd.
+Details and options are in [Installing](#installing-on-a-raspberry-pi-or-an-ubuntudebian-server).
 
 To update, open **Preferences → About & Updates → Check for updates** in the panel (it only contacts
 aurora51.com when you click), or re-download the zip, unzip it over your install and re-run `sudo bash install.sh`.
 
-Guides for the bigger features are in [`docs/`](docs/README.md).
+## Screenshots
 
-**Feedback, bugs and ideas:** please share them in the
-[Raspberry Pi Forums thread](https://forums.raspberrypi.com/viewtopic.php?p=2388892).
+<p align="center">
+  <img src="docs/screenshots/overview.png" alt="AuroraPanel: dashboard, resource usage and app installer" width="100%">
+</p>
+
+| | |
+| :-: | :-: |
+| **Dashboard**: live CPU, temperature, throttling, memory, disks, services and uptime at a glance<br><img src="docs/screenshots/dashboard.png" alt="Dashboard"> | **Resource Usage**: CPU, memory, disk I/O, network, load and temperature, kept for a year<br><img src="docs/screenshots/resources.png" alt="Resource usage graphs"> |
+| **App Installer**: WordPress, Nextcloud, Joomla, phpBB and 40 more, set up in one click<br><img src="docs/screenshots/appstore.png" alt="App Installer"> | **Domains**: virtual hosts, Force HTTPS, certificates, redirects and folder sites that need no domain<br><img src="docs/screenshots/vhosts.png" alt="Domains"> |
+| **Alerts**: email, Telegram, webhooks and Slack, with attack reports you can act on<br><img src="docs/screenshots/alerts.png" alt="Alerts"> | **Backups**: folders, databases and full backups, restore in one click, scheduled off-site copies<br><img src="docs/screenshots/backups.png" alt="Backups"> |
+| **File Manager**: upload, edit, zip, recycle bin, hidden files, permissions<br><img src="docs/screenshots/files.png" alt="File manager"> | |
 
 ## Features
 
