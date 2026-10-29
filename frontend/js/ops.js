@@ -1331,6 +1331,23 @@ window.AuroraOps = (ui) => {
     }
     function siteCard(s) {
       const box = el("div", { class: "card op-wp" }, el("div", { class: "loading", text: `Checking ${s.url || s.path}…` }));
+      // Remove a WordPress: its files go to the panel's trash, its database is dropped when asked, the site folder stays.
+      function uninstallWp(d) {
+        const db = el("input", { type: "checkbox" }); db.checked = true;
+        const go = el("button", { class: "btn btn-danger", text: "Uninstall", onclick: async () => {
+          go.disabled = true;
+          try {
+            if (d.staging) await API.wptAct("staging", { path: d.path, on: false });
+            await API.appRemove2(d.path, db.checked, false);
+            closeModal(); toast(`${d.url || d.path} removed`, "good"); load();
+          } catch (e) { toast(e.message, "bad"); go.disabled = false; }
+        } });
+        openModal(`Uninstall WordPress at ${d.url || d.path}`, el("div", { class: "dm-form" }, [
+          el("p", { text: `The WordPress files in ${d.path} are moved to the panel's trash folder (/var/lib/aurora/trash), so they can be brought back by hand. The site itself stays, with an empty folder.` }),
+          el("label", { class: "dm-check" }, [db, el("span", { text: " Also delete its database and database user (posts, pages, settings, users). Keep this off if another site shares the database." })]),
+          d.staging ? el("p", { class: "mx-note mx-note-dim" }, [icon("info", 16), el("span", { text: "The staging copy is removed first." })]) : null,
+        ].filter(Boolean)), [go]);
+      }
       const fill = async () => {
         let d;
         try { d = await API.wptSite(s.path); } catch (e) { box.innerHTML = ""; box.append(el("p", { class: "empty", text: e.message })); return; }
@@ -1359,6 +1376,7 @@ window.AuroraOps = (ui) => {
             d.staging ? armed("Delete staging", "Click again", () => call(() => API.wptAct("staging", { path: d.path, on: false }), "Staging copy deleted", fill), "btn-ghost")
               : btn("Make a staging copy", () => call(() => API.wptAct("staging", { path: d.path, on: true }), "Copying…", (r) => watch(r.job, "Staging copy ready", fill)), "btn-ghost"),
             d.url ? el("a", { class: "btn btn-sm btn-ghost", href: d.url.replace(/\/$/, "") + "/wp-admin/", target: "_blank", rel: "noopener", text: "wp-admin ↗" }) : null,
+            btn("Uninstall", () => uninstallWp(d), "btn-ghost wpt-uninstall"),
           ]),
           pu.length || tu.length ? el("details", { class: "op-wp-list" }, [el("summary", { text: `What will be updated (${pu.length + tu.length})` }),
             el("div", { class: "mx-list" }, [...pu.map((p) => el("div", { class: "mx-list-row" }, [pill("plugin"), el("b", { class: "grow", text: p.title || p.name }), el("span", { class: "muted", text: `${p.version} → ${p.update_version}` }),

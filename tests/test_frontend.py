@@ -199,3 +199,9 @@ def test_instaban_and_activity_cleanup_in_the_interface():
     ops = (FRONT / "js" / "ops.js").read_text(encoding="utf-8")
     assert '["ib", API.instaban]' in ops and 'view: "instaban"' in ops
     assert "API.auditPurge(mode, 30, keep.checked)" in ops and "Keep a copy in the Recycle Bin" in ops
+
+
+def test_wordpress_toolkit_can_uninstall_a_site():
+    ops = (FRONT / "js" / "ops.js").read_text(encoding="utf-8")
+    assert 'btn("Uninstall", () => uninstallWp(d)' in ops and "API.appRemove2(d.path, db.checked, false)" in ops
+    assert "Also delete its database and database user" in ops
