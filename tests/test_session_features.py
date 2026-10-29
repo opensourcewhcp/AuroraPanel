@@ -18,14 +18,30 @@ def test_prune_keeps_only_the_build_you_came_from(tmp_path, monkeypatch):
     old = tmp_path / "backup-1.1.2.tgz"; old.write_bytes(b"x"); os.utime(old, (1000, 1000))
     newest = tmp_path / "backup-1.1.10.tgz"; newest.write_bytes(b"x"); os.utime(newest, (5000, 5000))
     mid = tmp_path / "backup-1.1.16.tgz"; mid.write_bytes(b"x"); os.utime(mid, (3000, 3000))   # higher number, older save
-    (tmp_path / f"backup-{version.VERSION}.tgz").write_bytes(b"x")   # a copy of the running version: pointless
+    (tmp_path / f"backup-{version.VERSION}.tgz").write_bytes(b"x")   # the running build's own snapshot stays
     (tmp_path / "aurorapanel-1.1.10.zip").write_bytes(b"x")
     (tmp_path / "staging-abc").mkdir(); (tmp_path / "staging-abc" / "f").write_bytes(b"x")
     (tmp_path / "update.log").write_text("log", encoding="utf-8")
     r = version.prune_updates()
     assert r["kept"] == ["backup-1.1.10.tgz"]
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["backup-1.1.10.tgz", "update.log"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["backup-1.1.10.tgz", f"backup-{version.VERSION}.tgz", "update.log"]
     assert [x["version"] for x in version.rollbacks()] == ["1.1.10"]
+
+
+def test_snapshot_of_the_running_build_is_taken_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(version, "UPDATE_DIR", str(tmp_path / "updates"))
+    src = tmp_path / "install"; (src / "backend").mkdir(parents=True); (src / "backend" / "x.py").write_text("1", encoding="utf-8")
+    (src / ".venv").mkdir(); (src / ".venv" / "big").write_bytes(b"0" * 10)
+    monkeypatch.setattr(version, "_install_dir", lambda: str(src))
+    import shutil
+    if not shutil.which("tar"):
+        pytest.skip("tar")
+    out = version.snapshot_current()
+    assert out and out.endswith(f"backup-{version.VERSION}.tgz") and version.snapshot_current() is None
+    import tarfile
+    names = tarfile.open(out).getnames()
+    assert any(n.endswith("backend/x.py") for n in names) and not any(".venv" in n for n in names)
+    assert version.rollbacks() == []   # the running build is never offered as a step back
 
 
 def test_prune_without_an_updates_folder_is_a_noop(tmp_path, monkeypatch):

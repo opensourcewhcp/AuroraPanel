@@ -3950,7 +3950,8 @@ def _metrics_start():
     # install.sh normally makes the account before the first start; this covers
     # run.sh / run.bat and an update of a panel nobody had signed in to yet.
     try:
-        version.prune_updates()  # only the build you came from is kept
+        version.prune_updates()  # only the build you came from is kept, plus a snapshot of this one
+        threading.Thread(target=version.snapshot_current, name="snapshot", daemon=True).start()
     except Exception as exc:
         print(f"aurora: couldn't tidy the updates folder: {exc}", flush=True)
     made = config.ensure_initial_credentials()

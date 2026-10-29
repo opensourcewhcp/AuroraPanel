@@ -273,8 +273,10 @@ def prune_updates(keep: int = 1) -> dict:
             st = p.stat()
         except OSError:
             continue
-        if not _SEMVER.match(ver) or ver == VERSION:
+        if not _SEMVER.match(ver):
             removed.append(p)
+        elif ver == VERSION:
+            continue   # the running build's own snapshot: what the next step back will need
         else:
             backups.append((st.st_mtime, p))
     backups.sort(key=lambda x: x[0], reverse=True)
@@ -288,6 +290,34 @@ def prune_updates(keep: int = 1) -> dict:
     for d in udir.glob("staging-*"):
         shutil.rmtree(d, ignore_errors=True)
     return {"kept": [p.name for _, p in backups[:keep]], "removed": sorted(p.name for p in removed)}
+
+
+def snapshot_current() -> str | None:
+    """A copy of the running build, taken once per version when the panel starts. A build that
+    arrives by hand (unzip, scp) never passes through the updater, so without this there would be
+    nothing to go back to after it; with it, "Previous build" always has the one you came from."""
+    import os
+    import subprocess
+    from pathlib import Path
+    udir = Path(UPDATE_DIR)
+    dest = udir / f"backup-{VERSION}.tgz"
+    if dest.exists() or not _SEMVER.match(VERSION):
+        return None
+    try:
+        udir.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_suffix(".part")
+        argv = ["tar", "-czf", str(tmp), "-C", _install_dir(), "--exclude=./.venv", "--exclude=__pycache__",
+                "--exclude=./aurora_config.json", "--exclude=./htmlcov"]
+        if os.name == "nt":
+            argv.append("--force-local")   # GNU tar on Windows would read C: as a host name
+        r = subprocess.run(argv + ["."], capture_output=True, text=True, timeout=600)
+        if r.returncode != 0:
+            tmp.unlink(missing_ok=True)
+            return None
+        tmp.replace(dest)
+        return str(dest)
+    except Exception:
+        return None
 
 
 def rollbacks() -> list[dict]:
