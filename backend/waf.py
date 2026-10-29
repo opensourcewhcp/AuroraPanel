@@ -30,13 +30,11 @@ HEADER = "# Written by AuroraPanel (Security → WAF Firewall). Edit there — c
 PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
 APPS = {"wordpress": "WordPress", "nextcloud": "Nextcloud", "drupal": "Drupal", "dokuwiki": "DokuWiki",
         "phpmyadmin": "phpMyAdmin", "phpbb": "phpBB", "xenforo": "XenForo", "roundcube": "Webmail (Roundcube)"}
-# Roundcube has no CRS exclusion package. Under /webmail/ its own login and CSRF tokens guard it, so the
-# rules it trips by design are lifted there: remote-file-inclusion (a mail host like ssl://imap.gmail.com in
-# the sign-in link looks like one), XSS and SQL injection (HTML mail being written and read), and the
-# double-URL-encoding checks 920230/920240 (its sign-in form carries an already-encoded _url field).
-ROUNDCUBE_RULE = ('SecRule REQUEST_URI "@beginsWith /webmail/" "id:1000103,phase:1,pass,nolog,t:none,'
-                  'ctl:ruleRemoveById=920230,ctl:ruleRemoveById=920240,'
-                  'ctl:ruleRemoveById=931100-931199,ctl:ruleRemoveById=941100-941999,ctl:ruleRemoveById=942100-942999"')
+# Webmail is never blocked by the WAF. Roundcube has its own sign-in, CSRF tokens and HTML sanitiser, and
+# the Core Rule Set reads its ordinary traffic as attacks (a mail host in the sign-in link, its pre-encoded
+# _url field, HTML mail being written). Under /webmail/ the engine only watches: attempts still show up
+# on the WAF page, nobody is refused. Switch the "Webmail (Roundcube)" exception off to block there too.
+ROUNDCUBE_RULE = 'SecRule REQUEST_URI "@beginsWith /webmail/" "id:1000103,phase:1,pass,nolog,t:none,ctl:ruleEngine=DetectionOnly"'
 # CRS bookkeeping rules: the score summary, not an attack type of their own.
 _SUMMARY = {"949110", "959100", "980130", "980140", "980145", "959180"}
 # Noise, not attacks: someone opened a site by its IP address (920350), which on its own never blocks.
