@@ -12,7 +12,7 @@ import re
 import urllib.error
 import urllib.request
 
-VERSION = "1.1.23"
+VERSION = "1.1.24"
 LABEL = "v" + VERSION
 RELEASED = "2026-10-28"
 VERSION_URL = "https://aurora51.com/version.json"

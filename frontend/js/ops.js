@@ -97,7 +97,7 @@ window.AuroraOps = (ui) => {
       openModal("Activity", el("div", {}, [
         el("div", { class: "mx-kv" }, [el("span", { text: "When" }), el("span", { text: new Date(e.ts * 1000).toLocaleString() })]),
         el("div", { class: "mx-kv" }, [el("span", { text: "Who" }), el("span", { text: e.user })]),
-        el("div", { class: "mx-kv" }, [el("span", { text: "From" }), e.ip ? btn(e.ip, () => { closeModal(); ui.ipCard && ui.ipCard(e.ip); }, "btn-ghost") : el("span", { text: ", " })]),
+        el("div", { class: "mx-kv" }, [el("span", { text: "From" }), e.ip ? btn(e.ip, () => { closeModal(); ui.ipCard && ui.ipCard(e.ip); }, "btn-ghost") : el("span", { text: "-" })]),
         el("div", { class: "mx-kv" }, [el("span", { text: "Action" }), el("span", { text: e.action })]),
         el("div", { class: "mx-kv" }, [el("span", { text: "Result" }), pill(e.ok ? `ok (${e.status})` : `failed (${e.status})`, e.ok ? "good" : "bad")]),
         e.path ? el("div", { class: "mx-kv" }, [el("span", { text: "Request" }), el("code", { text: `${e.method} ${e.path}` })]) : null,

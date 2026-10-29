@@ -692,7 +692,7 @@ window.AuroraExtras = (ui) => {
         case "ts": return el("span", { class: "mx-time", text: t2s(r.ts, { month: "numeric", day: "numeric", year: "2-digit", hour: "numeric", minute: "2-digit", second: "2-digit" }) });
         case "size": return document.createTextNode(fmtBytes(r.size));
         case "status": return el("span", { class: `mx-st ${statusKind(r.status)}`, text: r.status });
-        case "ref": return !r.ref ? el("span", { class: "muted", text: ", " })
+        case "ref": return !r.ref ? el("span", { class: "muted", text: "-" })
           : safeUrl(r.ref) ? el("a", { href: safeUrl(r.ref), target: "_blank", rel: "noopener noreferrer nofollow", referrerpolicy: "no-referrer", class: "mx-url", title: r.ref, text: r.ref.replace(/^https?:\/\//, "") })
           : el("span", { class: "mx-url mx-bad-url", title: r.ref, text: r.ref });
         case "ua": return el("span", { class: "mx-ua", title: r.ua, text: r.ua || "n/a" });
@@ -1235,7 +1235,7 @@ window.AuroraExtras = (ui) => {
       body.append(el("div", { class: "mx-grid2" }, [
         card("HTTP status codes", [rank(a.status.map((x) => ({ label: `${x.code} ${STATUS[x.code] || ""}`, n: x.n, extra: el("span", { class: `mx-st ${statusKind(x.code)}`, text: "" }) })), { limit: 12 })]),
         card("Not found (404)", [a.e404.length ? sortableTable([{ k: "url", label: "Missing URL", render: (r) => el("span", { class: "mx-url", title: r.url, text: r.url }) },
-          { k: "n", label: "Hits", num: true }, { k: "ref", label: "Linked from", render: (r) => r.ref ? el("span", { class: "mx-url", title: r.ref, text: r.ref.replace(/^https?:\/\//, "") }) : el("span", { class: "muted", text: ", " }) }], a.e404, { sort: "n" })
+          { k: "n", label: "Hits", num: true }, { k: "ref", label: "Linked from", render: (r) => r.ref ? el("span", { class: "mx-url", title: r.ref, text: r.ref.replace(/^https?:\/\//, "") }) : el("span", { class: "muted", text: "-" }) }], a.e404, { sort: "n" })
           : el("p", { class: "muted mx-none", text: "No broken links, nice." })]),
       ]));
       if (a.users.length) body.append(card("Signed-in users (HTTP auth)", [rank(a.users.map((x) => ({ label: x.key, n: x.n })))]));

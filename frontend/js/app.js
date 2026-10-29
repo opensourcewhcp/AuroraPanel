@@ -5129,7 +5129,7 @@
           d = await API.dnsRecords(host, [...types], server.value);
           const all = Object.values(d.records).flat();
           card = el("div", { class: "card" }, [el("div", { style: "display:flex;align-items:center;gap:10px;margin-bottom:10px" }, [el("h3", { style: "margin:0", text: `${d.host} · answered by ${d.server}` }), el("span", { class: "grow" }), all.length ? copyBtn(Object.entries(d.records).map(([t, v]) => v.map((x) => `${t}\t${x}`).join("\n")).filter(Boolean).join("\n")) : null]),
-            table(["Type", "Value", ""], Object.entries(d.records).map(([t, v]) => el("tr", {}, [el("td", {}, el("b", { text: t })), el("td", { class: "muted" }, v.length ? vals(v) : el("span", { text: ", " })), el("td", { class: "actions" }, v.length ? copyBtn(v.join("\n")) : null)]))),
+            table(["Type", "Value", ""], Object.entries(d.records).map(([t, v]) => el("tr", {}, [el("td", {}, el("b", { text: t })), el("td", { class: "muted" }, v.length ? vals(v) : el("span", { text: "-" })), el("td", { class: "actions" }, v.length ? copyBtn(v.join("\n")) : null)]))),
             all.length ? null : el("p", { class: "dm-hint", style: "margin-top:10px", text: "Nothing came back. Typo? Not delegated yet? Try WHOIS to see whether the name is registered at all." })]);
         } else if (kind === "propagation") {
           const t = [...types][0] || "A";
@@ -5817,7 +5817,7 @@
             ]),
           ])),
           el("td", {}, el("span", { class: "dm-root" }, [icon("home", 13), " ", f.path])),
-          el("td", {}, el("span", { class: "muted", title: "Set it up to manage the file list here", text: ", " })),
+          el("td", {}, el("span", { class: "muted", title: "Set it up to manage the file list here", text: "-" })),
           el("td", { class: "actions" }, [
             el("button", { class: "btn btn-sm", onclick: () => { fmState.cwd = f.path; navigate("files"); } }, [icon("folder", 13), " Files"]),
             el("button", { class: "btn btn-sm btn-primary", disabled: f.addable ? null : "",
