@@ -1006,7 +1006,7 @@ window.AuroraExtras = (ui) => {
   // ======================================================================
   async function viewInstaBan(root) {
     const TTL_LABEL = { "1h": "1 hour", "6h": "6 hours", "24h": "24 hours", "7d": "7 days", "30d": "30 days", forever: "until unbanned" };
-    const KIND_LABEL = { contains: "contains", starts: "starts with", regex: "regex" };
+    const KIND_LABEL = { contains: "path contains", starts: "path starts with", regex: "path regex", ua: "user agent contains", ip: "address or range" };
     root.append(pageHead("InstaBan", "A list of payloads, paths and pages that no real visitor ever asks for. The first request that matches one gets its address banned at the firewall for the time you pick, the attempt is kept as evidence, and the address can be reported to its abuse desk. Trusted addresses are never banned."));
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
     root.append(body);
@@ -1040,8 +1040,30 @@ window.AuroraExtras = (ui) => {
           tile("Trusted", String(d.trusted), "addresses never banned", "check", "", () => navigate("ipblocker")),
         ]),
       ]));
+      // ---- behaviour: what an address does, not what it asks for
+      const B = d.behavior || {};
+      const brow = (key, title, desc, unit, note) => {
+        const b = B[key] || { on: false, count: 10, window: 60 };
+        const on = el("input", { type: "checkbox" }); on.checked = !!b.on;
+        const count = el("input", { type: "number", min: "3", max: "100000", value: String(b.count), class: "ib-num" });
+        const win = el("input", { type: "number", min: "10", max: "3600", value: String(b.window), class: "ib-num" });
+        const save = async () => { try { await API.instabanBehavior({ [key]: { on: on.checked, count: +count.value, window: +win.value } }); toast("Saved", "good"); } catch (e) { toast(e.message, "bad"); } };
+        [on, count, win].forEach((x) => x.addEventListener("change", save));
+        return el("div", { class: "ib-brow" }, [
+          el("label", { class: "dm-check" }, [on, el("span", {}, [el("b", { text: title }), el("small", { class: "muted", text: desc })])]),
+          el("div", { class: "ib-bvals" }, [el("span", { class: "muted", text: "ban after" }), count, el("span", { class: "muted", text: unit + " within" }), win, el("span", { class: "muted", text: "s" })]),
+          note ? el("div", { class: "muted mx-small ib-bnote", text: note }) : null,
+        ].filter(Boolean));
+      };
+      body.append(card("Behaviour", [
+        el("p", { class: "muted mx-small", text: "On top of the list: an address is banned for how it behaves, whatever it asks for. Trusted addresses are never banned." }),
+        brow("errors", "Guessing paths", "Many pages that don't exist or are refused (404, 403…) in a short time: a scanner feeling around.", "error answers"),
+        brow("flood", "Hammering", "An unusual number of requests of any kind in a short time. Off by default: a busy site or a crawler can look like this.", "requests"),
+        brow("ports", "Knocking on ports", "Connections to many different ports in a short time: a port scan. Read from the Network Monitor's connection log.", "distinct ports",
+          d.ports_source ? "" : "The Network Monitor's connection log is off, so port knocks aren't seen yet. Turn it on under Network → Network Monitor."),
+      ]));
       // ---- patterns
-      const pat = el("input", { type: "text", placeholder: "/.git/config, /etc/passwd, <script, union select…", class: "ib-pat", spellcheck: "false", autocomplete: "off" });
+      const pat = el("input", { type: "text", placeholder: "/.git/config, /etc/passwd, <script, union select, sqlmap, 203.0.113.0/24…", class: "ib-pat", spellcheck: "false", autocomplete: "off" });
       const kind = el("select", { class: "em-select mx-narrow" }, d.kinds.map((k) => el("option", { value: k, text: KIND_LABEL[k] })));
       const note = el("input", { type: "text", placeholder: "note (optional)", style: "max-width:220px" });
       const add = async () => {
@@ -1056,7 +1078,7 @@ window.AuroraExtras = (ui) => {
           catch (e) { toast(e.message, "bad"); go.disabled = false; }
         } });
         openModal("Import patterns", el("div", { class: "dm-form" }, [
-          el("p", { class: "muted", text: "One pattern per line, matched as plain text inside the URL-decoded path and query. Start a line with regex: for a regular expression or starts: to match the beginning. Two spaces and # add a note. Lines that would match normal pages are skipped." }), ta]), [go]);
+          el("p", { class: "muted", text: "One pattern per line, matched as plain text inside the URL-decoded path and query. Start a line with regex: for a regular expression, starts: to match the beginning, ua: for a user agent, ip: for an address or range. Two spaces and # add a note. Lines that would match normal pages are skipped." }), ta]), [go]);
       }, "btn-ghost");
       const exportBtn = btn("Export", async () => { try { const t = await API.instabanExport(); downloadText("instaban-patterns.txt", t, "text/plain"); } catch (e) { toast(e.message, "bad"); } }, "btn-ghost");
       const rows = d.patterns.map((p) => el("tr", {}, [
@@ -1068,7 +1090,7 @@ window.AuroraExtras = (ui) => {
       ]));
       body.append(card(`Patterns (${d.patterns.length})`, [
         el("div", { class: "ib-add" }, [pat, kind, note, btn("Add", add, "btn-primary")]),
-        el("p", { class: "muted mx-small", text: "Matching is done on the request's path and query after URL-decoding, so %2e%2e%2f is seen as ../. Nothing here is ever rendered or executed: a payload is just text that is compared." }),
+        el("p", { class: "muted mx-small", text: "Path patterns are matched on the request's path and query after URL-decoding, so %2e%2e%2f is seen as ../; user-agent patterns on the browser string; an address or range bans on sight. Nothing here is ever rendered or executed: a payload is just text that is compared." }),
         rows.length ? el("div", { class: "table-wrap" }, el("table", { class: "mx-table ib-table" }, [
           el("thead", {}, el("tr", {}, ["Pattern", "Match", "Note", "Hits", ""].map((h) => el("th", { text: h })))), el("tbody", {}, rows)]))
           : empty("trap", "No patterns", "Add one above or import a list."),
@@ -1079,7 +1101,7 @@ window.AuroraExtras = (ui) => {
         el("td", {}, el("button", { type: "button", class: `ib-ip ${h.banned ? "ip-banned" : ""}`, raw: true, text: h.ip, onclick: () => ipCard(h.ip, load) })),
         el("td", { class: "muted", raw: true, text: h.host || h.log || "" }),
         el("td", {}, [el("code", { class: "ib-code", raw: true, text: `${h.method} ${h.target}` }), h.ua ? el("div", { class: "muted mx-small ib-ua", raw: true, text: h.ua }) : null].filter(Boolean)),
-        el("td", {}, el("code", { class: "ib-code muted", raw: true, text: h.pattern })),
+        el("td", {}, [el("code", { class: "ib-code muted", raw: true, text: h.pattern }), h.kind && h.kind !== "contains" ? el("div", { class: "muted mx-small", text: KIND_LABEL[h.kind] || h.kind }) : null].filter(Boolean)),
         el("td", {}, [h.banned ? pill("banned", "bad") : pill("not banned", "dim"), h.reported ? pill("reported", "warn") : null, h.error ? el("div", { class: "muted mx-small", raw: true, text: h.error }) : null].filter(Boolean)),
         el("td", { class: "actions" }, [h.reported || !h.banned ? null : btn("Report", () => reportIp(h.ip, load), "btn-ghost"), btn("Lookup", () => ipCard(h.ip, load), "btn-ghost")].filter(Boolean)),
       ]));

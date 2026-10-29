@@ -3415,6 +3415,11 @@ def api_instaban_settings(body: InstaBanBody, user: str = auth.CurrentUser):
     return _ib(lambda m: m.set_settings(body.enabled, body.ttl, body.report))
 
 
+@app.post("/api/instaban/behavior")
+def api_instaban_behavior(body: dict, user: str = auth.CurrentUser):
+    return _ib(lambda m: m.set_behavior(body if isinstance(body, dict) else {}))
+
+
 @app.post("/api/instaban/patterns/add")
 def api_instaban_add(body: InstaBanBody, user: str = auth.CurrentUser):
     return _ib(lambda m: m.add_pattern(body.pattern or "", body.kind, body.note))

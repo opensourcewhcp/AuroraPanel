@@ -5567,12 +5567,11 @@
       const look = (ip) => { const f = (extraViews()._ui || {}).ipCard; if (f) f(ip); };
       const fmt = (ts) => { const f = (extraViews()._ui || {}).t2s; return f ? f(ts) : new Date(ts * 1000).toLocaleString(); };
       const since = (ts) => (typeof ago === "function" ? ago(ts) : "");
-      const report = (ip) => { const f = (extraViews()._ui || {}).reportIp; if (f) f(ip); };
-      let only = "";
+      const report = (ip) => { const f = (extraViews()._ui || {}).reportIp; if (f) f(ip, () => { API.fail2banEvents().then((rr) => { r = rr; draw(); }).catch(() => {}); }); };
+      let only = "", r = null, draw = () => {};
       (async () => {
-        let r;
         try { r = await API.fail2banEvents(); } catch (e) { box.innerHTML = ""; box.append(el("h3", { text: "Recent activity" }), el("p", { class: "muted", text: e.message })); return; }
-        const draw = () => {
+        draw = () => {
           box.innerHTML = "";
           const ev = r.events.filter((e) => !only || e.kind === only);
           const n = (k) => r.events.filter((e) => e.kind === k).length;
@@ -5582,14 +5581,15 @@
           box.append(el("p", { class: "muted", style: "font-size:12.5px;margin:0 0 10px", text: `Everything fail2ban wrote to its log (${r.source}): each failed attempt it noticed, every ban and unban. Bans also show under IP Blocker & Trust.` }));
           if (!ev.length) { box.append(el("p", { class: "muted", text: r.events.length ? "Nothing of that kind." : "Quiet so far: no failed attempts or bans in the log. fail2ban only writes here when a jail notices something." })); return; }
           box.append(el("div", { class: "table-wrap" }, el("table", { class: "dm-table" }, [
-            el("thead", {}, el("tr", {}, ["When", "Jail", "Event", "Address", ""].map((h) => el("th", { text: h })))),
-            el("tbody", {}, ev.slice(0, 300).map((e) => el("tr", {}, [
+            el("thead", {}, el("tr", {}, ["When", "Jail", "Event", "Tried", "Address", ""].map((h) => el("th", { text: h })))),
+            el("tbody", {}, ev.slice(0, 300).map((e) => { const rep = (r.reported || []).includes(e.ip); return el("tr", {}, [
               el("td", { title: new Date(e.ts * 1000).toLocaleString(), text: `${fmt(e.ts)} · ${since(e.ts)}` }),
               el("td", { text: names[e.jail] || e.jail }),
               el("td", {}, el("span", { class: `pill ${KIND[e.kind][1]}`, text: KIND[e.kind][0] + (e.restored ? " again" : "") })),
-              el("td", {}, el("code", { class: ipCls(r.status[e.ip]), text: e.ip })),
-              el("td", { class: "actions" }, [btn("Lookup", () => look(e.ip), "btn-ghost"), r.status[e.ip] === "trusted" ? null : btn("Report", () => report(e.ip), "btn-ghost")].filter(Boolean)),
-            ]))),
+              el("td", {}, e.user ? [el("code", { raw: true, text: e.user }), e.service ? el("span", { class: "muted mx-small", text: ` · ${e.service}` }) : null].filter(Boolean) : el("span", { class: "muted", text: e.kind === "failure" ? "not in the log" : "-" })),
+              el("td", {}, [el("code", { class: ipCls(r.status[e.ip], rep), text: e.ip }), rep ? pill("reported", "warn") : null].filter(Boolean)),
+              el("td", { class: "actions" }, [btn("Lookup", () => look(e.ip), "btn-ghost"), r.status[e.ip] === "trusted" ? null : btn(rep ? "Report again" : "Report", () => report(e.ip), "btn-ghost")].filter(Boolean)),
+            ]); })),
           ])));
         };
         draw();

@@ -424,7 +424,39 @@ def events(limit: int = 400) -> dict:
         status = guard.status_of(sorted({e["ip"] for e in out}))
     except Exception:
         pass
-    return {"events": out, "status": status, "source": source or "/var/log/fail2ban.log"}
+    _add_users(out)
+    reported: dict = {}
+    try:
+        from . import abuse
+        reported = abuse.reported()
+    except Exception:
+        pass
+    return {"events": out, "status": status, "reported": sorted(reported), "source": source or "/var/log/fail2ban.log"}
+
+
+def _add_users(events: list[dict]) -> None:
+    """The account name each failed attempt tried, from the journal's own auth lines (fail2ban's log has
+    only the address): the SSH, panel or VPN event from the same address closest in time, within 90 s."""
+    fails = [e for e in events if e["kind"] == "failure"]
+    if not fails:
+        return
+    try:
+        from . import netmon
+        span = int(time.time() - min(e["ts"] for e in fails)) + 120
+        auth = [a for a in netmon.auth_events(min(span, 14 * 86400)) if a.get("user") and a.get("outcome") != "ok"]
+    except Exception:
+        return
+    by_ip: dict[str, list[dict]] = {}
+    for a in auth:
+        by_ip.setdefault(a["ip"], []).append(a)
+    for e in fails:
+        cands = by_ip.get(e["ip"])
+        if not cands:
+            continue
+        best = min(cands, key=lambda a: abs(a["ts"] - e["ts"]))
+        if abs(best["ts"] - e["ts"]) <= 90:
+            e["user"] = best["user"]
+            e["service"] = best.get("source") or ""
 
 
 def logs(lines: int = 200) -> str:

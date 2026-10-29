@@ -260,6 +260,7 @@ const API = (() => {
     fail2ban: () => request("GET", "/api/fail2ban"),
     instaban: () => request("GET", "/api/instaban"),
     instabanSettings: (b) => request("POST", "/api/instaban/settings", b),
+    instabanBehavior: (b) => request("POST", "/api/instaban/behavior", b),
     instabanAdd: (pattern, kind, note) => request("POST", "/api/instaban/patterns/add", { pattern, kind, note }),
     instabanImport: (text, kind) => request("POST", "/api/instaban/patterns/import", { text, kind: kind || "contains" }),
     instabanDelete: (id) => request("POST", "/api/instaban/patterns/delete", { id }),

@@ -30,7 +30,9 @@ VLINE = 'www.example.com:443 {ip} - - [28/Oct/2026:19:40:00 -0700] "GET {target}
 
 def test_default_list_is_seeded_and_patterns_are_validated(ib):
     s = instaban.load()
-    assert any(p["pattern"] == "/.git/" for p in s["patterns"]) and all(p["kind"] == "contains" for p in s["patterns"])
+    assert any(p["pattern"] == "/.git/" for p in s["patterns"]) and {p["kind"] for p in s["patterns"]} == {"contains", "ua"}
+    assert any(p["pattern"] == "sqlmap" and p["kind"] == "ua" for p in s["patterns"])
+    assert s["behavior"]["errors"]["on"] and s["behavior"]["ports"]["count"] == 8
     for bad, kind in (("", "contains"), ("/", "contains"), ("/index.php", "contains"), ("abc", "contains"), ("(", "regex"), ("x", "nope")):
         with pytest.raises(instaban.InstaBanError):
             instaban.add_pattern(bad, kind)
@@ -141,3 +143,40 @@ def test_audit_purge_route(admin):
     r = admin.post("/api/audit/purge", json={"mode": "tests", "keep_copy": False})
     assert r.status_code == 200 and set(r.json()) == {"removed", "kept", "archive"}
     assert admin.post("/api/audit/purge", json={"mode": "weird"}).status_code == 400
+
+
+def test_user_agent_and_address_patterns_and_behaviour(ib):
+    for bad, kind in (("bot", "ua"), ("chrome", "ua"), ("not an ip", "ip")):
+        with pytest.raises(instaban.InstaBanError):
+            instaban.add_pattern(bad, kind)
+    assert instaban.add_pattern("203.0.113.0/24", "ip")["pattern"] == "203.0.113.0/24"
+    assert instaban.add_pattern("EvilScanner/1.0", "ua")["pattern"] == "evilscanner/1.0"
+    comp = instaban._compiled(instaban.load()["patterns"])
+    assert instaban.match("/", comp, ua="Mozilla EvilScanner/1.0", ip="198.51.100.1")["kind"] == "ua"
+    assert instaban.match("/", comp, ua="Mozilla", ip="203.0.113.77")["kind"] == "ip"
+    assert instaban.match("/", comp, ua="Mozilla", ip="198.51.100.1") is None
+    # behaviour: thirty 404s inside a minute from one address
+    instaban.set_settings(enabled=True)
+    log = ib["logs"] / "access.log"; log.write_text("", encoding="utf-8"); instaban.scan()
+    log.write_text("".join(LINE.format(ip="198.51.100.9", target=f"/nope{i}") + chr(10) for i in range(30)), encoding="utf-8")
+    r = instaban.scan()
+    assert r["bans"] == 1 and ib["bans"][0][0] == "198.51.100.9" and "error answers" in ib["bans"][0][1]
+    assert instaban.set_behavior({"errors": {"on": False}, "ports": {"count": 12, "window": 120}})["behavior"]["ports"]["count"] == 12
+    with pytest.raises(instaban.InstaBanError):
+        instaban.set_behavior({"flood": {"count": 1}})
+    r = instaban.import_patterns(chr(10).join(["ua:sqlninja", "ip:192.0.2.0/24", ""]))
+    assert r["added"] == 2 and "ua:sqlninja" in instaban.export_text() and "ip:192.0.2.0/24" in instaban.export_text()
+
+
+def test_port_knocks_ban_a_scanner(ib, monkeypatch):
+    instaban.set_settings(enabled=True)
+    now = time.time()
+    rows = [{"ts": now - 20 + i, "src": "198.51.100.50", "port": 1000 + i} for i in range(9)] + [{"ts": now - 5, "src": "198.51.100.51", "port": 443}]
+    from backend import netmon
+    monkeypatch.setattr(netmon, "connections", lambda since_s: rows)
+    monkeypatch.setattr(netmon, "unit_state", lambda u: {"active": True}, raising=False)
+    r = instaban.scan()
+    assert r["bans"] == 1 and ib["bans"][-1][0] == "198.51.100.50" and "ports within" in ib["bans"][-1][1]
+    hit = instaban.overview()["hits"][0]
+    assert hit["kind"] == "ports" and hit["target"].startswith("ports 1000, 1001")
+    assert instaban.scan()["bans"] == 0   # the same knocks are not counted twice

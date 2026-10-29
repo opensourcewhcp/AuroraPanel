@@ -27,7 +27,13 @@ LOG_DIR = Path("/var/log/apache2")
 MAX_READ = 4 * 1024 * 1024
 MAX_HITS = 500
 TTL_CHOICES = {"1h": 3600, "6h": 6 * 3600, "24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400, "forever": 0}
-KINDS = ("contains", "starts", "regex")
+KINDS = ("contains", "starts", "regex", "ua", "ip")   # path contains / starts with / regex, user agent contains, address or range
+# Behaviour watched per address, on top of the pattern list (counts within a sliding window, in seconds).
+DEFAULT_BEHAVIOR = {
+    "errors": {"on": True, "count": 30, "window": 60},    # 4xx answers: someone guessing paths
+    "flood": {"on": False, "count": 600, "window": 60},   # requests of any kind: a hammering client
+    "ports": {"on": True, "count": 8, "window": 60},      # distinct ports knocked on (needs the Network Monitor's connection log)
+}
 _LOCK = threading.Lock()
 
 
@@ -48,13 +54,16 @@ DEFAULT_PATTERNS = [
     ("<script", "Cross-site scripting payload"), ("union select", "SQL injection payload"), ("wget+http", "Download-and-run payload"), ("chmod+777", "Download-and-run payload"),
     ("/xmlrpc.php?rsd", "WordPress XML-RPC scanner"), ("/wp-content/plugins/wp-file-manager/", "wp-file-manager exploit"),
 ]
+# User agents that only vulnerability scanners send.
+DEFAULT_UA = [("sqlmap", "SQL injection tool"), ("nikto", "Web vulnerability scanner"), ("masscan", "Port scanner"), ("zgrab", "Internet-wide scanner"),
+              ("nmap scripting engine", "Nmap scripts"), ("acunetix", "Vulnerability scanner"), ("nessus", "Vulnerability scanner"), ("wpscan", "WordPress scanner")]
 
 _LINE = re.compile(r'^(?:(?P<vhost>\S+):\d+ )?(?P<ip>[0-9a-fA-F:.]+) \S+ \S+ \[(?P<time>[^\]]*)\] "(?P<req>[^"]*)" (?P<status>\d{3}) (?P<size>\S+)(?: "(?P<ref>[^"]*)" "(?P<ua>[^"]*)")?')
 
 
 def _default() -> dict:
     return {"version": 1, "enabled": False, "ttl": "24h", "report": False, "patterns": [], "hits": [], "files": {},
-            "stats": {"hits": 0, "bans": 0, "reports": 0}, "last_scan": 0}
+            "stats": {"hits": 0, "bans": 0, "reports": 0}, "last_scan": 0, "behavior": json.loads(json.dumps(DEFAULT_BEHAVIOR))}
 
 
 def load() -> dict:
@@ -67,6 +76,15 @@ def load() -> dict:
         now = int(time.time())
         s["patterns"] = [{"id": _pid(), "pattern": p, "kind": "contains", "note": n, "added": now, "hits": 0} for p, n in DEFAULT_PATTERNS]
         s["seeded"] = True
+    if not s.get("seeded_ua"):   # the scanner user agents arrived in a later release: added once
+        now = int(time.time())
+        s["patterns"] += [{"id": _pid(), "pattern": p, "kind": "ua", "note": n, "added": now, "hits": 0} for p, n in DEFAULT_UA]
+        s["seeded_ua"] = True
+    b = json.loads(json.dumps(DEFAULT_BEHAVIOR))
+    for k, v in (s.get("behavior") or {}).items():
+        if k in b and isinstance(v, dict):
+            b[k].update({kk: vv for kk, vv in v.items() if kk in b[k]})
+    s["behavior"] = b
     return s
 
 
@@ -89,11 +107,21 @@ def _pid() -> str:
 def _check_pattern(pattern: str, kind: str) -> tuple[str, str]:
     p = (pattern or "").strip()
     if kind not in KINDS:
-        raise InstaBanError("Kind must be contains, starts or regex")
+        raise InstaBanError("Kind must be contains, starts, regex, ua or ip")
     if not p:
-        raise InstaBanError("Enter the payload or path")
+        raise InstaBanError("Enter the payload, path, user agent or address")
     if len(p) > 200 or "\n" in p:
         raise InstaBanError("One pattern per line, up to 200 characters")
+    if kind == "ip":
+        try:
+            return str(ipaddress.ip_network(p, strict=False)), kind
+        except ValueError:
+            raise InstaBanError("Enter an address or a range, e.g. 203.0.113.9 or 203.0.113.0/24")
+    if kind == "ua":
+        p = p.lower()
+        if len(p) < 4 or p in ("mozilla", "chrome", "safari", "firefox", "windows", "linux", "android", "iphone", "curl", "wget", "bot"):
+            raise InstaBanError("That matches ordinary browsers or tools; pick something only a scanner sends")
+        return p, kind
     if kind == "regex":
         try:
             re.compile(p, re.I)
@@ -137,7 +165,7 @@ def import_patterns(text: str, kind: str = "contains") -> dict:
                 line, note = line.split("  #", 1)
                 line, note = line.strip(), note.strip()
             k = kind
-            for prefix in ("regex:", "starts:", "contains:"):   # the export's own prefixes round-trip
+            for prefix in ("regex:", "starts:", "contains:", "ua:", "ip:"):   # the export's own prefixes round-trip
                 if line.lower().startswith(prefix):
                     k, line = prefix[:-1], line[len(prefix):].strip()
                     break
@@ -195,7 +223,39 @@ def set_settings(enabled: bool | None = None, ttl: str | None = None, report: bo
 def settings() -> dict:
     s = load()
     return {"enabled": s["enabled"], "ttl": s["ttl"], "ttl_seconds": TTL_CHOICES.get(s["ttl"], 86400), "report": s["report"],
-            "ttl_choices": list(TTL_CHOICES), "stats": s["stats"], "last_scan": s["last_scan"], "pattern_count": len(s["patterns"])}
+            "ttl_choices": list(TTL_CHOICES), "stats": s["stats"], "last_scan": s["last_scan"], "pattern_count": len(s["patterns"]),
+            "behavior": s["behavior"], "ports_source": _ports_source()}
+
+
+def _ports_source() -> bool:
+    """Port knocks come from the Network Monitor's connection log (Network -> Network Monitor -> logging)."""
+    try:
+        from . import netmon
+        return bool(netmon.unit_state("aurora-netmon.service")["active"])
+    except Exception:
+        return False
+
+
+def set_behavior(data: dict) -> dict:
+    with _LOCK:
+        s = load()
+        for k in DEFAULT_BEHAVIOR:
+            v = (data or {}).get(k)
+            if not isinstance(v, dict):
+                continue
+            if "on" in v:
+                s["behavior"][k]["on"] = bool(v["on"])
+            for f, lo, hi in (("count", 3, 100000), ("window", 10, 3600)):
+                if f in v:
+                    try:
+                        n = int(v[f])
+                    except (TypeError, ValueError):
+                        raise InstaBanError(f"{k}: {f} must be a number")
+                    if not lo <= n <= hi:
+                        raise InstaBanError(f"{k}: {f} must be between {lo} and {hi}")
+                    s["behavior"][k][f] = n
+        save(s)
+    return settings()
 
 
 def overview() -> dict:
@@ -235,23 +295,59 @@ def _compiled(patterns: list[dict]) -> list[tuple[dict, object]]:
     return out
 
 
-def match(target: str, compiled: list[tuple[dict, object]]) -> dict | None:
-    """The first pattern the request target trips, on its URL-decoded, lower-cased form."""
+def match(target: str, compiled: list[tuple[dict, object]], ua: str = "", ip: str = "") -> dict | None:
+    """The first pattern the request trips: its target (URL-decoded, lower-cased), its user agent or its address."""
     try:
         t = unquote(unquote(target))
     except Exception:
         t = target
     low = t.lower()
+    ua_low = (ua or "").lower()
+    addr = None
     for p, rx in compiled:
-        if rx is not None:
+        k = p["kind"]
+        if k == "ua":
+            if ua_low and p["pattern"] in ua_low:
+                return p
+        elif k == "ip":
+            if addr is None:
+                try:
+                    addr = ipaddress.ip_address(ip)
+                except ValueError:
+                    addr = False
+            if addr and addr in ipaddress.ip_network(p["pattern"]):
+                return p
+        elif rx is not None:
             if rx.search(t):
                 return p
-        elif p["kind"] == "starts":
+        elif k == "starts":
             if low.startswith(p["pattern"]):
                 return p
         elif p["pattern"] in low:
             return p
     return None
+
+
+# ---------------------------------------------------------------- behaviour: per-address counters in memory
+_SEEN: dict[str, dict[str, list]] = {}   # ip -> {"errors": [(ts, None)...], "flood": [...], "ports": [(ts, port)...]}
+
+
+def _note(kind: str, ip: str, now: float, window: int, value=None) -> int:
+    """Record one event and return how many are inside the window (distinct values when a value is given)."""
+    d = _SEEN.setdefault(ip, {})
+    lst = d.setdefault(kind, [])
+    lst.append((now, value))
+    cutoff = now - window
+    d[kind] = [x for x in lst if x[0] >= cutoff]
+    if value is not None:
+        return len({x[1] for x in d[kind]})
+    return len(d[kind])
+
+
+def _forget(now: float) -> None:
+    for ip in list(_SEEN):
+        if all(not v or v[-1][0] < now - 3600 for v in _SEEN[ip].values()):
+            del _SEEN[ip]
 
 
 def parse_line(line: str) -> dict | None:
@@ -346,12 +442,23 @@ def scan(now: int | None = None) -> dict:
                 rec = parse_line(line)
                 if not rec:
                     continue
-                p = match(rec["target"], compiled)
+                p = match(rec["target"], compiled, rec["ua"], rec["ip"])
+                why = ""
                 if not p:
-                    continue
+                    b = s["behavior"]
+                    if rec["ip"] in banned_now:
+                        continue
+                    if b["flood"]["on"] and _note("flood", rec["ip"], now, b["flood"]["window"]) >= b["flood"]["count"]:
+                        why = f"{b['flood']['count']} requests within {b['flood']['window']} s"
+                    elif b["errors"]["on"] and 400 <= rec["status"] < 500 and _note("errors", rec["ip"], now, b["errors"]["window"]) >= b["errors"]["count"]:
+                        why = f"{b['errors']['count']} error answers within {b['errors']['window']} s"
+                    if not why:
+                        continue
                 hit = {"ts": now, "ip": rec["ip"], "host": rec["host"], "method": rec["method"], "target": rec["target"], "status": rec["status"],
-                       "ua": rec["ua"], "pattern": p["pattern"], "pattern_id": p["id"], "log": path.name, "banned": False, "reported": False, "error": ""}
-                p["hits"] = p.get("hits", 0) + 1
+                       "ua": rec["ua"], "pattern": p["pattern"] if p else why, "pattern_id": p["id"] if p else "", "kind": p["kind"] if p else "behavior",
+                       "log": path.name, "banned": False, "reported": False, "error": ""}
+                if p:
+                    p["hits"] = p.get("hits", 0) + 1
                 s["stats"]["hits"] += 1
                 hits += 1
                 if _skip_ip(rec["ip"]):
@@ -361,7 +468,7 @@ def scan(now: int | None = None) -> dict:
                 else:
                     try:
                         ttl = TTL_CHOICES.get(s["ttl"], 86400) or None
-                        guard.ban(rec["ip"], f"InstaBan: {p['pattern'][:60]}", duration=ttl, source="InstaBan")
+                        guard.ban(rec["ip"], f"InstaBan: {hit['pattern'][:60]}", duration=ttl, source="InstaBan")
                         hit["banned"] = True
                         bans += 1
                         s["stats"]["bans"] += 1
@@ -380,10 +487,58 @@ def scan(now: int | None = None) -> dict:
                         except Exception as exc:
                             hit["error"] = (hit["error"] + " · " if hit["error"] else "") + f"report: {str(exc)[:120]}"
                 s["hits"].append(hit)
+        # Port knocks: distinct ports one address touched, from the Network Monitor's connection log.
+        pb = s["behavior"]["ports"]
+        if pb["on"]:
+            for ev in _port_events(now, s):
+                if ev["src"] in banned_now or _note("ports", ev["src"], ev["ts"], pb["window"], ev["port"]) < pb["count"]:
+                    continue
+                ports = sorted({x[1] for x in _SEEN.get(ev["src"], {}).get("ports", [])})
+                shown = ", ".join(str(x) for x in ports[:12]) + ("..." if len(ports) > 12 else "")
+                hit = {"ts": now, "ip": ev["src"], "host": "", "method": "", "target": f"ports {shown}", "status": 0, "ua": "",
+                       "pattern": f"{pb['count']} ports within {pb['window']} s", "pattern_id": "", "kind": "ports",
+                       "log": "connections", "banned": False, "reported": False, "error": ""}
+                s["stats"]["hits"] += 1
+                hits += 1
+                if _skip_ip(ev["src"]):
+                    hit["error"] = "trusted or local address, not banned"
+                else:
+                    try:
+                        ttl = TTL_CHOICES.get(s["ttl"], 86400) or None
+                        guard.ban(ev["src"], f"InstaBan: {hit['pattern']}", duration=ttl, source="InstaBan")
+                        hit["banned"] = True
+                        bans += 1
+                        s["stats"]["bans"] += 1
+                    except guard.GuardError as exc:
+                        hit["banned"] = "Already covered" in str(exc)
+                        hit["error"] = "" if hit["banned"] else str(exc)[:160]
+                    except Exception as exc:
+                        hit["error"] = str(exc)[:160]
+                    banned_now.add(ev["src"])
+                s["hits"].append(hit)
+        _forget(now)
         s["hits"] = s["hits"][-MAX_HITS:]
         s["last_scan"] = now
         save(s)
     return {"scanned": scanned, "hits": hits, "bans": bans}
+
+
+def _port_events(now: float, s: dict) -> list[dict]:
+    """New inbound connections since the last pass, from the kernel log the Network Monitor keeps."""
+    try:
+        from . import netmon
+    except Exception:
+        return []
+    last_scan = s.get("last_scan") or (now - 30)
+    try:
+        rows = netmon.connections(max(15, min(3600, int(now - last_scan) + 5)))
+    except Exception:
+        return []
+    last = s.get("ports_seen_ts", 0)
+    out = [{"ts": r["ts"], "src": r["src"], "port": r["port"]} for r in rows if r.get("port") and r["ts"] > last]
+    if rows:
+        s["ports_seen_ts"] = max(r["ts"] for r in rows)
+    return out
 
 
 # ---------------------------------------------------------------- the background pass
