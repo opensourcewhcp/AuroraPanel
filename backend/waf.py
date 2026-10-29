@@ -35,6 +35,9 @@ APPS = {"wordpress": "WordPress", "nextcloud": "Nextcloud", "drupal": "Drupal", 
 # _url field, HTML mail being written). Under /webmail/ the engine only watches: attempts still show up
 # on the WAF page, nobody is refused. Switch the "Webmail (Roundcube)" exception off to block there too.
 ROUNDCUBE_RULE = 'SecRule REQUEST_URI "@beginsWith /webmail/" "id:1000103,phase:1,pass,nolog,t:none,ctl:ruleEngine=DetectionOnly"'
+# Bump when the rules the panel renders change: an install that still has older rules in Apache rewrites
+# them once (at start, and when the WAF page is opened), so a shipped exception never stays on paper.
+RULES_REV = 3
 # CRS bookkeeping rules: the score summary, not an attack type of their own.
 _SUMMARY = {"949110", "959100", "980130", "980140", "980145", "959180"}
 # Noise, not attacks: someone opened a site by its IP address (920350), which on its own never blocks.
@@ -55,7 +58,7 @@ def _run(argv, timeout=60, input=None):
 
 def _default() -> dict:
     return {"mode": "block", "paranoia": 1, "threshold": 5, "apps": ["wordpress", "nextcloud", "drupal", "dokuwiki", "phpmyadmin", "roundcube"],
-            "trusted": [], "sites_off": [], "disabled_rules": {}, "seen": []}
+            "trusted": [], "sites_off": [], "disabled_rules": {}, "seen": [], "rules_rev": 0}
 
 
 def load() -> dict:
@@ -168,16 +171,26 @@ def setup() -> list[str]:
             f"• Exclusions for {', '.join(APPS[a] for a in s['apps'])} so their admin pages keep working"]
 
 
-def status() -> dict:
+def refresh_rules() -> bool:
+    """Rewrite Apache's rules when the panel's rendering moved on (RULES_REV) or an exception was added
+    (load() flags it). True when a rewrite happened. Nothing is done without ModSecurity installed."""
     global _PENDING_APPLY
-    load()   # may flag an exception that still has to reach Apache
-    if _PENDING_APPLY:
-        _PENDING_APPLY = False
-        if installed():
-            try:
-                apply()
-            except Exception:
-                pass
+    s = load()   # may flag an exception that still has to reach Apache
+    due = _PENDING_APPLY or int(s.get("rules_rev", 0)) != RULES_REV
+    _PENDING_APPLY = False
+    if not due or not installed() or not module_on():
+        return False
+    try:
+        apply(s)
+    except Exception:
+        return False
+    s["rules_rev"] = RULES_REV
+    _save(s)
+    return True
+
+
+def status() -> dict:
+    refresh_rules()
     s = load()
     crs_ver = ""
     r = _run(["dpkg-query", "-W", "-f=${Version}", "modsecurity-crs"])

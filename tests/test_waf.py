@@ -23,3 +23,16 @@ def test_old_installs_get_the_exception_once(tmp_path, monkeypatch):
     s["apps"] = ["wordpress"]
     waf._save(s)
     assert waf.load()["apps"] == ["wordpress"]
+
+
+def test_rules_are_rewritten_once_per_revision(tmp_path, monkeypatch):
+    monkeypatch.setattr(waf, "STATE", tmp_path / "waf.json")
+    monkeypatch.setattr(waf, "installed", lambda: True)
+    monkeypatch.setattr(waf, "module_on", lambda: True)
+    calls = []
+    monkeypatch.setattr(waf, "apply", lambda s=None: calls.append(1) or {"ok": True})
+    assert waf.refresh_rules() is True and len(calls) == 1          # a fresh or older install: written once
+    assert waf.refresh_rules() is False and len(calls) == 1         # same revision: nothing to do
+    assert waf.load()["rules_rev"] == waf.RULES_REV
+    monkeypatch.setattr(waf, "RULES_REV", waf.RULES_REV + 1)
+    assert waf.refresh_rules() is True and len(calls) == 2          # a newer release: once more
