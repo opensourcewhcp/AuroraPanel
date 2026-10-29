@@ -140,6 +140,10 @@ def create(name: str, path: str, owner: str, clone_url: str | None = None, branc
             log(f"• Cloning {_mask(url)} into {p} as {owner}…")
             argv = ["git", "clone", "--progress"] + (["--branch", branch] if branch else []) + [url, str(p)]
             r = _as(owner, argv, _env(repo), timeout=1800)
+            if r.returncode != 0 and branch and "Remote branch" in (r.stderr or "") and "not found" in (r.stderr or ""):
+                log(f"• The remote has no branch called {branch}; cloning its default branch instead…")
+                shutil.rmtree(p, ignore_errors=True)
+                r = _as(owner, ["git", "clone", "--progress", url, str(p)], _env(repo), timeout=1800)
             for line in (r.stderr or "").splitlines()[-15:]:
                 log("  " + line)
             if r.returncode != 0:

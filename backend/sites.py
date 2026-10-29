@@ -16,6 +16,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import platform
+import os
 import re
 import shutil
 import subprocess
@@ -162,17 +163,69 @@ def _cert_info(s: dict) -> dict | None:
     return sslcerts._inspect(Path(path))
 
 
+HTTPS_FIRST_LINK = "000-default-ssl.conf"   # the built-in https site's link, named so Apache loads it first
+
+
+def _link_path(conf_name: str) -> Path:
+    """Where the enabled link of a conf lives. The built-in https site is linked as 000-default-ssl.conf
+    so it stays the default for port 443: a request without a server name (by IP address) then gets the
+    built-in site instead of whichever named site sorts first, which Apache would answer with 421."""
+    if conf_name == "default-ssl.conf":
+        first = ENABLED / HTTPS_FIRST_LINK
+        if first.exists() or not (ENABLED / conf_name).exists():
+            return first
+    return ENABLED / conf_name
+
+
+def _enabled(conf_name: str) -> bool:
+    return _link_path(conf_name).exists() or (ENABLED / conf_name).exists()
+
+
+def ensure_https_first() -> bool:
+    """Move the built-in https site's link to 000-default-ssl.conf (a2ensite names it default-ssl.conf).
+    Returns True when the layout changed. Apache is asked first; a refusal puts the old link back."""
+    old = ENABLED / "default-ssl.conf"
+    new = ENABLED / HTTPS_FIRST_LINK
+    if not (old.exists() or old.is_symlink()) or new.exists():
+        return False
+    if old.is_symlink():
+        target = os.readlink(old)
+        new.symlink_to(target)
+        old.unlink()
+    else:
+        old.rename(new)   # a hand-edited copy keeps its text, only the name changes
+    test = _run(["apache2ctl", "configtest"])
+    if test.returncode != 0:
+        if new.is_symlink():
+            new.unlink(missing_ok=True)
+            old.symlink_to(target)
+        else:
+            new.rename(old)
+        return False
+    if _run(["systemctl", "reload", "apache2"]).returncode != 0:
+        _run(["systemctl", "restart", "apache2"])
+    return True
+
+
+def _live_path(conf_name: str) -> Path | None:
+    """A hand-copied regular file in sites-enabled for this conf (under either name), or None."""
+    names = [HTTPS_FIRST_LINK, conf_name] if conf_name == "default-ssl.conf" else [conf_name]
+    for n in names:
+        e = ENABLED / n
+        if e.exists() and not e.is_symlink():
+            return e
+    return None
+
+
 def _hand_copy(conf: Path) -> bool:
     """True when sites-enabled/<conf> is a regular file (someone copied and edited it there) instead of
     the link a2ensite makes. Apache loads it fine, but a2ensite/a2dissite can't manage it."""
-    e = ENABLED / conf.name
-    return e.exists() and not e.is_symlink()
+    return _live_path(conf.name) is not None
 
 
 def _live_conf(conf: Path) -> Path:
     """The file Apache actually loads: a hand-copied regular file in sites-enabled wins over sites-available."""
-    e = ENABLED / conf.name
-    return e if e.exists() and not e.is_symlink() else conf
+    return _live_path(conf.name) or conf
 
 
 def _has_http(conf: Path) -> bool:
@@ -197,7 +250,7 @@ def list_sites() -> dict:
         cert = _cert_info(s) if s["ssl"] != "none" else None
         sites.append({
             "server_name": s["server_name"], "aliases": s["aliases"], "docroot": s["docroot"],
-            "conf": f.name, "enabled": (ENABLED / f.name).exists(), "managed": s["_managed"],
+            "conf": f.name, "enabled": _enabled(f.name), "managed": s["_managed"],
             "system": system, "ssl": s["ssl"], "force_https": s["force_https"],
             "has_http": _has_http(f) if system else True, "hand_copy": system and _hand_copy(f),
             "redirect_url": s["redirect_url"], "maintenance": s["maintenance"],
@@ -221,7 +274,7 @@ def _builtin_https() -> dict | None:
         s = _settings_from_conf(_live_conf(conf))
     except (SiteError, OSError):
         return None
-    enabled = (ENABLED / conf.name).exists()
+    enabled = _enabled(conf.name)
     ssl = s["ssl"] if enabled else "none"
     return {"conf": conf.name, "enabled": enabled, "ssl": ssl, "cert": s["cert"], "key": s["key"], "chain": s["chain"],
             "cert_info": _cert_info(s) if ssl != "none" else None}
@@ -238,7 +291,7 @@ def get_site(name: str) -> dict:
     cert = _cert_info(s) if s["ssl"] != "none" else None
     has_http = _has_http(conf) if system else True
     return {"settings": {k: v for k, v in s.items() if not k.startswith("_")}, "managed": s["_managed"],
-            "conf": conf.name, "system": system, "enabled": (ENABLED / conf.name).exists(),
+            "conf": conf.name, "system": system, "enabled": _enabled(conf.name),
             "hand_copy": system and _hand_copy(conf), "has_http": has_http, "https": _builtin_https() if system and has_http else None,
             "cert": cert, "certbot": bool(shutil.which("certbot")),
             "le_available": (LE_LIVE / s["server_name"] / "fullchain.pem").exists(),
@@ -603,25 +656,42 @@ def quick_toggle(name: str, key: str, value: bool) -> dict:
 
 def _set_system_enabled(conf: Path, enabled: bool) -> dict:
     """a2ensite/a2dissite a stock conf without touching its contents."""
-    link = ENABLED / conf.name
-    was_enabled = link.exists()
+    link = _link_path(conf.name)
+    was_enabled = _enabled(conf.name)
     if enabled == was_enabled:
         return {"ok": True}
-    if link.exists() and not link.is_symlink():
+    if (ENABLED / conf.name).exists() and not (ENABLED / conf.name).is_symlink():
         raise SiteError(f"sites-enabled/{conf.name} is a hand-edited copy, not a link to sites-available/{conf.name}, so Apache's "
                         "a2dissite can't turn it off. Use “Fix the layout” on this site's page first: the panel keeps the file "
                         "exactly as Apache serves it, backs up both copies and turns it into the normal link.")
+    first = conf.name == "default-ssl.conf"
     if enabled:
         if "SSLEngine" in conf.read_text(errors="replace") and not (APACHE / "mods-enabled" / "ssl.load").exists():
             _run(["a2enmod", "-q", "ssl"])
-        r = _run(["a2ensite", "-q", conf.name])
+        if first:
+            link.symlink_to(f"../sites-available/{conf.name}")
+            r = subprocess.CompletedProcess([], 0, "", "")
+        else:
+            r = _run(["a2ensite", "-q", conf.name])
     else:
-        r = _run(["a2dissite", "-q", conf.name])
-    if r.returncode != 0 or link.exists() != enabled:
+        if first:
+            for lp in (ENABLED / HTTPS_FIRST_LINK, ENABLED / conf.name):
+                if lp.is_symlink():
+                    lp.unlink()
+            r = subprocess.CompletedProcess([], 0, "", "")
+        else:
+            r = _run(["a2dissite", "-q", conf.name])
+    if r.returncode != 0 or _enabled(conf.name) != enabled:
         raise SiteError((r.stderr + r.stdout).strip() or f"Could not {'enable' if enabled else 'disable'} {conf.name}")
     test = _run(["apache2ctl", "configtest"])
     if test.returncode != 0:
-        _run(["a2dissite" if enabled else "a2ensite", "-q", conf.name])
+        if first:
+            if enabled:
+                link.unlink(missing_ok=True)
+            else:
+                link.symlink_to(f"../sites-available/{conf.name}")
+        else:
+            _run(["a2dissite" if enabled else "a2ensite", "-q", conf.name])
         err = "\n".join(l for l in (test.stderr + test.stdout).splitlines() if "AH00558" not in l).strip()
         raise SiteError("Apache rejected the config, nothing was changed:\n" + err[:1500])
     r = _run(["systemctl", "reload", "apache2"])
@@ -643,9 +713,11 @@ def adopt_system_conf(conf_name: str) -> dict:
     _require()
     if conf_name not in SYSTEM_CONFS:
         raise SiteError("Only the two built-in sites can be fixed this way")
-    conf, live = AVAIL / conf_name, ENABLED / conf_name
+    conf = AVAIL / conf_name
     if not _hand_copy(conf):
         return {"ok": True, "changed": False}
+    live = _live_path(conf_name)
+    link = _link_path(conf_name)
     ts = int(time.time())
     SITE_BAK.mkdir(parents=True, exist_ok=True)
     text = live.read_text(errors="replace")
@@ -655,10 +727,10 @@ def adopt_system_conf(conf_name: str) -> dict:
         shutil.copy2(conf, SITE_BAK / f"{conf_name}.available.{ts}")
     conf.write_text(text, encoding="utf-8")
     live.unlink()
-    live.symlink_to(f"../sites-available/{conf_name}")
+    link.symlink_to(f"../sites-available/{conf_name}")
     test = _run(["apache2ctl", "configtest"])
     if test.returncode != 0:  # put everything back exactly as it was
-        live.unlink(missing_ok=True)
+        link.unlink(missing_ok=True)
         live.write_text(text, encoding="utf-8")
         if old_avail is None:
             conf.unlink(missing_ok=True)
@@ -768,7 +840,7 @@ def set_system_ssl(conf_name: str, mode: str, cert: str = "", key: str = "", cha
             live.write_text(text, encoding="utf-8")
             err = "\n".join(l for l in (test.stderr + test.stdout).splitlines() if "AH00558" not in l).strip()
             raise SiteError("Apache rejected the certificate, nothing was changed:\n" + err[:1500])
-    if not (ENABLED / conf.name).exists():
+    if not _enabled(conf.name):
         try:
             return _set_system_enabled(conf, True)   # reloads Apache
         except SiteError:
@@ -813,7 +885,7 @@ def save_conf_text(name: str, text: str) -> dict:
         live.write_text(old, encoding="utf-8")
         err = "\n".join(l for l in (test.stderr + test.stdout).splitlines() if "AH00558" not in l).strip()
         raise SiteError("Apache rejected the file, nothing was changed:\n" + err[:1500])
-    if (ENABLED / conf.name).exists():
+    if _enabled(conf.name):
         r = _run(["systemctl", "reload", "apache2"])
         if r.returncode != 0:
             _run(["systemctl", "restart", "apache2"])

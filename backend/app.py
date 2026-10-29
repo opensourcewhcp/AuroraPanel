@@ -3952,6 +3952,8 @@ def _metrics_start():
     try:
         version.prune_updates()  # only the build you came from is kept, plus a snapshot of this one
         threading.Thread(target=version.snapshot_current, name="snapshot", daemon=True).start()
+        # The built-in https site answers requests made by IP address: keep it first for port 443.
+        threading.Thread(target=lambda: sites.IS_LINUX and sites.AVAIL.exists() and sites.ensure_https_first(), name="https-first", daemon=True).start()
     except Exception as exc:
         print(f"aurora: couldn't tidy the updates folder: {exc}", flush=True)
     made = config.ensure_initial_credentials()
