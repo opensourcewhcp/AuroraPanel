@@ -118,6 +118,7 @@ def test_remote_account_keeps_settings_never_the_password(mail_state):
         mail.remote_add({"preset": "custom", "email": "a@b.c", "imap_host": "bad host!"})
     a = mail.remote_add({"preset": "gmail", "email": "Me@Gmail.com", "label": "Gmail"})
     assert a["imap"] == "ssl://imap.gmail.com:993" and a["smtp"] == "ssl://smtp.gmail.com:465" and a["username"] == "me@gmail.com"
+    assert "_host" not in a["webmail"] and "imap.gmail.com" not in a["webmail"]   # the server's name never travels in a link
     raw = json.loads((mail_state / "state.json").read_text(encoding="utf-8"))
     assert "password" not in json.dumps(raw)
     with pytest.raises(mail.MailError):

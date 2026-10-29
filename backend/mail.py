@@ -2823,7 +2823,9 @@ def remote_accounts() -> list[dict]:
         x = dict(a)
         x["imap"] = _remote_spec(a, "imap")
         x["smtp"] = _remote_spec(a, "smtp")
-        x["webmail"] = f"{webmail_url()}?_user={quote(a['username'])}&_host={quote(x['imap'])}" if webmail_url() else ""
+        # Only the user name goes into the link: the mail server's name stays out of URLs, status bars and browser
+        # history (the account is picked from webmail's own dropdown).
+        x["webmail"] = f"{webmail_url()}?_user={quote(a['username'])}" if webmail_url() else ""
         out.append(x)
     return out
 
