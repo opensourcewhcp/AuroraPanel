@@ -31,9 +31,11 @@ PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
 APPS = {"wordpress": "WordPress", "nextcloud": "Nextcloud", "drupal": "Drupal", "dokuwiki": "DokuWiki",
         "phpmyadmin": "phpMyAdmin", "phpbb": "phpBB", "xenforo": "XenForo", "roundcube": "Webmail (Roundcube)"}
 # Roundcube has no CRS exclusion package. Under /webmail/ its own login and CSRF tokens guard it, so the
-# rule groups it trips by design are lifted there: remote-file-inclusion (a mail host like ssl://imap.gmail.com
-# in the sign-in link looks like one), XSS and SQL injection (HTML mail being written and read).
+# rules it trips by design are lifted there: remote-file-inclusion (a mail host like ssl://imap.gmail.com in
+# the sign-in link looks like one), XSS and SQL injection (HTML mail being written and read), and the
+# double-URL-encoding checks 920230/920240 (its sign-in form carries an already-encoded _url field).
 ROUNDCUBE_RULE = ('SecRule REQUEST_URI "@beginsWith /webmail/" "id:1000103,phase:1,pass,nolog,t:none,'
+                  'ctl:ruleRemoveById=920230,ctl:ruleRemoveById=920240,'
                   'ctl:ruleRemoveById=931100-931199,ctl:ruleRemoveById=941100-941999,ctl:ruleRemoveById=942100-942999"')
 # CRS bookkeeping rules: the score summary, not an attack type of their own.
 _SUMMARY = {"949110", "959100", "980130", "980140", "980145", "959180"}

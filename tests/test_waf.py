@@ -8,7 +8,7 @@ def test_roundcube_exception_is_rendered_only_for_webmail(tmp_path, monkeypatch)
     assert "roundcube" in s["apps"] and "roundcube" in s["seen"]
     pre = waf.render_pre(s)
     assert waf.ROUNDCUBE_RULE in pre and "crs_exclusions_roundcube" not in pre and "crs_exclusions_wordpress" in pre
-    assert '@beginsWith /webmail/' in waf.ROUNDCUBE_RULE and "931100-931199" in waf.ROUNDCUBE_RULE
+    assert '@beginsWith /webmail/' in waf.ROUNDCUBE_RULE and "931100-931199" in waf.ROUNDCUBE_RULE and "ruleRemoveById=920230" in waf.ROUNDCUBE_RULE
     s["apps"] = [a for a in s["apps"] if a != "roundcube"]
     assert "1000103" not in waf.render_pre(s)
 
