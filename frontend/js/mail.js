@@ -215,7 +215,7 @@ window.AuroraMail = (ui) => {
       el("p", { class: "muted", text: "The name this server introduces itself with to other mail servers. Gmail and Outlook check that it points to this server and matches the IP's reverse DNS (PTR)." }),
       el("div", { class: "em-toggle" }, [autoSw, el("div", {}, [el("b", { text: "Choose automatically (recommended)" }),
         el("span", { class: "muted", text: det.hostname ? `Best name now: ${det.hostname}. ${det.reason}` : "Follows your domains' DNS and the IP's reverse DNS." })])]),
-      det.ptr !== undefined ? kv([["This server's IP", det.ip || ", "], ["Its reverse DNS (PTR)", det.ptr ? det.ptr : "none"],
+      det.ptr !== undefined ? kv([["This server's IP", det.ip || "n/a"], ["Its reverse DNS (PTR)", det.ptr ? det.ptr : "none"],
         ["Matches the server name", det.ptr && det.ptr === st.hostname ? pill("yes", "good") : pill("no, ask your provider", "warn")]]) : null,
       el("div", { class: "toolbar" }, [hostIn, btn("Use this name", () => { autoSw.querySelector("input").checked = false; call(() => API.mailHostname(hostIn.value.trim()), "Server name saved", () => navigate("email", { history: "none" })); }, "btn-primary")])].filter(Boolean)));
   }
@@ -889,7 +889,7 @@ window.AuroraMail = (ui) => {
         return el("button", { type: "button", class: `em-trk-row ${s[1]}`, onclick: () => detail(x) }, [
           el("span", { class: `em-ev ${s[1]}`, title: s[0], text: s[2] }),
           el("span", { class: `em-trk-dir ${e.dir}`, title: e.dir === "in" ? "Received by this server" : "Sent out by this server", text: e.dir === "in" ? "↓ In" : "↑ Out" }),
-          el("span", { class: "em-trk-who" }, [el("span", { class: "em-ell", text: x.from || "(no sender)" }), el("span", { class: "muted", text: " → " }), el("b", { class: "em-ell", text: x.to || ", " })]),
+          el("span", { class: "em-trk-who" }, [el("span", { class: "em-ell", text: x.from || "(no sender)" }), el("span", { class: "muted", text: " → " }), el("b", { class: "em-ell", text: x.to || "n/a" })]),
           el("span", { class: "em-trk-what em-ell", title: x.result || "", text: e.what }),
           x.spam != null ? el("span", { class: `em-trk-spam ${x.spam >= 5 ? "hi" : ""}`, title: "Spam score (5 or more = likely spam)", text: x.spam.toFixed(1) }) : el("span"),
           el("span", { class: "muted em-nowrap em-trk-time", text: new Date(x.time).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) }),
@@ -901,9 +901,9 @@ window.AuroraMail = (ui) => {
       openModal("What happened to this email", el("div", {}, [
         el("div", { class: `em-trk-verdict ${s[1]}` }, [el("b", { text: e.what }), e.fix ? el("span", { text: e.fix }) : null]),
         kv([["Status", pill(s[0], s[1])], ["Direction", e.dir === "in" ? "Received by this server" : "Sent out by this server"], ["Time", new Date(x.time).toLocaleString()],
-          ["From", x.from || ", "], ["To", x.to || ", "], ["Handed to", x.relay ? `${x.relay}${e.prov ? ` (${e.prov})` : ""}` : ", "], ["Took", x.delay != null ? `${x.delay}s` : ", "],
-          ["Came from", x.client || ", "], ["Signed-in user", x.user || ", "], ["Spam score", x.spam != null ? `${x.spam} ${x.spam >= 5 ? "(likely spam)" : "(fine)"}` : ", "], ["Queue ID", x.id || ", "]]),
-        el("h4", { class: "em-sub", text: "The receiving server's exact answer" }), el("pre", { class: "log", text: x.result || ", " })]),
+          ["From", x.from || "n/a"], ["To", x.to || "n/a"], ["Handed to", x.relay ? `${x.relay}${e.prov ? ` (${e.prov})` : ""}` : "n/a"], ["Took", x.delay != null ? `${x.delay}s` : "n/a"],
+          ["Came from", x.client || "n/a"], ["Signed-in user", x.user || "n/a"], ["Spam score", x.spam != null ? `${x.spam} ${x.spam >= 5 ? "(likely spam)" : "(fine)"}` : "n/a"], ["Queue ID", x.id || "n/a"]]),
+        el("h4", { class: "em-sub", text: "The receiving server's exact answer" }), el("pre", { class: "log", text: x.result || "n/a" })]),
         [x.to ? btn("Trace this address", () => traceModal(x.to), "btn-ghost") : null, x.status === "deferred" ? btn("Mail Queue", () => { closeModal(); navigate("mailqueue"); }, "btn-ghost") : null,
           /spf|dkim|dmarc|spam/i.test(x.result || "") ? btn("Deliverability", () => { closeModal(); navigate("deliverability"); }, "btn-ghost") : null].filter(Boolean));
     }
@@ -1066,8 +1066,8 @@ window.AuroraMail = (ui) => {
       const accounts = kind.value() === "accounts";
       out.append(el("div", { class: "em-imp-sum" }, [pill(`${r.valid} ready`, "good"), r.invalid ? pill(`${r.invalid} with problems`, "bad") : null, dry ? null : pill("imported", "good")].filter(Boolean)),
         el("div", { class: "table-wrap" }, el("table", { class: "em-table" }, [el("thead", {}, el("tr", {}, ["#", accounts ? "Address" : "Source", accounts ? "Password" : "Destination", accounts ? "Quota" : "", "Status"].map((h) => el("th", { text: h })))),
-          el("tbody", {}, r.rows.map((x) => el("tr", {}, [el("td", { text: x.line }), el("td", { text: x.address || x.source || ", " }),
-            el("td", { class: "em-mono", text: accounts ? (x.password ? (x.generated ? (dry ? "generated on import" : x.password) : "••••••••") : ", ") : x.dest || ", " }),
+          el("tbody", {}, r.rows.map((x) => el("tr", {}, [el("td", { text: x.line }), el("td", { text: x.address || x.source || "n/a" }),
+            el("td", { class: "em-mono", text: accounts ? (x.password ? (x.generated ? (dry ? "generated on import" : x.password) : "••••••••") : "n/a") : x.dest || "n/a" }),
             el("td", { text: accounts && x.quota_mb != null ? mb(x.quota_mb) : "" }),
             el("td", {}, x.ok ? pill(dry ? "ok" : "created", "good") : el("span", { class: "em-err", text: x.error }))])))])));
       if (dry && r.valid) out.append(el("div", { class: "toolbar" }, [btn(`Import ${r.valid} ${accounts ? "account" : "forwarder"}${r.valid > 1 ? "s" : ""}`, () => run(false), "btn-primary")]));
@@ -1131,7 +1131,7 @@ window.AuroraMail = (ui) => {
     const days = c.expires ? Math.round((new Date(c.expires) - Date.now()) / 864e5) : null;
     body.append(el("div", { class: "card" }, [el("div", { class: "em-card-h" }, [el("h3", { text: "Certificate" }), pill(d.source === "self" ? "Self-signed" : "Let's Encrypt", d.source === "self" ? "warn" : "good")]),
       kv([["Mail server name", d.hostname], ["Issued to", (c.names || []).join(", ") || c.subject], ["Issuer", c.issuer],
-        ["Expires", c.expires ? `${new Date(c.expires).toLocaleDateString()}${days != null ? ` (${days} days${d.source !== "self" ? ", renews automatically" : ""})` : ""}` : ", "],
+        ["Expires", c.expires ? `${new Date(c.expires).toLocaleDateString()}${days != null ? ` (${days} days${d.source !== "self" ? ", renews automatically" : ""})` : ""}` : "n/a"],
         ["Covers the server name", d.covers_host ? pill("yes", "good") : pill("no", "bad")]]),
       d.source === "self" ? el("div", { class: "dm-note" }, [icon("info", 15), el("span", { text: "Mail apps show a warning with a self-signed certificate. A free Let's Encrypt certificate fixes that, the server name must point to this server and port 80 must be reachable." })]) : null,
       el("div", { class: "toolbar" }, [

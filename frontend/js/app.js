@@ -275,7 +275,7 @@
     activity: "t_activity", isolation: "t_isolate", dockerapps: "t_docker", servers: "t_servers", mysites: "globe", panelusers: "t_usergear", wptoolkit: "t_wptool", migrate: "t_migrate", alerts: "t_bell", schedbackups: "t_cloudup", updates: "t_update", autossl: "t_autossl",
     visitors: "visitors", errors: "errors", bandwidth: "gauge", rawaccess: "rawlog", analytics: "chart", resources: "dashboard",
     ssh: "key", ipblocker: "ban", ssl: "lock", panelhttps: "lock", tokens: "token", hotlink: "link", secreport: "listing",
-    leech: "trap", modsec: "shield", security: "phone", fixperms: "home", virus: "virus", globalsec: "shield",
+    leech: "trap", modsec: "shield", instaban: "trap", security: "phone", fixperms: "home", virus: "virus", globalsec: "shield",
     files: "folder", shadow: "shadow", disk: "disk", backups: "backup", cron: "cron", indexes: "indexes",
     errorpages: "error", handlers: "handler", mime: "mime", dns: "dns",
     appmgr: "packages", sysapps: "services", phpver: "brick", password: "lock", accountprefs: "services",
@@ -814,7 +814,7 @@
     indexes: "Indexes", mime: "MIME Types", errorpages: "Error Pages", handlers: "Apache Handlers",
     virus: "Virus Scanner", dns: "Track DNS",
     ssh: "SSH Access", ipblocker: "IP Blocker & Trust", ssl: "SSL/TLS Certificates", tokens: "Manage API Tokens",
-    hotlink: "Hotlink Protection", redirects: "Redirects", modsec: "WAF Firewall", globalsec: "Global Security", secreport: "Security Report", activity: "Activity Log", isolation: "Site Isolation", dockerapps: "Docker", servers: "Servers", mysites: "My Websites", panelusers: "Panel Users", wptoolkit: "WordPress Toolkit", migrate: "Move from cPanel", alerts: "Alerts", schedbackups: "Scheduled Backups", updates: "Updates", autossl: "AutoSSL", ddnshosts: "Dynamic DNS", visitors: "Visitors", errors: "Errors", bandwidth: "Bandwidth", rawaccess: "Raw Access", analytics: "Analytics", resources: "Resource Usage", leech: "Fail2ban",
+    hotlink: "Hotlink Protection", redirects: "Redirects", modsec: "WAF Firewall", instaban: "InstaBan", globalsec: "Global Security", secreport: "Security Report", activity: "Activity Log", isolation: "Site Isolation", dockerapps: "Docker", servers: "Servers", mysites: "My Websites", panelusers: "Panel Users", wptoolkit: "WordPress Toolkit", migrate: "Move from cPanel", alerts: "Alerts", schedbackups: "Scheduled Backups", updates: "Updates", autossl: "AutoSSL", ddnshosts: "Dynamic DNS", visitors: "Visitors", errors: "Errors", bandwidth: "Bandwidth", rawaccess: "Raw Access", analytics: "Analytics", resources: "Resource Usage", leech: "Fail2ban",
     fixperms: "Fix Home Permissions", vhosts: "Domains", revproxy: "Reverse Proxy", dyndns: "Dynamic DNS Updater", zones: "Zone Editor",
     mysql: "Manage Databases", mysqlwiz: "MariaDB Wizard", pgsql: "PostgreSQL Databases",
     pgwiz: "PostgreSQL Wizard",
@@ -1148,6 +1148,7 @@
       { label: "Hotlink Protection", icon: "link", view: "hotlink" },
       { label: "Fail2ban", icon: "trap", view: "leech" },
       { label: "WAF Firewall", icon: "shield", view: "modsec" },
+      { label: "InstaBan", icon: "trap", view: "instaban" },
       { label: "Site Isolation", icon: "t_isolate", view: "isolation" },
       { label: "Two-Factor Authentication", icon: "phone", view: "security" },
       { label: "Activity Log", icon: "t_activity", view: "activity" },
@@ -9190,7 +9191,7 @@
 
       // Start something: the four doors, each saying what is behind it.
       const go = (ico, title, text, view, color) => el("button", { type: "button", class: "ah-go", style: `--c:${color}`, onclick: () => navigate(view) },
-        [el("span", { class: "ah-go-ico" }, icon(ico, 18)), el("div", {}, [el("b", { text: title }), el("span", { text })])]);
+        [el("span", { class: "ah-go-ico" }, icon(ico, 24)), el("div", {}, [el("b", { text: title }), el("span", { text })])]);
       root.append(el("div", { class: "ah-start" }, [
         go("wordpress", "Install WordPress", "The web's favourite CMS, with an admin account made for you.", "wordpress", KIND.wordpress[1]),
         go("apps", "Browse the App Installer", `${catalogN || "Dozens of"} apps: blogs, shops, forums, wikis, clouds and frameworks.`, "appstore", KIND.web[1]),

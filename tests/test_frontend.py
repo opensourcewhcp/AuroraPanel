@@ -181,3 +181,21 @@ def test_small_fixes_everywhere():
     assert "inboxMenu.start();" in app_js and "API.mailInbox()" in app_js and 'text: "View all"' in app_js
     html = (FRONT / "index.html").read_text(encoding="utf-8")
     assert 'id="am-mail"' in html and 'id="avatar-dot"' in html
+
+
+def test_instaban_and_activity_cleanup_in_the_interface():
+    """Security → InstaBan: patterns are shown as text only (never HTML), the page is registered everywhere;
+    Activity Log has a Clean up dialog whose copy goes to the Recycle Bin."""
+    extras = (FRONT / "js" / "extras.js").read_text(encoding="utf-8")
+    view = extras[extras.index("async function viewInstaBan("):extras.index("//  Metrics → Raw Access")]
+    assert "html:" not in view and "innerHTML =" not in view.replace("body.innerHTML = \"\"", "")   # attacker text is never rendered as HTML
+    for s in ("API.instaban()", "API.instabanAdd(pat.value, kind.value, note.value)", "API.instabanImport(ta.value)", "API.instabanDelete(p.id)", "API.instabanClear()",
+              'raw: true, text: p.pattern', 'raw: true, text: `${h.method} ${h.target}`', "reportIp(h.ip, load)", "ipCard(h.ip, load)", "Trusted addresses are never banned"):
+        assert s in view, s
+    assert "instaban: viewInstaBan" in extras
+    app_js = (FRONT / "js" / "app.js").read_text(encoding="utf-8")
+    assert 'instaban: "InstaBan"' in app_js and '{ label: "InstaBan", icon: "trap", view: "instaban" }' in app_js
+    assert 'data-view="instaban"' in (FRONT / "index.html").read_text(encoding="utf-8")
+    ops = (FRONT / "js" / "ops.js").read_text(encoding="utf-8")
+    assert '["ib", API.instaban]' in ops and 'view: "instaban"' in ops
+    assert "API.auditPurge(mode, 30, keep.checked)" in ops and "Keep a copy in the Recycle Bin" in ops

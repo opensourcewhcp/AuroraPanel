@@ -110,6 +110,75 @@ def entries(days: int = 30, q: str = "", user: str = "", only_failed: bool = Fal
     return {"entries": out[:limit], "total": len(out), "users": sorted(users)}
 
 
+PURGE_MODES = ("tests", "failed", "older", "all")
+
+
+def purge(mode: str, days: int = 30, keep_copy: bool = True) -> dict:
+    """Take entries out of the log: the test suite's (ip "testclient"), failed attempts, everything older
+    than N days, or everything. With keep_copy the removed lines go to the File Manager's recycle bin as
+    activity-log-<date>.jsonl, so nothing is gone until the bin is emptied."""
+    if mode not in PURGE_MODES:
+        raise ValueError("Unknown clean-up mode")
+    cutoff = time.time() - max(1, int(days)) * 86400
+
+    def drop(e: dict) -> bool:
+        if mode == "tests":
+            return e.get("ip") == "testclient" or e.get("user") == "tester"
+        if mode == "failed":
+            return not e.get("ok")
+        if mode == "older":
+            return e.get("ts", 0) < cutoff
+        return True
+
+    removed: list[str] = []
+    kept_total = 0
+    with _lock:
+        files = [LOG] + [LOG.with_name(f"{LOG.name}.{i}") for i in range(1, KEEP + 1)]
+        for f in files:
+            try:
+                lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            keep: list[str] = []
+            for line in lines:
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    keep.append(line)
+                    continue
+                (removed if drop(e) else keep).append(line)
+            kept_total += len(keep)
+            try:
+                f.write_text("".join(x + "\n" for x in keep), encoding="utf-8")
+                os.chmod(f, 0o600)
+            except OSError:
+                pass
+    archive = None
+    if removed and keep_copy:
+        archive = _to_recycle_bin(removed)
+    return {"removed": len(removed), "kept": kept_total, "archive": archive}
+
+
+def _to_recycle_bin(lines: list[str]) -> dict | None:
+    """The removed lines as one file in the File Manager's recycle bin; restoring it lands in the backup folder."""
+    import uuid
+    try:
+        from . import backups, files
+        files._refresh_root()
+        tdir = files.TRASH_DIR
+        tdir.mkdir(parents=True, exist_ok=True)
+        name = f"activity-log-{time.strftime('%Y%m%d-%H%M%S')}.jsonl"
+        tid = f"{int(time.time())}-{uuid.uuid4().hex[:6]}"
+        (tdir / tid).write_text("".join(x + "\n" for x in lines), encoding="utf-8")
+        os.chmod(tdir / tid, 0o600)
+        meta = {"id": tid, "name": name, "original": str(backups.BACKUP_DIR / name), "original_parent": str(backups.BACKUP_DIR),
+                "is_dir": False, "deleted_at": time.time()}
+        (tdir / f"{tid}.json").write_text(json.dumps(meta), encoding="utf-8")
+        return {"id": tid, "name": name, "lines": len(lines)}
+    except Exception:
+        return None
+
+
 def _user_from_scope(scope) -> str:
     """Who is calling — the same rules as auth.require_auth, without raising."""
     from . import auth, apitokens

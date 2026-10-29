@@ -29,6 +29,8 @@ ADMIN, PASSWORD = "tester", "correct-horse-battery"
 @pytest.fixture(autouse=True)
 def isolated_config(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "aurora_config.json")
+    from backend import audit
+    monkeypatch.setattr(audit, "LOG", tmp_path / "audit.jsonl")  # the suite's requests never land in the real Activity Log
     yield
 
 

@@ -1,0 +1,408 @@
+"""InstaBan: a list of payloads, paths and pages that only attackers ask for. The first request that
+matches one gets its address banned at the firewall for a time you choose, the hit is kept as evidence
+(what was tried, from where, against which site), and the address can be reported to its abuse desk.
+
+Sources: every Apache access log on this server, read incrementally every few seconds by a small
+thread inside the panel. Trusted addresses (IP Blocker & Trust) are never banned, nor is loopback.
+
+Everything stored here is attacker-controlled text (payloads, request lines, user agents). The API
+hands it to the panel as plain JSON and the page shows it with textContent only, so a payload can be
+looked at, listed and exported without ever being rendered or run."""
+from __future__ import annotations
+
+import ipaddress
+import json
+import os
+import re
+import secrets
+import threading
+import time
+from pathlib import Path
+from urllib.parse import unquote
+
+from . import guard
+
+STATE = Path("/var/lib/aurora/instaban.json")
+LOG_DIR = Path("/var/log/apache2")
+MAX_READ = 4 * 1024 * 1024
+MAX_HITS = 500
+TTL_CHOICES = {"1h": 3600, "6h": 6 * 3600, "24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400, "forever": 0}
+KINDS = ("contains", "starts", "regex")
+_LOCK = threading.Lock()
+
+
+class InstaBanError(Exception):
+    pass
+
+
+# Paths and payloads no visitor of a normal website ever asks for. Each line is a plain substring
+# of the URL-decoded, lower-cased request target (path + query).
+DEFAULT_PATTERNS = [
+    ("/.git/", "Source control folder: git"), ("/.svn/", "Source control folder: subversion"), ("/.hg/", "Source control folder: mercurial"),
+    ("/.env", "Environment file with secrets"), ("/.aws/credentials", "Cloud keys"), ("/.ssh/id_rsa", "SSH private key"),
+    ("/etc/passwd", "System account file"), ("/../", "Path traversal"), ("/wp-config.php.", "WordPress config backups (.bak, .old, ~)"),
+    ("/vendor/phpunit/", "PHPUnit remote code execution probe"), ("eval-stdin.php", "PHPUnit remote code execution probe"),
+    ("/cgi-bin/.%2e/", "Apache path traversal (CVE-2021-41773)"), ("/boaform/", "Router exploit"), ("/hnap1", "Router exploit (HNAP)"),
+    ("/shell?", "Command injection probe"), ("/actuator/env", "Spring Boot secrets endpoint"), ("/_ignition/execute-solution", "Laravel debug RCE"),
+    ("/php-cgi/php-cgi.exe", "PHP CGI on Windows exploit"), ("allow_url_include=", "PHP CGI argument injection"), ("auto_prepend_file=", "PHP CGI argument injection"),
+    ("<script", "Cross-site scripting payload"), ("union select", "SQL injection payload"), ("wget+http", "Download-and-run payload"), ("chmod+777", "Download-and-run payload"),
+    ("/xmlrpc.php?rsd", "WordPress XML-RPC scanner"), ("/wp-content/plugins/wp-file-manager/", "wp-file-manager exploit"),
+]
+
+_LINE = re.compile(r'^(?:(?P<vhost>\S+):\d+ )?(?P<ip>[0-9a-fA-F:.]+) \S+ \S+ \[(?P<time>[^\]]*)\] "(?P<req>[^"]*)" (?P<status>\d{3}) (?P<size>\S+)(?: "(?P<ref>[^"]*)" "(?P<ua>[^"]*)")?')
+
+
+def _default() -> dict:
+    return {"version": 1, "enabled": False, "ttl": "24h", "report": False, "patterns": [], "hits": [], "files": {},
+            "stats": {"hits": 0, "bans": 0, "reports": 0}, "last_scan": 0}
+
+
+def load() -> dict:
+    s = _default()
+    try:
+        s.update(json.loads(STATE.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        pass
+    if not s["patterns"] and not s.get("seeded"):
+        now = int(time.time())
+        s["patterns"] = [{"id": _pid(), "pattern": p, "kind": "contains", "note": n, "added": now, "hits": 0} for p, n in DEFAULT_PATTERNS]
+        s["seeded"] = True
+    return s
+
+
+def save(s: dict) -> None:
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = STATE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(s, indent=1), encoding="utf-8")
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass
+    tmp.replace(STATE)
+
+
+def _pid() -> str:
+    return secrets.token_hex(4)
+
+
+# ---------------------------------------------------------------- patterns
+def _check_pattern(pattern: str, kind: str) -> tuple[str, str]:
+    p = (pattern or "").strip()
+    if kind not in KINDS:
+        raise InstaBanError("Kind must be contains, starts or regex")
+    if not p:
+        raise InstaBanError("Enter the payload or path")
+    if len(p) > 200 or "\n" in p:
+        raise InstaBanError("One pattern per line, up to 200 characters")
+    if kind == "regex":
+        try:
+            re.compile(p, re.I)
+        except re.error as exc:
+            raise InstaBanError(f"Not a valid regular expression: {exc}")
+        if len(p) < 4:
+            raise InstaBanError("A regular expression that short would match nearly everything")
+    else:
+        p = p.lower()
+        if len(p) < 4:
+            raise InstaBanError("Too short: that would match ordinary pages too")
+        if p in ("/", "/index", "/index.php", "/index.html", "http", "https", ".php", ".html", "/wp-", "/wp-admin", "/wp-login.php", "/admin"):
+            raise InstaBanError("That matches normal traffic; real visitors would be banned")
+    return p, kind
+
+
+def add_pattern(pattern: str, kind: str = "contains", note: str = "") -> dict:
+    p, kind = _check_pattern(pattern, kind)
+    with _LOCK:
+        s = load()
+        if any(x["pattern"] == p and x["kind"] == kind for x in s["patterns"]):
+            raise InstaBanError("Already on the list")
+        entry = {"id": _pid(), "pattern": p, "kind": kind, "note": (note or "").strip()[:120], "added": int(time.time()), "hits": 0}
+        s["patterns"].append(entry)
+        save(s)
+    return entry
+
+
+def import_patterns(text: str, kind: str = "contains") -> dict:
+    """One pattern per line; '#' starts a comment, a trailing '  # note' becomes the note. Duplicates and bad lines are skipped."""
+    added, skipped = 0, []
+    with _LOCK:
+        s = load()
+        have = {(x["pattern"], x["kind"]) for x in s["patterns"]}
+        for raw in (text or "").splitlines()[:2000]:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            note = ""
+            if "  #" in line:
+                line, note = line.split("  #", 1)
+                line, note = line.strip(), note.strip()
+            k = kind
+            for prefix in ("regex:", "starts:", "contains:"):   # the export's own prefixes round-trip
+                if line.lower().startswith(prefix):
+                    k, line = prefix[:-1], line[len(prefix):].strip()
+                    break
+            try:
+                p, k = _check_pattern(line, k)
+            except InstaBanError as exc:
+                skipped.append(f"{line[:60]}: {exc}")
+                continue
+            if (p, k) in have:
+                continue
+            have.add((p, k))
+            s["patterns"].append({"id": _pid(), "pattern": p, "kind": k, "note": note[:120], "added": int(time.time()), "hits": 0})
+            added += 1
+        save(s)
+    return {"added": added, "skipped": skipped[:20], "total": len(s["patterns"])}
+
+
+def delete_pattern(pid: str) -> dict:
+    with _LOCK:
+        s = load()
+        before = len(s["patterns"])
+        s["patterns"] = [x for x in s["patterns"] if x["id"] != pid]
+        if len(s["patterns"]) == before:
+            raise InstaBanError("No such pattern")
+        save(s)
+    return {"ok": True, "total": len(s["patterns"])}
+
+
+def export_text() -> str:
+    s = load()
+    lines = ["# InstaBan patterns, one per line. Everything after two spaces and # is the note.", "# kind=contains unless the line starts with regex: or starts:"]
+    for x in s["patterns"]:
+        prefix = "" if x["kind"] == "contains" else f"{x['kind']}:"
+        lines.append(f"{prefix}{x['pattern']}" + (f"  # {x['note']}" if x.get("note") else ""))
+    return "\n".join(lines) + "\n"
+
+
+def set_settings(enabled: bool | None = None, ttl: str | None = None, report: bool | None = None) -> dict:
+    with _LOCK:
+        s = load()
+        if enabled is not None:
+            s["enabled"] = bool(enabled)
+        if ttl is not None:
+            if ttl not in TTL_CHOICES:
+                raise InstaBanError("Pick one of the ban lengths")
+            s["ttl"] = ttl
+        if report is not None:
+            s["report"] = bool(report)
+        if enabled and not s["files"]:
+            _mark_log_ends(s)   # switching on: only requests from now on count, not months of old logs
+        save(s)
+    return settings()
+
+
+def settings() -> dict:
+    s = load()
+    return {"enabled": s["enabled"], "ttl": s["ttl"], "ttl_seconds": TTL_CHOICES.get(s["ttl"], 86400), "report": s["report"],
+            "ttl_choices": list(TTL_CHOICES), "stats": s["stats"], "last_scan": s["last_scan"], "pattern_count": len(s["patterns"])}
+
+
+def overview() -> dict:
+    s = load()
+    hits = list(reversed(s["hits"][-200:]))
+    try:
+        from . import abuse
+        reported = set(abuse.reported().get("reported", {}).keys()) if hasattr(abuse, "reported") else set()
+    except Exception:
+        reported = set()
+    for h in hits:
+        h["reported"] = h.get("reported") or h["ip"] in reported
+    day = int(time.time()) - 86400
+    return {**settings(), "patterns": sorted(s["patterns"], key=lambda x: (-x.get("hits", 0), x["pattern"])), "hits": hits,
+            "hits_24h": sum(1 for h in s["hits"] if h["ts"] >= day), "trusted": len(guard.trusted_cidrs()), "kinds": list(KINDS)}
+
+
+def clear_hits() -> dict:
+    with _LOCK:
+        s = load()
+        s["hits"] = []
+        save(s)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------- matching
+def _compiled(patterns: list[dict]) -> list[tuple[dict, object]]:
+    out = []
+    for p in patterns:
+        if p["kind"] == "regex":
+            try:
+                out.append((p, re.compile(p["pattern"], re.I)))
+            except re.error:
+                continue
+        else:
+            out.append((p, None))
+    return out
+
+
+def match(target: str, compiled: list[tuple[dict, object]]) -> dict | None:
+    """The first pattern the request target trips, on its URL-decoded, lower-cased form."""
+    try:
+        t = unquote(unquote(target))
+    except Exception:
+        t = target
+    low = t.lower()
+    for p, rx in compiled:
+        if rx is not None:
+            if rx.search(t):
+                return p
+        elif p["kind"] == "starts":
+            if low.startswith(p["pattern"]):
+                return p
+        elif p["pattern"] in low:
+            return p
+    return None
+
+
+def parse_line(line: str) -> dict | None:
+    m = _LINE.match(line)
+    if not m:
+        return None
+    req = m.group("req")
+    parts = req.split(" ")
+    method = parts[0] if parts else ""
+    target = parts[1] if len(parts) > 1 else req
+    return {"ip": m.group("ip"), "host": m.group("vhost") or "", "method": method[:10], "target": target[:600], "status": int(m.group("status")),
+            "ua": (m.group("ua") or "")[:200]}
+
+
+def _skip_ip(ip: str) -> bool:
+    try:
+        a = ipaddress.ip_address(ip)
+    except ValueError:
+        return True
+    if a.is_loopback or a.is_unspecified:
+        return True
+    return guard.is_trusted(ip)
+
+
+# ---------------------------------------------------------------- logs
+def _logs() -> list[Path]:
+    if not LOG_DIR.is_dir():
+        return []
+    return sorted(p for p in LOG_DIR.glob("*access*.log") if p.is_file())
+
+
+def _mark_log_ends(s: dict) -> None:
+    for p in _logs():
+        try:
+            st = p.stat()
+            s["files"][str(p)] = {"ino": st.st_ino, "off": st.st_size}
+        except OSError:
+            pass
+
+
+def _new_lines(s: dict, path: Path) -> list[str]:
+    try:
+        st = path.stat()
+    except OSError:
+        return []
+    rec = s["files"].get(str(path))
+    lines: list[str] = []
+    if rec is None:
+        start = st.st_size          # a log that appeared later: from now on
+    elif rec["ino"] != st.st_ino:   # rotated: finish the old file first
+        old = path.with_name(path.name + ".1")
+        try:
+            if old.exists() and old.stat().st_ino == rec["ino"]:
+                with open(old, "rb") as f:
+                    f.seek(rec["off"])
+                    lines += f.read(MAX_READ).decode("utf-8", "replace").splitlines()
+        except OSError:
+            pass
+        start = 0
+    else:
+        start = rec["off"] if rec["off"] <= st.st_size else 0
+    try:
+        with open(path, "rb") as f:
+            f.seek(start)
+            data = f.read(MAX_READ)
+            end = start + len(data)
+            cut = data.rfind(b"\n")
+            if cut != len(data) - 1:
+                end = start + cut + 1
+                data = data[:cut + 1]
+    except OSError:
+        return lines
+    s["files"][str(path)] = {"ino": st.st_ino, "off": end}
+    return lines + data.decode("utf-8", "replace").splitlines()
+
+
+def scan(now: int | None = None) -> dict:
+    """Read what the access logs gained since the last pass and act on every match."""
+    now = now or int(time.time())
+    with _LOCK:
+        s = load()
+        if not s["enabled"]:
+            s["last_scan"] = now
+            save(s)
+            return {"scanned": 0, "hits": 0, "bans": 0}
+        compiled = _compiled(s["patterns"])
+        scanned = hits = bans = 0
+        banned_now: set[str] = set()
+        for path in _logs():
+            for line in _new_lines(s, path):
+                scanned += 1
+                rec = parse_line(line)
+                if not rec:
+                    continue
+                p = match(rec["target"], compiled)
+                if not p:
+                    continue
+                hit = {"ts": now, "ip": rec["ip"], "host": rec["host"], "method": rec["method"], "target": rec["target"], "status": rec["status"],
+                       "ua": rec["ua"], "pattern": p["pattern"], "pattern_id": p["id"], "log": path.name, "banned": False, "reported": False, "error": ""}
+                p["hits"] = p.get("hits", 0) + 1
+                s["stats"]["hits"] += 1
+                hits += 1
+                if _skip_ip(rec["ip"]):
+                    hit["error"] = "trusted or local address, not banned"
+                elif rec["ip"] in banned_now:
+                    hit["banned"] = True
+                else:
+                    try:
+                        ttl = TTL_CHOICES.get(s["ttl"], 86400) or None
+                        guard.ban(rec["ip"], f"InstaBan: {p['pattern'][:60]}", duration=ttl, source="InstaBan")
+                        hit["banned"] = True
+                        bans += 1
+                        s["stats"]["bans"] += 1
+                    except guard.GuardError as exc:
+                        hit["banned"] = "Already covered" in str(exc)
+                        hit["error"] = "" if hit["banned"] else str(exc)[:160]
+                    except Exception as exc:  # nft missing, helper broken: keep the evidence, say why
+                        hit["error"] = str(exc)[:160]
+                    banned_now.add(rec["ip"])
+                    if s["report"] and hit["banned"]:
+                        try:
+                            from . import abuse
+                            abuse.report(rec["ip"], note=f"InstaBan: requested {rec['target'][:120]} ({p['pattern'][:60]})")
+                            hit["reported"] = True
+                            s["stats"]["reports"] += 1
+                        except Exception as exc:
+                            hit["error"] = (hit["error"] + " · " if hit["error"] else "") + f"report: {str(exc)[:120]}"
+                s["hits"].append(hit)
+        s["hits"] = s["hits"][-MAX_HITS:]
+        s["last_scan"] = now
+        save(s)
+    return {"scanned": scanned, "hits": hits, "bans": bans}
+
+
+# ---------------------------------------------------------------- the background pass
+_thread: threading.Thread | None = None
+
+
+def start(interval: int = 10) -> None:
+    global _thread
+    if _thread and _thread.is_alive():
+        return
+
+    def loop():
+        while True:
+            time.sleep(interval)
+            try:
+                if load()["enabled"]:
+                    scan()
+            except Exception:
+                pass
+
+    _thread = threading.Thread(target=loop, name="instaban", daemon=True)
+    _thread.start()

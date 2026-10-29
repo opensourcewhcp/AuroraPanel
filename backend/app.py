@@ -18,7 +18,7 @@ from fastapi import (
     Depends, FastAPI, File, Form, HTTPException, Request, UploadFile,
     WebSocket, WebSocketDisconnect,
 )
-from fastapi.responses import (
+from fastapi.responses import (PlainTextResponse, 
     FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
@@ -266,6 +266,21 @@ def api_logout():
 @app.get("/api/audit")
 def api_audit(days: int = 30, q: str = "", user: str = "", failed: bool = False, limit: int = 2000, _u: str = auth.CurrentUser):
     return audit.entries(max(1, min(days, 400)), q, user, failed, max(1, min(limit, 20000)))
+
+
+class AuditPurgeBody(BaseModel):
+    mode: str = "tests"
+    days: int = 30
+    keep_copy: bool = True
+
+
+@app.post("/api/audit/purge")
+def api_audit_purge(body: AuditPurgeBody, user: str = auth.CurrentUser):
+    """Clean the Activity Log; the removed entries go to the recycle bin unless told otherwise."""
+    try:
+        return audit.purge(body.mode, body.days, body.keep_copy)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.get("/api/me")
@@ -3357,6 +3372,69 @@ def _client_ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
+# --------------------------------------------------------------------------- #
+# InstaBan: payloads and paths only attackers ask for; the first hit bans the address
+# --------------------------------------------------------------------------- #
+class InstaBanBody(BaseModel):
+    id: str | None = None
+    pattern: str | None = None
+    kind: str = "contains"
+    note: str = ""
+    text: str | None = None
+    enabled: bool | None = None
+    ttl: str | None = None
+    report: bool | None = None
+
+
+def _ib(fn, *a, **k):
+    from . import instaban
+    try:
+        return fn(instaban, *a, **k)
+    except instaban.InstaBanError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/instaban")
+def api_instaban(user: str = auth.CurrentUser):
+    return _ib(lambda m: m.overview())
+
+
+@app.post("/api/instaban/settings")
+def api_instaban_settings(body: InstaBanBody, user: str = auth.CurrentUser):
+    return _ib(lambda m: m.set_settings(body.enabled, body.ttl, body.report))
+
+
+@app.post("/api/instaban/patterns/add")
+def api_instaban_add(body: InstaBanBody, user: str = auth.CurrentUser):
+    return _ib(lambda m: m.add_pattern(body.pattern or "", body.kind, body.note))
+
+
+@app.post("/api/instaban/patterns/import")
+def api_instaban_import(body: InstaBanBody, user: str = auth.CurrentUser):
+    return _ib(lambda m: m.import_patterns(body.text or "", body.kind))
+
+
+@app.post("/api/instaban/patterns/delete")
+def api_instaban_delete(body: InstaBanBody, user: str = auth.CurrentUser):
+    return _ib(lambda m: m.delete_pattern(body.id or ""))
+
+
+@app.get("/api/instaban/export")
+def api_instaban_export(user: str = auth.CurrentUser):
+    from . import instaban
+    return PlainTextResponse(instaban.export_text())
+
+
+@app.post("/api/instaban/hits/clear")
+def api_instaban_clear(user: str = auth.CurrentUser):
+    return _ib(lambda m: m.clear_hits())
+
+
+@app.post("/api/instaban/scan")
+def api_instaban_scan(user: str = auth.CurrentUser):
+    return _ib(lambda m: m.scan())
+
+
 @app.get("/api/guard")
 def api_guard(user: str = auth.CurrentUser):
     return _guard_call(guard.listing)
@@ -3882,6 +3960,11 @@ def _metrics_start():
         shown = f"password {made[1]}" if sys.stdout.isatty() else f"password in {where} (sudo cat {where})"
         print(f"aurora: first sign-in: user {made[0]}, {shown} — you'll be asked to change it", flush=True)
     metrics.start()
+    try:
+        from . import instaban
+        instaban.start()
+    except Exception as exc:
+        print(f"aurora: InstaBan not started: {exc}", flush=True)
     try:
         slackbot.start()  # Socket Mode: receives button clicks and /aurora
     except Exception as exc:

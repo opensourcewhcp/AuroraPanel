@@ -258,6 +258,13 @@ const API = (() => {
 
     // fail2ban (leech)
     fail2ban: () => request("GET", "/api/fail2ban"),
+    instaban: () => request("GET", "/api/instaban"),
+    instabanSettings: (b) => request("POST", "/api/instaban/settings", b),
+    instabanAdd: (pattern, kind, note) => request("POST", "/api/instaban/patterns/add", { pattern, kind, note }),
+    instabanImport: (text, kind) => request("POST", "/api/instaban/patterns/import", { text, kind: kind || "contains" }),
+    instabanDelete: (id) => request("POST", "/api/instaban/patterns/delete", { id }),
+    instabanClear: () => request("POST", "/api/instaban/hits/clear"),
+    instabanExport: () => fetch("/api/instaban/export", { credentials: "same-origin" }).then((r) => { if (!r.ok) throw new Error("Export failed"); return r.text(); }),
     fail2banUnban: (jail, ip) => request("POST", "/api/fail2ban/unban", { jail, ip }),
     fail2banInstall: () => request("POST", "/api/fail2ban/install"),
     fail2banSave: (global, jails) => request("POST", "/api/fail2ban/save", { global, jails }),
@@ -560,6 +567,7 @@ const API = (() => {
     metAnalytics: (site, days, file, name) => request("GET", `/api/metrics/analytics?site=${encodeURIComponent(site)}&days=${days || 30}${file ? "&file=" + encodeURIComponent(file) : ""}${name ? "&name=" + encodeURIComponent(name) : ""}`),
     metRaw: () => request("GET", "/api/metrics/raw"),
     audit: (days, q, user, failed) => request("GET", `/api/audit?days=${days || 7}&q=${encodeURIComponent(q || "")}&user=${encodeURIComponent(user || "")}&failed=${failed ? "true" : "false"}`),
+    auditPurge: (mode, days, keep_copy) => request("POST", "/api/audit/purge", { mode, days, keep_copy }),
     alerts: () => request("GET", "/api/alerts"),
     alertsSave: (data) => request("POST", "/api/alerts", data),
     alertsTest: () => request("POST", "/api/alerts/test"),

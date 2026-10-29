@@ -55,8 +55,8 @@ window.AuroraExtras = (ui) => {
   }
   const tile = (label, value, sub, ico, kind, onclick) => el(onclick ? "button" : "div", { class: `mx-tile ${kind || ""}`, type: onclick ? "button" : null, onclick },
     [el("div", { class: "mx-tile-l" }, [ico ? icon(ico, 15) : null, el("span", { text: label })]), el("div", { class: "mx-tile-v", text: value }), sub ? el("div", { class: "mx-tile-s", text: sub }) : null]);
-  const num = (n) => (n == null ? ", " : Number(n).toLocaleString());
-  const t2s = (ts, opts) => (ts ? new Date(ts * 1000).toLocaleString([], opts || { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : ", ");
+  const num = (n) => (n == null ? "n/a" : Number(n).toLocaleString());
+  const t2s = (ts, opts) => (ts ? new Date(ts * 1000).toLocaleString([], opts || { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "n/a");
   const dur = (s) => (s < 60 ? `${Math.round(s)}s` : s < 3600 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m`);
   const rate = (b) => `${fmtBytes(b)}/s`;
   const statusKind = (s) => (s >= 500 ? "bad" : s >= 400 ? "warn" : s >= 300 ? "dim" : "good");
@@ -308,7 +308,7 @@ window.AuroraExtras = (ui) => {
       el("div", { class: "mx-tiles" }, [
         tile("Failed logins", num(c.logins), "SSH, mail, panel, FTP · 7 days", "key", c.logins ? "warnt" : ""),
         tile("Web attacks", num(c.attacks), "caught by the WAF · 7 days", "shield", c.attacks ? "warnt" : ""),
-        tile("Network", p.info.network || ", ", p.info.country || "", "globe"),
+        tile("Network", p.info.network || "n/a", p.info.country || "", "globe"),
       ]),
       !p.events ? el("div", { class: "mx-note" }, [icon("warning", 16), el("span", { text: "No failed logins or WAF attacks from this address in the last 7 days, abuse desks usually ignore reports without evidence." })]) : null,
       p.reported ? el("div", { class: "mx-note" }, [icon("check", 16), el("span", { text: `Already reported to ${p.reported.to.join(", ")} on ${new Date(p.reported.ts * 1000).toLocaleString()} from ${p.reported.from}. Sending again repeats it.` })]) : null,
@@ -369,8 +369,8 @@ window.AuroraExtras = (ui) => {
       const st = d.stats;
       body.append(el("div", { class: "mx-tiles" }, [
         tile("Attacks, last 24 h", num(st.events), st.events ? `${num(st.blocked)} blocked · ${num(st.detected)} logged only` : "None, quiet day", "shield", st.events ? "accent" : ""),
-        tile("Top attack type", st.types[0] ? st.types[0][0] : ", ", st.types[0] ? `${num(st.types[0][1])} requests` : "", "brick"),
-        tile("Top attacker", st.ips[0] ? st.ips[0][0] : ", ", st.ips[0] ? `${num(st.ips[0][1])} requests` : "", "ban"),
+        tile("Top attack type", st.types[0] ? st.types[0][0] : "none", st.types[0] ? `${num(st.types[0][1])} requests` : "nothing blocked", "brick"),
+        tile("Top attacker", st.ips[0] ? st.ips[0][0] : "none", st.ips[0] ? `${num(st.ips[0][1])} requests` : "quiet", "ban"),
         tile("Rules switched off", num(Object.keys(d.disabled_rules).length), "False alarms you allowed", "check"),
       ]));
       // ---- settings
@@ -538,7 +538,7 @@ window.AuroraExtras = (ui) => {
             el("td", {}, [el("b", { text: h.host }), el("div", { class: "muted mx-small", text: `created ${ago(h.created)}` })]),
             el("td", {}, [h.ip ? el("code", { text: h.ip }) : null, h.ip6 ? el("div", {}, el("code", { class: "mx-small", text: h.ip6 })) : null, !h.ip && !h.ip6 ? el("span", { class: "muted", text: "waiting for the first update" }) : null]),
             el("td", {}, [el("div", { text: h.updated ? ago(h.updated) : "never" }), h.last_result ? el("div", { class: "muted mx-small mx-ell", title: `${h.last_result}${h.last_from ? " · from " + h.last_from : ""}`, text: `${h.last_result}${h.last_from ? " · from " + h.last_from : ""}` }) : null]),
-            el("td", { class: "mx-ell", text: h.description || ", " }),
+            el("td", { class: "mx-ell", text: h.description || "n/a" }),
             el("td", { class: "mx-actions" }, [
               btn("Update URL", async () => { const k = await call(() => API.ddnsHostKey(h.id)); if (k) showDdnsKey(h, k.key); }, "btn-primary"),
               btn("Edit", () => edit(h), "btn-ghost"),
@@ -695,7 +695,7 @@ window.AuroraExtras = (ui) => {
         case "ref": return !r.ref ? el("span", { class: "muted", text: ", " })
           : safeUrl(r.ref) ? el("a", { href: safeUrl(r.ref), target: "_blank", rel: "noopener noreferrer nofollow", referrerpolicy: "no-referrer", class: "mx-url", title: r.ref, text: r.ref.replace(/^https?:\/\//, "") })
           : el("span", { class: "mx-url mx-bad-url", title: r.ref, text: r.ref });
-        case "ua": return el("span", { class: "mx-ua", title: r.ua, text: r.ua || ", " });
+        case "ua": return el("span", { class: "mx-ua", title: r.ua, text: r.ua || "n/a" });
         case "client": return el("span", { class: r.bot ? "mx-bot" : "", text: r.client });
         default: return document.createTextNode(r[c] || "");
       }
@@ -1001,6 +1001,98 @@ window.AuroraExtras = (ui) => {
   }
 
   // ======================================================================
+  //  Security → InstaBan: a list of payloads and paths only attackers ask for; the first hit bans the address.
+  //  Everything shown here (patterns, request lines, user agents) is attacker-controlled text: textContent only.
+  // ======================================================================
+  async function viewInstaBan(root) {
+    const TTL_LABEL = { "1h": "1 hour", "6h": "6 hours", "24h": "24 hours", "7d": "7 days", "30d": "30 days", forever: "until unbanned" };
+    const KIND_LABEL = { contains: "contains", starts: "starts with", regex: "regex" };
+    root.append(pageHead("InstaBan", "A list of payloads, paths and pages that no real visitor ever asks for. The first request that matches one gets its address banned at the firewall for the time you pick, the attempt is kept as evidence, and the address can be reported to its abuse desk. Trusted addresses are never banned."));
+    const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
+    root.append(body);
+    let d;
+    const load = async () => {
+      try { d = await API.instaban(); } catch (e) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); return; }
+      draw();
+    };
+    const setting = async (patch, msg) => { try { await API.instabanSettings(patch); toast(msg, "good"); load(); } catch (e) { toast(e.message, "bad"); } };
+    function draw() {
+      body.innerHTML = "";
+      // ---- status + settings
+      const ttl = el("select", { class: "em-select mx-narrow", onchange: () => setting({ ttl: ttl.value }, `Bans last ${TTL_LABEL[ttl.value]}`) },
+        d.ttl_choices.map((k) => el("option", { value: k, text: TTL_LABEL[k] || k })));
+      ttl.value = d.ttl;
+      body.append(el("div", { class: `card ib-hero ${d.enabled ? "good" : ""}` }, [
+        el("div", { class: "net-card-h" }, [icon("trap", 22), el("h3", { text: d.enabled ? "InstaBan is on" : "InstaBan is off" }), el("span", { style: "flex:1" }),
+          seg([["on", "On"], ["off", "Off"]], d.enabled ? "on" : "off", (v) => setting({ enabled: v === "on" }, v === "on" ? "InstaBan is on: new requests are checked every 10 seconds" : "InstaBan is off"))]),
+        el("p", { class: "muted", text: d.enabled
+          ? "Every Apache access log is read as it grows. A request whose path or query matches a pattern bans the address at once; the address, site, request and pattern are kept below."
+          : "Turn it on and every request from then on is checked against the list. Old log lines are not scanned, so nobody is banned for something from last month." }),
+        el("div", { class: "ib-opts" }, [
+          el("label", { class: "ib-opt" }, [el("span", { class: "muted", text: "Ban length" }), ttl]),
+          el("label", { class: "dm-check ib-opt" }, [el("input", { type: "checkbox", ...(d.report ? { checked: "checked" } : {}), onchange: (e) => setting({ report: e.target.checked }, e.target.checked ? "Banned addresses are reported to their abuse desk" : "Reports are manual") }),
+            el("span", { text: " Also report each banned address to its abuse desk (uses this server's mail; set a sender under IP Blocker & Trust → Reports)" })]),
+        ]),
+        el("div", { class: "mx-tiles mx-tiles-4" }, [
+          tile("Bans so far", String(d.stats.bans || 0), "by InstaBan", "trap", d.stats.bans ? "accent" : ""),
+          tile("Hits, last 24 h", String(d.hits_24h || 0), `${d.stats.hits || 0} since the start`, "shield"),
+          tile("Patterns", String(d.pattern_count), "payloads and paths", "list"),
+          tile("Trusted", String(d.trusted), "addresses never banned", "check", "", () => navigate("ipblocker")),
+        ]),
+      ]));
+      // ---- patterns
+      const pat = el("input", { type: "text", placeholder: "/.git/config, /etc/passwd, <script, union select…", class: "ib-pat", spellcheck: "false", autocomplete: "off" });
+      const kind = el("select", { class: "em-select mx-narrow" }, d.kinds.map((k) => el("option", { value: k, text: KIND_LABEL[k] })));
+      const note = el("input", { type: "text", placeholder: "note (optional)", style: "max-width:220px" });
+      const add = async () => {
+        try { await API.instabanAdd(pat.value, kind.value, note.value); pat.value = note.value = ""; toast("Added", "good"); load(); } catch (e) { toast(e.message, "bad"); }
+      };
+      pat.addEventListener("keydown", (e) => { if (e.key === "Enter") add(); });
+      const importBtn = btn("Import list", () => {
+        const ta = el("textarea", { rows: 12, class: "cw-mono", placeholder: "/.git/\n/.env  # secrets file\nregex:/wp-content/uploads/.*\\.php$", spellcheck: "false" });
+        const go = el("button", { class: "btn btn-primary", text: "Import", onclick: async () => {
+          go.disabled = true;
+          try { const r = await API.instabanImport(ta.value); closeModal(); toast(`${r.added} added${r.skipped.length ? `, ${r.skipped.length} skipped` : ""}`, "good"); if (r.skipped.length) popNotice({ title: `${r.skipped.length} line${r.skipped.length === 1 ? "" : "s"} skipped`, text: r.skipped.slice(0, 3).join(" · "), kind: "warn", icon: "info", ms: 9000 }); load(); }
+          catch (e) { toast(e.message, "bad"); go.disabled = false; }
+        } });
+        openModal("Import patterns", el("div", { class: "dm-form" }, [
+          el("p", { class: "muted", text: "One pattern per line, matched as plain text inside the URL-decoded path and query. Start a line with regex: for a regular expression or starts: to match the beginning. Two spaces and # add a note. Lines that would match normal pages are skipped." }), ta]), [go]);
+      }, "btn-ghost");
+      const exportBtn = btn("Export", async () => { try { const t = await API.instabanExport(); downloadText("instaban-patterns.txt", t, "text/plain"); } catch (e) { toast(e.message, "bad"); } }, "btn-ghost");
+      const rows = d.patterns.map((p) => el("tr", {}, [
+        el("td", {}, el("code", { class: "ib-code", raw: true, text: p.pattern })),
+        el("td", { class: "muted", text: KIND_LABEL[p.kind] || p.kind }),
+        el("td", { class: "muted", raw: true, text: p.note || "" }),
+        el("td", { class: "num" }, p.hits ? pill(String(p.hits), "warn") : el("span", { class: "muted", text: "0" })),
+        el("td", { class: "actions" }, armed("Delete", "Sure?", async () => { try { await API.instabanDelete(p.id); load(); } catch (e) { toast(e.message, "bad"); } }, "btn-ghost")),
+      ]));
+      body.append(card(`Patterns (${d.patterns.length})`, [
+        el("div", { class: "ib-add" }, [pat, kind, note, btn("Add", add, "btn-primary")]),
+        el("p", { class: "muted mx-small", text: "Matching is done on the request's path and query after URL-decoding, so %2e%2e%2f is seen as ../. Nothing here is ever rendered or executed: a payload is just text that is compared." }),
+        rows.length ? el("div", { class: "table-wrap" }, el("table", { class: "mx-table ib-table" }, [
+          el("thead", {}, el("tr", {}, ["Pattern", "Match", "Note", "Hits", ""].map((h) => el("th", { text: h })))), el("tbody", {}, rows)]))
+          : empty("trap", "No patterns", "Add one above or import a list."),
+      ], "", [importBtn, exportBtn]));
+      // ---- hits
+      const hits = d.hits.map((h) => el("tr", { class: h.banned ? "" : "ib-miss" }, [
+        el("td", { class: "muted", text: ago(h.ts) }),
+        el("td", {}, el("button", { type: "button", class: `ib-ip ${h.banned ? "ip-banned" : ""}`, raw: true, text: h.ip, onclick: () => ipCard(h.ip, load) })),
+        el("td", { class: "muted", raw: true, text: h.host || h.log || "" }),
+        el("td", {}, [el("code", { class: "ib-code", raw: true, text: `${h.method} ${h.target}` }), h.ua ? el("div", { class: "muted mx-small ib-ua", raw: true, text: h.ua }) : null].filter(Boolean)),
+        el("td", {}, el("code", { class: "ib-code muted", raw: true, text: h.pattern })),
+        el("td", {}, [h.banned ? pill("banned", "bad") : pill("not banned", "dim"), h.reported ? pill("reported", "warn") : null, h.error ? el("div", { class: "muted mx-small", raw: true, text: h.error }) : null].filter(Boolean)),
+        el("td", { class: "actions" }, [h.reported || !h.banned ? null : btn("Report", () => reportIp(h.ip, load), "btn-ghost"), btn("Lookup", () => ipCard(h.ip, load), "btn-ghost")].filter(Boolean)),
+      ]));
+      body.append(card(`Hits (${d.hits.length})`, [
+        hits.length ? el("div", { class: "table-wrap" }, el("table", { class: "mx-table ib-table" }, [
+          el("thead", {}, el("tr", {}, ["When", "Address", "Site", "Request", "Pattern", "Result", ""].map((h) => el("th", { text: h })))), el("tbody", {}, hits)]))
+          : empty("shield", "No hits yet", d.enabled ? "Nothing on the list has been requested since InstaBan was turned on." : "Turn InstaBan on to start watching."),
+      ], "", [hits.length ? armed("Clear list", "Sure?", async () => { try { await API.instabanClear(); load(); } catch (e) { toast(e.message, "bad"); } }, "btn-ghost") : null, btn("↻", load, "btn-ghost")].filter(Boolean)));
+    }
+    load();
+  }
+
+  // ======================================================================
   //  Metrics → Raw Access
   // ======================================================================
   async function viewRawAccess(root) {
@@ -1077,7 +1169,7 @@ window.AuroraExtras = (ui) => {
         tile("Pages", num(s.pages), `${s.pages_per_visit} per visit`, "listing"),
         tile("Hits", num(s.hits), "every file: pages, images, CSS…", "processes"),
         tile("Bandwidth", fmtBytes(s.bytes), s.visits ? `${fmtBytes(s.bytes / s.visits)} per visit` : "", "network"),
-        tile("Avg. visit", s.avg_duration ? dur(s.avg_duration) : ", ", "time between first and last page", "clock"),
+        tile("Avg. visit", s.avg_duration ? dur(s.avg_duration) : "n/a", "time between first and last page", "clock"),
       ]));
       body.append(el("div", { class: "mx-note mx-note-dim" }, [icon("radar", 16), el("span", { text: `Not counted above: ${num(s.bot_hits)} requests (${fmtBytes(s.bot_bytes)}) by bots, crawlers and scanners, see “Robots & tools” below.` })]));
       if (!s.hits && !s.bot_hits) { body.append(el("div", { class: "card" }, empty("chart", "No visits in this period", "Choose a longer period, or check back once people have visited the site."))); return; }
@@ -1175,9 +1267,9 @@ window.AuroraExtras = (ui) => {
       const peak = (k) => P.reduce((a, p) => Math.max(a, p[1][k + "_max"] ?? p[1][k] ?? 0), 0);
       const oom = d.faults.filter((f) => f.kind === "oom").length, pwr = d.faults.filter((f) => f.kind === "power").length;
       body.append(el("div", { class: "mx-tiles" }, [
-        tile("CPU now", last.cpu != null ? `${Math.round(last.cpu)}%` : ", ", `peak ${Math.round(peak("cpu"))}% · ${info.cpus || "?"} cores`, "processes", last.cpu > 85 ? "warnt" : ""),
-        tile("Memory", last.mem != null ? `${fmtBytes(last.mem * 1048576)}` : ", ", info.mem_total ? `of ${fmtBytes(info.mem_total * 1048576)} · peak ${Math.round(peak("mem_pct"))}%` : "", "server", last.mem_pct > 90 ? "warnt" : ""),
-        tile("Load", last.load != null ? String(last.load) : ", ", info.cpus ? `${info.cpus} = all cores busy` : "", "dashboard"),
+        tile("CPU now", last.cpu != null ? `${Math.round(last.cpu)}%` : "n/a", `peak ${Math.round(peak("cpu"))}% · ${info.cpus || "?"} cores`, "processes", last.cpu > 85 ? "warnt" : ""),
+        tile("Memory", last.mem != null ? `${fmtBytes(last.mem * 1048576)}` : "n/a", info.mem_total ? `of ${fmtBytes(info.mem_total * 1048576)} · peak ${Math.round(peak("mem_pct"))}%` : "", "server", last.mem_pct > 90 ? "warnt" : ""),
+        tile("Load", last.load != null ? String(last.load) : "n/a", info.cpus ? `${info.cpus} = all cores busy` : "", "dashboard"),
         tile("Faults (31 days)", String(oom + pwr), oom || pwr ? `${oom} out-of-memory · ${pwr} power` : "No crashes or throttling", "warning", oom + pwr ? "warnt" : ""),
       ]));
       if (!P.length) { body.append(el("div", { class: "card" }, empty("chart", "Collecting…", "The first points appear within a minute; history grows from now on."))); return; }
@@ -1212,7 +1304,7 @@ window.AuroraExtras = (ui) => {
   }
 
   return {
-    modsec: viewWaf, ddnshosts: viewDdnsHosts, visitors: viewVisitors, errors: viewErrors, bandwidth: viewBandwidth,
+    modsec: viewWaf, instaban: viewInstaBan, ddnshosts: viewDdnsHosts, visitors: viewVisitors, errors: viewErrors, bandwidth: viewBandwidth,
     rawaccess: viewRawAccess, analytics: viewAnalytics, resources: viewResources,
     _ui: { el, pageHead, empty, call, armed, seg, tile, card, chart, rank, donut, sortableTable, ipCard, reportIp, t2s, num, dur, LS, niceMax },
   };

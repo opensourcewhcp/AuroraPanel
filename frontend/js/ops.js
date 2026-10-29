@@ -40,9 +40,33 @@ window.AuroraOps = (ui) => {
         const esc = (v) => { let s = String(v ?? ""); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return `"${s.replace(/"/g, '""')}"`; };
         downloadText(`activity-${new Date().toISOString().slice(0, 10)}.csv`, ["time,user,ip,action,result,status",
           ...d.entries.map((e) => [new Date(e.ts * 1000).toISOString(), e.user, e.ip, e.action, e.ok ? "ok" : "failed", e.status].map(esc).join(","))].join("\n"), "text/csv");
-      }, "btn-ghost")]),
+      }, "btn-ghost"), btn("Clean up", () => cleanUp(), "btn-ghost")]),
       el("div", { class: "card em-pad0" }, [el("div", { class: "mx-toolbar" }, [search, userSel, el("label", { class: "mx-live" }, [failSw, el("span", { text: "Failures only" })]), el("span", { class: "grow" }),
         seg([[1, "24 h"], [7, "7 days"], [30, "30 days"], [90, "90 days"]], days, (v) => { days = v; LS.set("act.days", v); load(); })]), list]));
+    // Take entries out of the log; a copy goes to the Recycle Bin (restores into the backup folder) unless unticked.
+    function cleanUp() {
+      const modes = [["tests", "Entries from the test suite", "Requests the panel's own test run made (user tester, address testclient)."],
+        ["failed", "Failed attempts only", "Every entry that ended in an error, including failed logins."],
+        ["older", "Older than 30 days", "Anything recorded more than 30 days ago."],
+        ["all", "Everything", "The whole log, all days."]];
+      let mode = "tests";
+      const radios = modes.map(([v, t, dsc]) => { const r = el("input", { type: "radio", name: "act-purge", value: v, onchange: () => { mode = v; } }); if (v === mode) r.checked = true;
+        return el("label", { class: "dm-check act-purge-opt" }, [r, el("span", {}, [el("b", { text: t }), el("small", { class: "muted", text: dsc })])]); });
+      const keep = el("input", { type: "checkbox" }); keep.checked = true;
+      const go = el("button", { class: "btn btn-danger", text: "Remove", onclick: async () => {
+        go.disabled = true;
+        try {
+          const r = await API.auditPurge(mode, 30, keep.checked);
+          closeModal();
+          popNotice({ title: `${r.removed} entr${r.removed === 1 ? "y" : "ies"} removed`, text: r.archive ? `A copy, ${r.archive.name}, is in the File Manager's Recycle Bin; restoring it puts it in the backup folder.` : (r.removed ? "No copy was kept." : "Nothing matched."), kind: "good", icon: "check", ms: 9000 });
+          load();
+        } catch (e) { toast(e.message, "bad"); go.disabled = false; }
+      } });
+      openModal("Clean up the Activity Log", el("div", { class: "dm-form" }, [
+        el("p", { class: "muted", text: "Pick what to take out of the log." }), ...radios,
+        el("label", { class: "dm-check", style: "margin-top:10px" }, [keep, el("span", { text: " Keep a copy in the Recycle Bin (activity-log-<date>.jsonl); restoring it lands in the panel's backup folder" })]),
+      ]), [go]);
+    }
     async function load() {
       try { d = await API.audit(days, q, who, failed); } catch (e) { list.innerHTML = ""; list.append(el("p", { class: "empty", text: e.message })); return; }
       if (userSel.options.length !== d.users.length + 1) {
@@ -748,8 +772,8 @@ window.AuroraOps = (ui) => {
         el("div", { class: "dk-state" }, [pill(c.state || "?", tone), el("span", { class: "muted mx-small", text: c.status })]),
         el("div", { class: "dk-ports" }, c.ports.length ? c.ports.map(dkPort) : [el("span", { class: "muted mx-small", text: c.state === "running" && !c.ports.length ? "no published ports" : "" })]),
         el("div", { class: "dk-res" }, running ? [
-          el("div", { class: "dk-res-l" }, [el("span", { text: "CPU" }), el("b", { text: c.cpu || ", " })]), el("div", { class: "dk-bar" }, el("span", { style: `width:${Math.min(100, cpu)}%` })),
-          el("div", { class: "dk-res-l", title: dkMem(c.mem) ? "" : "RAM figures need memory accounting (see the note above)" }, [el("span", { text: "RAM" }), el("b", { text: dkMem(c.mem) || ", " })]), el("div", { class: "dk-bar" }, el("span", { style: `width:${Math.min(100, memPct)}%` })),
+          el("div", { class: "dk-res-l" }, [el("span", { text: "CPU" }), el("b", { text: c.cpu || "n/a" })]), el("div", { class: "dk-bar" }, el("span", { style: `width:${Math.min(100, cpu)}%` })),
+          el("div", { class: "dk-res-l", title: dkMem(c.mem) ? "" : "RAM figures need memory accounting (see the note above)" }, [el("span", { text: "RAM" }), el("b", { text: dkMem(c.mem) || "n/a" })]), el("div", { class: "dk-bar" }, el("span", { style: `width:${Math.min(100, memPct)}%` })),
         ] : [el("span", { class: "muted mx-small", text: paused ? "paused, frozen in memory" : "not running" })]),
         el("div", { class: "dk-acts" }, [
           running ? dkIB("square", "Stop", () => act(c, "stop"), "bad") : paused ? dkIB("play", "Resume", () => act(c, "unpause"), "good") : dkIB("play", "Start", () => act(c, "start"), "good"),
@@ -777,7 +801,7 @@ window.AuroraOps = (ui) => {
           tile("Stopped", String(ov.containers_stopped || 0), "not running", "square", ov.containers_stopped ? "warnt" : "", () => setFilt("stopped")),
           tile("Images", String(ov.images || 0), dImg ? `${dImg.size} · ${dImg.reclaimable} unused` : "", "t_layers"),
           tile("Volumes", String(ov.volumes || 0), dVol ? `${dVol.size} on disk` : "", "disk"),
-          tile("Docker", (ov.version || ", ").split("+")[0], ov.arch, "t_ship"),
+          tile("Docker", (ov.version || "n/a").split("+")[0], ov.arch, "t_ship"),
         ]));
       }
       const shown = cs.filter((c) => filt === "all" || (filt === "running" ? c.state === "running" : filt === "paused" ? c.state === "paused" : filt === "stopped" ? !["running", "paused"].includes(c.state)
@@ -849,7 +873,7 @@ window.AuroraOps = (ui) => {
           el("div", { class: "grow" }, [el("b", { text: info.name }), el("p", { class: "muted mx-small mx-ell", text: `${info.image} · ${info.id}` })]), pill(info.state, stateTone)]),
         segBar, pane]), [foot]);
       modalWide();
-      function kv(pairs) { return el("div", { class: "net-kv" }, pairs.filter(Boolean).map(([k, v]) => el("div", {}, [el("span", { class: "net-k", text: k }), typeof v === "object" && v ? v : el("span", { class: "net-v", text: v == null || v === "" ? ", " : String(v) })]))); }
+      function kv(pairs) { return el("div", { class: "net-kv" }, pairs.filter(Boolean).map(([k, v]) => el("div", {}, [el("span", { class: "net-k", text: k }), typeof v === "object" && v ? v : el("span", { class: "net-v", text: v == null || v === "" ? "n/a" : String(v) })]))); }
       async function show(v) {
         pane.innerHTML = ""; foot.innerHTML = "";
         if (v === "overview") {
@@ -857,12 +881,12 @@ window.AuroraOps = (ui) => {
             ["Status", `${info.status || info.state}${info.health ? ` · health ${info.health}` : ""}${info.exit_code ? ` · last exit code ${info.exit_code}` : ""}`],
             info.error ? ["Last error", info.error] : null,
             ["Image", `${info.image} (${info.image_id})`],
-            ["Created", info.created ? new Date(info.created).toLocaleString() : ", "],
+            ["Created", info.created ? new Date(info.created).toLocaleString() : "n/a"],
             info.started && info.running ? ["Started", new Date(info.started).toLocaleString()] : null,
             ["Restart policy", info.restart],
             ["Network", `${info.network_mode}${Object.entries(info.networks).map(([n, x]) => ` · ${n}${x.ip ? ` ${x.ip}` : ""}`).join("")}`],
             ["Ports", info.ports.length ? el("div", { class: "dk-ports" }, info.ports.map((p) => p.host ? dkPort(p) : el("span", { class: "dk-port lo", text: `${p.container}/${p.proto} (not published)` }))) : "none"],
-            ["Command", `${info.entrypoint ? info.entrypoint + " " : ""}${info.cmd}`.trim() || ", "],
+            ["Command", `${info.entrypoint ? info.entrypoint + " " : ""}${info.cmd}`.trim() || "n/a"],
             info.user ? ["Runs as", info.user] : null,
             ["Limits", `${info.memory ? fmtBytes(info.memory) + " RAM" : "no RAM limit"} · ${info.cpus ? info.cpus + " CPUs" : "all CPUs"}`],
             ["Privileged", info.privileged ? "yes, full access to the host's devices" : "no"],
@@ -1057,14 +1081,14 @@ window.AuroraOps = (ui) => {
     async function imageDlg(i) {
       const info = await call(() => API.dockerImageInspect(i.ref));
       if (!info) return;
-      const kv = (pairs) => el("div", { class: "net-kv" }, pairs.filter(Boolean).map(([k, v]) => el("div", {}, [el("span", { class: "net-k", text: k }), typeof v === "object" && v ? v : el("span", { class: "net-v", text: v == null || v === "" ? ", " : String(v) })])));
+      const kv = (pairs) => el("div", { class: "net-kv" }, pairs.filter(Boolean).map(([k, v]) => el("div", {}, [el("span", { class: "net-k", text: k }), typeof v === "object" && v ? v : el("span", { class: "net-v", text: v == null || v === "" ? "n/a" : String(v) })])));
       const mono = (t) => el("code", { class: "dk-mono", text: t });
       const defaults = [...(info.entrypoint || []), ...(info.cmd || [])].join(" ");
       const tbl = (heads, rows) => el("div", { class: "table-wrap" }, el("table", { class: "dk-table dk-table-sm" }, [el("thead", {}, el("tr", {}, heads.map((h) => el("th", { text: h })))), el("tbody", {}, rows)]));
       const labels = Object.entries(info.labels || {});
       openModal(`${i.repo}:${i.tag}`, el("div", { class: "em-form" }, [
         kv([["Tags", (info.tags || []).join(", ")], ["ID", `${info.id}${info.digests.length ? ` · digest ${info.digests[0]}…` : ""}`], ["Built", info.created], ["Size", fmtBytes(info.size)], ["Platform", `${info.os}/${info.arch}`],
-          ["Starts with", defaults ? mono(defaults) : ", "], ["Working dir", info.workdir], ["Runs as", info.user || "root"], ["Used by", info.used_by.length ? el("span", {}, info.used_by.map((n) => pill(n, "dim"))) : "no container"]]),
+          ["Starts with", defaults ? mono(defaults) : "n/a"], ["Working dir", info.workdir], ["Runs as", info.user || "root"], ["Used by", info.used_by.length ? el("span", {}, info.used_by.map((n) => pill(n, "dim"))) : "no container"]]),
         info.shell ? el("div", { class: "mx-note mx-note-dim" }, [icon("info", 16), el("span", { text: "This image starts a shell, not a service: without a terminal it exits at once. “Run” keeps it alive so you can open a shell inside it from the container list." })]) : null,
         el("div", { class: "mx-sub" }, "Ports it listens on"),
         info.ports.length ? el("div", { class: "dk-chips" }, info.ports.map((p) => pill(`${p.port}/${p.proto}${p.kind === "web" ? " · web page" : ""}`, p.kind === "web" ? "good" : "dim"))) : el("p", { class: "muted mx-small", text: "None declared, a command-line tool or a shell image, or the documentation names the port." }),
@@ -1073,7 +1097,7 @@ window.AuroraOps = (ui) => {
         el("div", { class: "mx-sub" }, `Environment defaults (${info.env.length})`),
         info.env.length ? tbl(["Variable", "Default"], info.env.map((e) => el("tr", {}, [el("td", {}, mono(e.key)), el("td", {}, mono(e.value))]))) : el("p", { class: "muted mx-small", text: "None." }),
         el("details", { class: "dk-adv" }, [el("summary", { text: `Layers (${info.history.length})` }),
-          tbl(["Step", "Size"], info.history.map((h) => el("tr", {}, [el("td", {}, mono(h.by || ", ")), el("td", { class: "muted", text: h.size })])))]),
+          tbl(["Step", "Size"], info.history.map((h) => el("tr", {}, [el("td", {}, mono(h.by || "n/a")), el("td", { class: "muted", text: h.size })])))]),
         labels.length ? el("details", { class: "dk-adv" }, [el("summary", { text: `Labels (${labels.length})` }),
           tbl(["Label", "Value"], labels.map(([k, v]) => el("tr", {}, [el("td", {}, mono(k)), el("td", {}, mono(v))])))]) : null,
       ].filter(Boolean)), [
@@ -1211,9 +1235,9 @@ window.AuroraOps = (ui) => {
   // ======================================================================
   //  System → Servers (every AuroraPanel on one page)
   // ======================================================================
-  const meter = (label, pct, sub) => el("div", { class: "op-meter" }, [el("div", { class: "op-meter-l" }, [el("span", { text: label }), el("b", { text: pct == null ? ", " : `${Math.round(pct)}%` })]),
+  const meter = (label, pct, sub) => el("div", { class: "op-meter" }, [el("div", { class: "op-meter-l" }, [el("span", { text: label }), el("b", { text: pct == null ? "n/a" : `${Math.round(pct)}%` })]),
     el("div", { class: `op-meter-bar ${pct >= 90 ? "bad" : pct >= 75 ? "warn" : ""}` }, el("span", { style: `width:${Math.max(2, Math.min(100, pct || 0))}%` })), sub ? el("small", { class: "muted", text: sub }) : null]);
-  const upt = (s) => !s ? ", " : s < 3600 ? `${Math.round(s / 60)} min` : s < 86400 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86400)} days`;
+  const upt = (s) => !s ? "n/a" : s < 3600 ? `${Math.round(s / 60)} min` : s < 86400 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86400)} days`;
   async function viewServers(root) {
     root.append(pageHead("Servers", "All your AuroraPanel servers on one page, Raspberry Pis at home, VPSs in the cloud. See which one needs attention, and act on all of them at once.",
       [btn("Add a server", () => addDlg(), "btn-primary")]));
@@ -1237,7 +1261,7 @@ window.AuroraOps = (ui) => {
         el("div", { class: "op-srv-h" }, [el("span", { class: `op-dot ${s.ok ? ((s.alerts || []).some((a) => a.level === "critical") || (s.failed_units || []).length ? "warn" : "good") : "bad"}` }),
           el("div", { class: "grow" }, [el("b", { text: s.name + (s.local ? "" : "") }), el("p", { class: "muted mx-small mx-ell", text: [s.hostname, s.model || (s.pi ? "Raspberry Pi" : ""), s.version ? `v${s.version}` : ""].filter(Boolean).join(" · ") })]),
           s.local ? pill("this one", "good") : null]),
-        s.ok ? el("div", { class: "op-srv-m" }, [meter("CPU", s.cpu, `${s.cpus || "?"} cores · load ${s.load != null ? s.load.toFixed(2) : ", "}${s.temp ? ` · ${s.temp}°C` : ""}`),
+        s.ok ? el("div", { class: "op-srv-m" }, [meter("CPU", s.cpu, `${s.cpus || "?"} cores · load ${s.load != null ? s.load.toFixed(2) : "n/a"}${s.temp ? ` · ${s.temp}°C` : ""}`),
           meter("Memory", s.mem_pct, s.mem_total ? fmtBytes(s.mem_total) : ""), meter("Disk", s.disk_pct, s.disk_total ? fmtBytes(s.disk_total) : "")])
           : el("div", { class: "mx-note" }, [icon("warning", 16), el("span", { text: s.error || "Unreachable" })]),
         s.ok ? el("div", { class: "op-srv-f" }, [
@@ -1499,6 +1523,8 @@ window.AuroraOps = (ui) => {
         status: () => !S.rep ? null : (S.rep.last ? { text: `${S.rep.last.grade} · ${S.rep.last.score}/100 · ${ago(S.rep.last.ts)}`, tone: S.rep.last.score >= 90 ? "good" : S.rep.last.score >= 65 ? "warn" : "bad" } : warn("not run yet")) },
       { view: "modsec", icon: "shield", title: "WAF Firewall", desc: "Blocks SQL injection, XSS and other web attacks (ModSecurity + OWASP CRS).", core: true,
         status: () => !S.waf ? null : (S.waf.installed ? (S.waf.module_on && S.waf.enabled !== false ? on(S.waf.mode === "detect" ? "detect only" : "blocking") : off("installed, off")) : off("not installed")) },
+      { view: "instaban", icon: "trap", title: "InstaBan", desc: "Bans an address the moment it asks for a payload or path only attackers use, and keeps the evidence.",
+        status: () => !S.ib ? null : (S.ib.enabled ? on(`on · ${S.ib.stats.bans || 0} ban${S.ib.stats.bans === 1 ? "" : "s"}`) : off("off")) },
       { view: "leech", icon: "trap", title: "Fail2ban", desc: "Bans IPs that repeatedly fail to log in (SSH, panel, mail, FTP…).", core: true,
         status: () => !S.f2b ? null : (S.f2b.installed ? (S.f2b.active ? on(`active · ${num0((S.f2b.jails || []).filter((j) => j.live).length + (S.f2b.other_jails || []).length)} jails`) : warn("installed, stopped")) : off("not installed")) },
       { view: "ipblocker", icon: "ban", title: "IP Blocker & Trust", desc: "Ban or trust any address at the firewall; see where each ban came from.",
@@ -1568,7 +1594,7 @@ window.AuroraOps = (ui) => {
     // Fire all status calls; repaint as each resolves.
     [["guard", API.guard], ["twofa", API.twofaStatus], ["waf", API.waf], ["f2b", API.fail2ban], ["fw", API.firewall],
      ["autossl", API.autossl], ["iso", API.isolation], ["av", API.avStatus], ["https", API.panelHttps],
-     ["tokens", API.tokens], ["ssl", API.sslCerts], ["slack", () => API.slack()], ["rep", API.secreport], ["apache", API.apacheHardening]].forEach(([k, fn]) => grab(k, fn).then(paint));
+     ["tokens", API.tokens], ["ssl", API.sslCerts], ["slack", () => API.slack()], ["rep", API.secreport], ["apache", API.apacheHardening], ["ib", API.instaban]].forEach(([k, fn]) => grab(k, fn).then(paint));
     paint();
   }
 
