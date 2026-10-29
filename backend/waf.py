@@ -74,7 +74,10 @@ def load() -> dict:
         d["seen"] = list(d.get("seen", [])) + ["roundcube"]
         if "roundcube" not in d["apps"]:
             d["apps"] = d["apps"] + ["roundcube"]
-        _save(d)
+        try:
+            _save(d)
+        except OSError:   # no state folder or read-only (a test runner without root): still answer
+            pass
         _PENDING_APPLY = True   # written into Apache's rules the next time the WAF page looks at its status
     return d
 
@@ -185,7 +188,10 @@ def refresh_rules() -> bool:
     except Exception:
         return False
     s["rules_rev"] = RULES_REV
-    _save(s)
+    try:
+        _save(s)
+    except OSError:
+        pass
     return True
 
 

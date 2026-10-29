@@ -74,10 +74,13 @@ def user_state(name: str) -> str:
         home = Path(pwd.getpwnam(name).pw_dir)
     except KeyError:
         return "off"
-    if (home / GA).is_file():
-        return "on"
-    if (home / PENDING).is_file():
-        return "pending"
+    try:   # a home the panel may not read (running without root, as on a CI runner) counts as off
+        if (home / GA).is_file():
+            return "on"
+        if (home / PENDING).is_file():
+            return "pending"
+    except OSError:
+        pass
     return "off"
 
 
