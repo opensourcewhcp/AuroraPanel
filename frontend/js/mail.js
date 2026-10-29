@@ -254,7 +254,7 @@ window.AuroraMail = (ui) => {
         el("span", { class: "em-avatar em-remote-av", text: (a.label || a.email).charAt(0).toUpperCase() }),
         el("div", { class: "em-row-main" }, [el("b", { text: a.label }), el("div", { class: "em-row-sub" }, [el("span", { class: "muted", text: `${a.email} · ${a.imap_host} · password never stored here` })])]),
         el("div", { class: "em-row-act" }, [
-          a.webmail ? el("a", { class: "btn btn-sm btn-ghost", href: a.webmail, target: "_blank", rel: "noopener", title: "Open webmail on this account" }, [icon("inbox", 13), " Check Email"]) : null,
+          a.webmail ? el("a", { class: "btn btn-sm btn-ghost", href: `${location.protocol}//${location.hostname}${a.webmail}`, target: "_blank", rel: "noopener", title: "Open webmail on this account" }, [icon("inbox", 13), " Check Email"]) : null,
           armed("Remove", "Sure?", async () => { try { await API.mailRemoteRemove(a.id); toast("Removed", "good"); draw(); } catch (e) { toast(e.message, "bad"); } }, "btn-ghost"),
         ].filter(Boolean)),
       ]))) : el("p", { class: "muted em-remote-empty", text: "None yet. Add your Gmail, Outlook, Yahoo, iCloud or any IMAP mailbox and read it in this server's webmail next to your local mail." });

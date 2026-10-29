@@ -3047,3 +3047,5 @@ label.op-rule { justify-content: flex-start; cursor: pointer; }
 :root[data-theme="light"] .dm-note .ic { color: #c2410c; }
 .em-disk-h { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 10px; }
 .em-disk-h > :last-child { min-width: 240px; }
+.am-mail-clear { border: 0; background: none; color: var(--text-dim); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; padding: 0 4px; }
+.am-mail-clear:hover { color: var(--accent); }
