@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="docs/screenshots/hero.png" alt="AuroraPanel dashboard on a Raspberry Pi" width="100%">
-</p>
-
 <h1 align="center">AuroraPanel</h1>
 
 <p align="center"><b>The control panel your Raspberry Pi deserves.</b><br>
@@ -9,7 +5,7 @@ Websites, email, VPN, backups, security and monitoring, all from one browser tab
 Free, open source, MIT licensed.</p>
 
 <p align="center">
-  <a href="https://github.com/opensourcewhcp/AuroraPanel/releases"><img alt="Version 1.1.17" src="https://img.shields.io/badge/version-1.1.17-ff7a1a"></a>
+  <a href="https://github.com/opensourcewhcp/AuroraPanel/releases"><img alt="Version 1.1.19" src="https://img.shields.io/badge/version-1.1.19-ff7a1a"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-green"></a>
   <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-blue">
   <img alt="Runs on Raspberry Pi" src="https://img.shields.io/badge/runs%20on-Raspberry%20Pi%20%7C%20Debian%20%7C%20Ubuntu-c51a4a">
@@ -63,19 +59,6 @@ Details and options are in [Installing](#installing-on-a-raspberry-pi-or-an-ubun
 
 To update, open **Preferences → About & Updates → Check for updates** in the panel (it only contacts
 aurora51.com when you click), or re-download the zip, unzip it over your install and re-run `sudo bash install.sh`.
-
-## Screenshots
-
-<p align="center">
-  <img src="docs/screenshots/overview.png" alt="AuroraPanel: dashboard, resource usage and app installer" width="100%">
-</p>
-
-| | |
-| :-: | :-: |
-| **Dashboard**: live CPU, temperature, throttling, memory, disks, services and uptime at a glance<br><img src="docs/screenshots/dashboard.png" alt="Dashboard"> | **Resource Usage**: CPU, memory, disk I/O, network, load and temperature, kept for a year<br><img src="docs/screenshots/resources.png" alt="Resource usage graphs"> |
-| **App Installer**: WordPress, Nextcloud, Joomla, phpBB and 40 more, set up in one click<br><img src="docs/screenshots/appstore.png" alt="App Installer"> | **Domains**: virtual hosts, Force HTTPS, certificates, redirects and folder sites that need no domain<br><img src="docs/screenshots/vhosts.png" alt="Domains"> |
-| **Alerts**: email, Telegram, webhooks and Slack, with attack reports you can act on<br><img src="docs/screenshots/alerts.png" alt="Alerts"> | **Backups**: folders, databases and full backups, restore in one click, scheduled off-site copies<br><img src="docs/screenshots/backups.png" alt="Backups"> |
-| **File Manager**: upload, edit, zip, recycle bin, hidden files, permissions<br><img src="docs/screenshots/files.png" alt="File manager"> | |
 
 ## Features
 

@@ -219,10 +219,11 @@ def _is_https(request: Request) -> bool:
 
 
 def _set_session(resp: JSONResponse, request: Request, username: str):
+    secure = _is_https(request)
     resp.set_cookie(
-        auth.COOKIE_NAME, auth.issue_token(username),
+        auth.cookie_name(secure), auth.issue_token(username),
         httponly=True, samesite="strict", max_age=auth.SESSION_TTL_SECONDS, path="/",
-        secure=_is_https(request),
+        secure=secure,
     )
 
 
@@ -257,7 +258,8 @@ def api_login(body: LoginBody, request: Request):
 @app.post("/api/logout")
 def api_logout():
     resp = JSONResponse({"ok": True})
-    resp.delete_cookie(auth.COOKIE_NAME, path="/")
+    for name in auth.COOKIE_NAMES:
+        resp.delete_cookie(name, path="/")
     return resp
 
 
@@ -914,6 +916,12 @@ class UserAddBody(BaseModel):
 class UserDelBody(BaseModel):
     name: str
     remove_home: bool = False
+    backup: bool = False
+
+
+class UserTwofaBody(BaseModel):
+    name: str
+    code: str = ""
 
 
 class UserLockBody(BaseModel):
@@ -942,7 +950,7 @@ def api_users_add(body: UserAddBody, user: str = auth.CurrentUser):
 @app.post("/api/users/delete")
 def api_users_delete(body: UserDelBody, user: str = auth.CurrentUser):
     try:
-        return users.delete_user(body.name, body.remove_home)
+        return users.delete_user(body.name, body.remove_home, body.backup)
     except users.UserError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -961,6 +969,39 @@ def api_users_password(body: UserPwBody, user: str = auth.CurrentUser):
         return users.set_password(body.name, body.password)
     except users.UserError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+def _ssh2fa_call(fn):
+    from . import sshtwofa
+    try:
+        return fn(sshtwofa)
+    except sshtwofa.SshTwofaError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/users/2fa")
+def api_users_2fa(user: str = auth.CurrentUser):
+    """SSH two-factor per Linux account, plus the panel owner's own two-factor for the matching row."""
+    from . import sshtwofa
+    if not users.IS_LINUX:
+        return {"supported": False, "status": {}, "users": {}, "panel": {}}
+    return {"supported": True, "status": sshtwofa.status(), "users": sshtwofa.states(),
+            "panel": {"username": panelusers.owner(), **twofa.status()}}
+
+
+@app.post("/api/users/2fa/enroll")
+def api_users_2fa_enroll(body: UserTwofaBody, user: str = auth.CurrentUser):
+    return _ssh2fa_call(lambda m: m.enroll(users._validate_name(body.name)))
+
+
+@app.post("/api/users/2fa/confirm")
+def api_users_2fa_confirm(body: UserTwofaBody, user: str = auth.CurrentUser):
+    return _ssh2fa_call(lambda m: m.confirm(users._validate_name(body.name), body.code))
+
+
+@app.post("/api/users/2fa/disable")
+def api_users_2fa_disable(body: UserTwofaBody, user: str = auth.CurrentUser):
+    return _ssh2fa_call(lambda m: m.disable(users._validate_name(body.name)))
 
 
 # --------------------------------------------------------------------------- #
@@ -1148,11 +1189,12 @@ def api_2fa_enroll(user: str = auth.CurrentUser):
 def api_2fa_enable(body: OtpBody, request: Request, user: str = auth.CurrentUser):
     if not twofa.confirm_enable(body.code):
         raise HTTPException(status_code=400, detail="Invalid or expired code")
-    # Sessions opened without 2FA shouldn't outlive turning it on: sign them
-    # all out and give this browser a fresh cookie.
+    # Sessions opened without 2FA shouldn't outlive turning it on: sign them all out,
+    # this browser included, so the code is asked for right away.
     config.rotate_session_secret()
-    resp = JSONResponse({"ok": True, "enabled": True})
-    _set_session(resp, request, config.get_prefs()["username"])
+    resp = JSONResponse({"ok": True, "enabled": True, "relogin": True})
+    for name in auth.COOKIE_NAMES:
+        resp.delete_cookie(name, path="/")
     return resp
 
 
@@ -2596,6 +2638,21 @@ class MailDomainBody(BaseModel):
     message: str = ""
 
 
+class MailRemoteBody(BaseModel):
+    id: str | None = None
+    preset: str | None = None
+    label: str | None = None
+    email: str | None = None
+    username: str | None = None
+    password: str | None = None   # used once to test the sign-in, never stored
+    imap_host: str | None = None
+    imap_port: int | None = None
+    imap_enc: str | None = None
+    smtp_host: str | None = None
+    smtp_port: int | None = None
+    smtp_enc: str | None = None
+
+
 class MailAccountBody(BaseModel):
     address: str
     password: str | None = None
@@ -2653,6 +2710,34 @@ class MailValueBody(BaseModel):
 def api_mail_status(user: str = auth.CurrentUser):
     ok, why = mail.dovecot_ok() if mail.IS_LINUX else (True, "")
     return {**mail.status(), "dovecot_supported": ok, "dovecot_why": why}
+
+
+@app.get("/api/mail/remote")
+def api_mail_remote(user: str = auth.CurrentUser):
+    """Gmail, Outlook or any IMAP account read in this server's webmail. Settings only, never a password."""
+    return {"accounts": mail.remote_accounts(), "presets": mail.REMOTE_PRESETS, "webmail": mail.webmail_url()}
+
+
+@app.post("/api/mail/remote/add")
+def api_mail_remote_add(body: MailRemoteBody, user: str = auth.CurrentUser):
+    return _mail(mail.remote_add, body.model_dump())
+
+
+@app.post("/api/mail/remote/remove")
+def api_mail_remote_remove(body: MailRemoteBody, user: str = auth.CurrentUser):
+    return _mail(mail.remote_remove, body.id or "")
+
+
+@app.get("/api/mail/inbox")
+def api_mail_inbox(user: str = auth.CurrentUser):
+    """The newest messages of this server's own mailboxes, for the panel's menu."""
+    me = panelusers.get(user) or {}
+    if me.get("role") != "admin":
+        return {"items": [], "unread": 0, "accounts": [], "webmail": ""}
+    prefs = config.get_prefs()
+    addrs = mail.inbox_addresses(panelusers.owner(), prefs.get("contact_email", ""))
+    items = mail.inbox_feed(addrs, 10) if addrs else []
+    return {"items": items, "unread": sum(1 for i in items if i["unread"]), "accounts": addrs, "webmail": mail.webmail_url()}
 
 
 @app.get("/api/mail/domains")
@@ -3676,6 +3761,19 @@ def api_about_update_status(user: str = auth.CurrentUser):
     return version.update_status()
 
 
+class RollbackBody(BaseModel):
+    version: str
+
+
+@app.post("/api/about/rollback")
+def api_about_rollback(body: RollbackBody, user: str = auth.CurrentUser):
+    """Go back to a version the updater kept a copy of (Preferences → About & Updates)."""
+    try:
+        return version.apply_rollback(body.version)
+    except version.UpdateError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 # --------------------------------------------------------------------------- #
 # Preferences: account
 # --------------------------------------------------------------------------- #
@@ -3699,9 +3797,28 @@ def api_prefs(user: str = auth.CurrentUser):
     return config.get_prefs()
 
 
+LANGUAGES = ("en", "es", "de", "fr", "it", "pt-BR", "pl", "uk", "ru", "tr", "zh-CN", "ja", "hi")
+
+
 @app.post("/api/account/prefs")
 def api_prefs_set(body: PrefsBody, user: str = auth.CurrentUser):
+    if body.language is not None and body.language not in LANGUAGES:
+        raise HTTPException(status_code=400, detail="Unknown language")
     return config.set_prefs(contact_email=body.contact_email, language=body.language, default_theme=body.default_theme)
+
+
+@app.get("/api/account/contact-suggestions")
+def api_contact_suggestions(user: str = auth.CurrentUser):
+    """Addresses that exist on this server, offered on the Contact Info page: a mailbox here is the
+    safest place for the panel's notifications, they never leave the machine."""
+    out = []
+    try:
+        acc = mail.list_accounts()
+        for a in acc.get("accounts", []):
+            out.append({"address": a["address"], "why": "Mailbox on this server" + (f" ({a['name']})" if a.get("name") else "")})
+    except Exception:
+        pass
+    return {"suggestions": out}
 
 
 @app.post("/api/account/password")
@@ -3722,11 +3839,21 @@ def api_account_password(body: PasswordChangeBody, request: Request, user: str =
 
 
 @app.post("/api/account/rename")
-def api_account_rename(body: RenameBody, user: str = auth.CurrentUser):
-    if not body.username.strip():
-        raise HTTPException(status_code=400, detail="Username required")
-    config.rename_user(body.username.strip())
-    return {"ok": True, "username": body.username.strip()}
+def api_account_rename(body: RenameBody, request: Request, user: str = auth.CurrentUser):
+    new = body.username.strip().lower()
+    if user != panelusers.owner():
+        raise HTTPException(status_code=403, detail="Only the owner account can be renamed here")
+    if not (2 <= len(new) <= 32 and new.isascii() and new[0].isalnum() and all(c.isalnum() or c in "._-" for c in new)):
+        raise HTTPException(status_code=400, detail="Use 2 to 32 letters, digits, dots, dashes or underscores")
+    if new != user and panelusers.name_taken(new):
+        raise HTTPException(status_code=400, detail="That name belongs to another panel user")
+    if new != user:
+        config.rename_user(new)
+    # The session cookie carries the username, so hand this browser one with the new name: the
+    # user stays signed in instead of being locked out by their own rename.
+    resp = JSONResponse({"ok": True, "username": new})
+    _set_session(resp, request, new)
+    return resp
 
 
 # --------------------------------------------------------------------------- #
@@ -3744,6 +3871,10 @@ def _metrics_start():
     config.lock_down()
     # install.sh normally makes the account before the first start; this covers
     # run.sh / run.bat and an update of a panel nobody had signed in to yet.
+    try:
+        version.prune_updates()  # only the build you came from is kept
+    except Exception as exc:
+        print(f"aurora: couldn't tidy the updates folder: {exc}", flush=True)
     made = config.ensure_initial_credentials()
     if made:
         where = config.initial_password_path()
@@ -4548,8 +4679,7 @@ def ddns_public_nic(request: Request, hostname: str = "", myip: str = ""):
 @app.websocket("/api/terminal/ws")
 async def api_terminal(websocket: WebSocket):
     # Authenticate via the same session cookie before accepting.
-    token = websocket.cookies.get(auth.COOKIE_NAME)
-    name = auth.verify_token(token) if token else None
+    name = auth.session_from_cookies(websocket.cookies)
     me = panelusers.get(name) if name else None
     if not me or me["role"] != "admin":  # a root shell is for administrators only
         await websocket.close(code=1008)
@@ -4569,8 +4699,7 @@ async def api_terminal(websocket: WebSocket):
 @app.websocket("/api/docker/containers/{ref}/shell")
 async def api_docker_shell(websocket: WebSocket, ref: str, user: str = ""):
     """A shell inside a container (docker exec), as root unless ?user= says otherwise. Administrators only."""
-    token = websocket.cookies.get(auth.COOKIE_NAME)
-    name = auth.verify_token(token) if token else None
+    name = auth.session_from_cookies(websocket.cookies)
     me = panelusers.get(name) if name else None
     if not me or me["role"] != "admin":
         await websocket.close(code=1008)

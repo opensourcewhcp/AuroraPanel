@@ -162,10 +162,10 @@
         <button class="nav-item" data-view="virus"><span class="nav-ico">🛡</span> Virus Scanner</button>
         <button class="nav-item" data-view="dns"><span class="nav-ico">🌐</span> Track DNS</button>
         <div class="nav-group">Applications</div>
+        <button class="nav-item" data-view="apphub"><span class="nav-ico">✦</span> Overview</button>
+        <button class="nav-item" data-view="appstore"><span class="nav-ico">✦</span> App Installer</button>
         <button class="nav-item" data-view="dockerapps"><span class="nav-ico">🐳</span> Docker</button>
         <button class="nav-item" data-view="wptoolkit"><span class="nav-ico">🛠</span> WordPress Toolkit</button>
-        <button class="nav-item" data-view="appstore"><span class="nav-ico">✦</span> App Installer</button>
-        <button class="nav-item" data-view="wordpress"><span class="nav-ico">W</span> WordPress</button>
         <div class="nav-group">Software</div>
         <button class="nav-item" data-view="sysapps"><span class="nav-ico">▤</span> System Applications</button>
         <button class="nav-item" data-view="appmgr"><span class="nav-ico">▣</span> Application Manager</button>
@@ -197,11 +197,12 @@
           <button id="refresh-btn" class="icon-btn" type="button" title="Refresh" data-ic="refresh"></button>
           <button id="theme-btn" class="icon-btn" type="button" title="Toggle theme"></button>
           <div class="avatar-wrap">
-            <button id="avatar-btn" class="avatar" type="button" title="Account"><span id="avatar-initial">U</span></button>
+            <button id="avatar-btn" class="avatar" type="button" title="Account"><span id="avatar-dot" class="avatar-dot" hidden></span><span id="avatar-initial">U</span></button>
             <div id="avatar-menu" class="avatar-menu" hidden>
               <div class="am-user" id="user-label"></div>
               <div class="am-host" id="host-label">, </div>
               <button id="am-version" class="am-version" type="button" title="About &amp; updates">AuroraPanel</button>
+              <div id="am-mail" class="am-mail" hidden></div>
               <button id="logout-btn" class="btn btn-sm btn-block" type="button">Sign out</button>
             </div>
           </div>

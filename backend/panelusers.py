@@ -39,6 +39,11 @@ def owner() -> str:
     return config.load_config().get("username", "")
 
 
+def name_taken(username: str) -> bool:
+    """Any panel account (the owner, active or disabled users) already called that."""
+    return username == owner() or any(u.get("username") == username for u in _all())
+
+
 def get(username: str) -> dict | None:
     """{username, role, sites} for an active user (the owner included), else None."""
     if not username:

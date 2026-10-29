@@ -187,6 +187,8 @@ def list_sites() -> dict:
         return {"supported": False, "sites": []}
     sites = []
     for f in sorted(AVAIL.glob("*.conf")):
+        if f.name.startswith("aurora-docker-"):
+            continue  # a Docker app's HTTPS front (own port, no ServerName): managed on the Docker page
         system = f.name in SYSTEM_CONFS
         try:
             s = _settings_from_conf(_live_conf(f) if system else f)

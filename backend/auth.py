@@ -15,7 +15,29 @@ from fastapi import Depends, HTTPException, Request, status
 from . import config
 
 SESSION_TTL_SECONDS = 60 * 60 * 8  # 8 hours
-COOKIE_NAME = "aurora_session"
+# Two cookie names, one per scheme. A browser refuses to overwrite a Secure cookie from a plain
+# http:// page (RFC 6265bis "leave secure cookies alone"), so after Panel HTTPS is turned off a
+# login over http would answer 200 yet the browser would keep the old https cookie, which it never
+# sends over http: every next request 401, back to the login page. A separate name for http
+# sessions never collides with the Secure one.
+COOKIE_NAME = "aurora_session"  # issued over https, with the Secure flag
+COOKIE_NAME_HTTP = "aurora_session_http"  # issued over plain http
+COOKIE_NAMES = (COOKIE_NAME, COOKIE_NAME_HTTP)
+
+
+def cookie_name(secure: bool) -> str:
+    return COOKIE_NAME if secure else COOKIE_NAME_HTTP
+
+
+def session_from_cookies(cookies) -> str | None:
+    """The signed-in user from whichever session cookie the browser sent, or None."""
+    for name in COOKIE_NAMES:
+        token = cookies.get(name)
+        if token:
+            username = verify_token(token)
+            if username:
+                return username
+    return None
 
 
 def _sign(payload: str) -> str:
@@ -51,8 +73,7 @@ def verify_token(token: str) -> str | None:
 
 def require_auth(request: Request) -> str:
     """FastAPI dependency: accept a valid session cookie OR an API token."""
-    token = request.cookies.get(COOKIE_NAME)
-    username = verify_token(token) if token else None
+    username = session_from_cookies(request.cookies)
     if not username:
         # Fall back to an API token (Authorization: Bearer / X-Aurora-Token).
         from . import apitokens

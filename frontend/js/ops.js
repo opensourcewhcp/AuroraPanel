@@ -2,7 +2,7 @@
    Loaded before app.js; app.js calls window.AuroraOps(ui) once with its helpers (and extras.js's). */
 window.AuroraOps = (ui) => {
   "use strict";
-  const { el, icon, btn, pill, field, sw, toast, API, navigate, state, openModal, closeModal, copyText, fmtBytes, ago, downloadText,
+  const { el, icon, btn, pill, field, sw, toast, popNotice, API, navigate, state, openModal, closeModal, copyText, fmtBytes, ago, downloadText,
     pageHead, empty, call, armed, seg, tile, card, t2s, num, dur, LS, requireCard, jobPanel } = ui;
   const modalWide = () => { const m = document.querySelector("#modal .modal"); if (m) m.classList.add("em-modal"); };
   const timeIn = (ts) => { const s = ts - Date.now() / 1000; return s <= 0 ? "now" : s < 3600 ? `in ${Math.round(s / 60)} min` : s < 86400 ? `in ${Math.round(s / 3600)} h` : `in ${Math.round(s / 86400)} days`; };
@@ -622,6 +622,50 @@ window.AuroraOps = (ui) => {
     <path d="M0 42c60-16 120-16 180 0s120 16 180 0 120-16 180 0 120 16 180 0 120-16 180 0 120 16 180 0 120-16 120-16v34H0z" fill="#1d8fd1" opacity=".55"/>
   </svg>`;
   const DK_TONE = { running: "good", paused: "warn", restarting: "warn", exited: "dim", created: "dim", dead: "bad", missing: "bad" };
+  // ---- Docker action queue: Stop/Start/Restart clicks line up and run one after another; a panel at the
+  //      right shows what is in the queue, what is being done now and what just finished. ----
+  const DK_VERB = { stop: ["Stopping", "Stopped"], start: ["Starting", "Started"], restart: ["Restarting", "Restarted"], pause: ["Pausing", "Paused"], unpause: ["Resuming", "Resumed"], kill: ["Killing", "Killed"] };
+  const dkQueue = {
+    items: [], busy: false, panel: null,
+    add(job) {
+      if (this.items.some((j) => j.key === job.key && j.state !== "done" && j.state !== "failed")) { this.render(); return; }
+      this.items.push({ ...job, state: "queued" });
+      if (this.panel) this.panel.hidden = false;
+      this.render(); this.pump();
+    },
+    async pump() {
+      if (this.busy) return;
+      const job = this.items.find((j) => j.state === "queued");
+      if (!job) return;
+      this.busy = true; job.state = "working"; this.render();
+      try { await job.run(); job.state = "done"; } catch (e) { job.state = "failed"; job.error = e.message || "Failed"; }
+      this.busy = false; this.render();
+      try { job.after && job.after(); } catch (e) {}
+      setTimeout(() => { this.items = this.items.filter((j) => j !== job); this.render(); }, job.state === "done" ? 3000 : 9000);
+      this.pump();
+    },
+    render() {
+      if (!this.items.length) { if (this.panel) { const p = this.panel; this.panel = null; p.classList.add("out"); setTimeout(() => p.remove(), 320); } return; }
+      if (!this.panel) { this.panel = el("div", { class: "pop-notice dk-queue", role: "status", "aria-live": "polite" }); document.body.append(this.panel); }
+      const queued = this.items.filter((j) => j.state === "queued").length, working = this.items.some((j) => j.state === "working");
+      this.panel.innerHTML = "";
+      this.panel.append(
+        el("div", { class: "pop-body" }, [
+          el("div", { class: "pop-title" }, [el("b", { text: working || queued ? "Working on your containers" : "Done" }), queued ? pill(`${queued} in queue`, "warn") : null]),
+          el("div", { class: "dk-q-list" }, this.items.map((j) => {
+            const [doing, done] = DK_VERB[j.action] || [j.action, j.action];
+            const txt = j.state === "queued" ? `In queue to ${j.action}` : j.state === "working" ? `${doing}…` : j.state === "failed" ? j.error : done;
+            return el("div", { class: `dk-q ${j.state}` }, [
+              el("span", { class: "dk-q-dot" }, j.state === "working" ? el("span", { class: "dk-q-spin" }) : icon(j.state === "done" ? "check" : j.state === "failed" ? "error" : "clock", 12)),
+              el("b", { text: j.name }), el("span", { class: "muted", text: txt })]);
+          })),
+        ]),
+        el("button", { type: "button", class: "pop-close", "aria-label": "Close", text: "✕", onclick: () => {
+          this.items = this.items.filter((j) => j.state === "queued" || j.state === "working");
+          if (this.items.length) this.panel.hidden = true; else this.render();
+        } }));
+    },
+  };
   const dkIB = (ico, label, onclick, cls, disabled) => el("button", { type: "button", class: `dk-ib ${cls || ""}`, title: label, "aria-label": label, onclick, disabled: disabled ? "" : null }, icon(ico, 15));
   const dkPort = (p) => el("span", { class: `dk-port ${p.bind === "127.0.0.1" ? "lo" : ""}`, title: p.bind === "127.0.0.1" ? "Only reachable from this server (behind the web address)" : p.bind ? `Listens on ${p.bind}` : "Listens on every address",
     text: `${p.host}→${p.container}/${p.proto}` });
@@ -683,7 +727,7 @@ window.AuroraOps = (ui) => {
       if (j) toast(j.status === "done" ? label : "Something went wrong, see the log", j.status === "done" ? "good" : "bad");
       load(true);
     }
-    const act = (c, action, label) => call(() => API.dockerAction(c.name, action), label, () => load(true));
+    const act = (c, action) => dkQueue.add({ key: `${c.name}:${action}`, name: c.title || c.name, action, run: () => API.dockerAction(c.name, action), after: () => load(true) });
 
     function row(c) {
       const tone = DK_TONE[c.state] || "dim";
@@ -708,9 +752,9 @@ window.AuroraOps = (ui) => {
           el("div", { class: "dk-res-l", title: dkMem(c.mem) ? "" : "RAM figures need memory accounting (see the note above)" }, [el("span", { text: "RAM" }), el("b", { text: dkMem(c.mem) || ", " })]), el("div", { class: "dk-bar" }, el("span", { style: `width:${Math.min(100, memPct)}%` })),
         ] : [el("span", { class: "muted mx-small", text: paused ? "paused, frozen in memory" : "not running" })]),
         el("div", { class: "dk-acts" }, [
-          running ? dkIB("square", "Stop", () => act(c, "stop", `${c.name} stopped`), "bad") : paused ? dkIB("play", "Resume", () => act(c, "unpause", `${c.name} resumed`), "good") : dkIB("play", "Start", () => act(c, "start", `${c.name} started`), "good"),
-          dkIB("refresh", "Restart", () => act(c, "restart", `${c.name} restarted`), "", !running && !paused),
-          dkIB("pause", "Pause", () => act(c, "pause", `${c.name} paused`), "", !running),
+          running ? dkIB("square", "Stop", () => act(c, "stop"), "bad") : paused ? dkIB("play", "Resume", () => act(c, "unpause"), "good") : dkIB("play", "Start", () => act(c, "start"), "good"),
+          dkIB("refresh", "Restart", () => act(c, "restart"), "", !running && !paused),
+          dkIB("pause", "Pause", () => act(c, "pause"), "", !running),
           dkIB("listing", "Logs", () => detailDlg(c, "logs")),
           ov && ov.admin ? dkIB("terminal", "Shell (root)", () => shellDlg(c), "", !running) : null,
           dkIB("gear", "Settings & details", () => detailDlg(c, "overview")),
@@ -739,10 +783,26 @@ window.AuroraOps = (ui) => {
       const shown = cs.filter((c) => filt === "all" || (filt === "running" ? c.state === "running" : filt === "paused" ? c.state === "paused" : filt === "stopped" ? !["running", "paused"].includes(c.state)
         : filt === "panel" ? c.managed : !c.managed));
       const segBar = seg([["all", `All (${cs.length})`], ["running", "Running"], ["paused", "Paused"], ["stopped", "Stopped"], ["panel", "Panel's"], ["other", "Other"]], filt, (v) => setFilt(v));
-      body.append(card("Containers", [
+      const containersCard = card("Containers", [
         cs.length ? (shown.length ? el("div", { class: "dk-list" }, shown.map(row)) : empty("t_ship", "Nothing here", "No container matches this filter."))
           : empty("t_ship", "No containers yet", ov && ov.installed ? "Install an app from the catalog below, or create a custom container from any image." : "Install Docker first (System Applications)."),
-      ], "", [segBar, btn("↻", () => load(true), "btn-ghost")]));
+      ], "", [segBar, btn("↻", () => load(true), "btn-ghost")]);
+      body.append(containersCard);
+      // Apps on the panel's list whose container no longer exists (removed outside the panel, or a re-create that failed).
+      if (ov && ov.installed) API.docker().then((dk) => {
+        const gone = (dk && dk.apps ? dk.apps : []).filter((a) => a.state === "missing");
+        if (!gone.length || !containersCard.isConnected) return;
+        containersCard.after(card("Installed by the panel, container gone", [
+          el("p", { class: "muted mx-small", style: "margin:0 0 8px", text: "These apps are on the panel's list but their container no longer exists. Re-create brings the app back with its data folder; Forget drops it from the list and keeps the data folder." }),
+          el("div", { class: "dk-gone-list" }, gone.map((a) => el("div", { class: "dk-gone" }, [
+            el("div", {}, [el("b", { text: a.title || a.name }), el("span", { class: "muted mx-small", text: ` · ${a.image || a.app || ""}` })]),
+            el("div", { class: "dk-td-btns" }, [
+              btn("Re-create", () => call(() => API.dockerCtl(a.name, "start"), `${a.title || a.name} is back`, () => load(true)), "btn-primary"),
+              armed("Forget", "Sure?", () => call(() => API.dockerRemove(a.name, false), `${a.title || a.name} forgotten`, () => load(true)), "btn-ghost"),
+            ]),
+          ]))),
+        ]));
+      }).catch(() => {});
       if (imgs.length) body.append(card(`Images (${imgs.length})`, [el("div", { class: "table-wrap" }, el("table", { class: "dk-table" }, [
         el("thead", {}, el("tr", {}, ["Image", "Size", "Downloaded", "Used by", ""].map((h) => el("th", { text: h })))),
         el("tbody", {}, imgs.map((i) => el("tr", {}, [
@@ -1440,7 +1500,7 @@ window.AuroraOps = (ui) => {
       { view: "modsec", icon: "shield", title: "WAF Firewall", desc: "Blocks SQL injection, XSS and other web attacks (ModSecurity + OWASP CRS).", core: true,
         status: () => !S.waf ? null : (S.waf.installed ? (S.waf.module_on && S.waf.enabled !== false ? on(S.waf.mode === "detect" ? "detect only" : "blocking") : off("installed, off")) : off("not installed")) },
       { view: "leech", icon: "trap", title: "Fail2ban", desc: "Bans IPs that repeatedly fail to log in (SSH, panel, mail, FTP…).", core: true,
-        status: () => !S.f2b ? null : (S.f2b.installed ? (S.f2b.active ? on(`active · ${num0(S.f2b.jails && S.f2b.jails.length)} jails`) : warn("installed, stopped")) : off("not installed")) },
+        status: () => !S.f2b ? null : (S.f2b.installed ? (S.f2b.active ? on(`active · ${num0((S.f2b.jails || []).filter((j) => j.live).length + (S.f2b.other_jails || []).length)} jails`) : warn("installed, stopped")) : off("not installed")) },
       { view: "ipblocker", icon: "ban", title: "IP Blocker & Trust", desc: "Ban or trust any address at the firewall; see where each ban came from.",
         status: () => !S.guard ? null : on(`${num0(S.guard.bans && S.guard.bans.length)} banned · ${num0(S.guard.trusted && S.guard.trusted.length)} trusted`) },
       { view: "netmon", icon: "network", title: "Network Monitor", desc: "Who tried to reach this server, connection attempts, logins and VPN handshakes.",
@@ -1707,7 +1767,7 @@ window.AuroraOps = (ui) => {
       const ids = chosen();
       if (!ids.length) return toast("Pick at least one target", "bad");
       runBtn.disabled = true; runBtn.textContent = "Checking…";
-      try { d.last = await API.secreportRun(ids); toast(`Done in ${d.last.took} s, ${d.last.grade}`, "good"); draw(); }
+      try { d.last = await API.secreportRun(ids); draw(); const c = d.last.counts || {}; popNotice({ title: `Report done: ${d.last.grade}, ${d.last.score} / 100`, text: `${d.last.targets.length} targets checked in ${d.last.took} s. ${(c.critical || 0) + (c.high || 0) ? `${(c.critical || 0) + (c.high || 0)} serious finding${(c.critical || 0) + (c.high || 0) === 1 ? "" : "s"} to look at.` : "Nothing serious found."}`, kind: (c.critical || 0) + (c.high || 0) ? "warn" : "good", icon: "shield", ms: 9000 }); }
       catch (e) { toast(e.message, "bad"); }
       runBtn.disabled = false; runBtn.textContent = "Run report";
     }
@@ -1746,7 +1806,11 @@ window.AuroraOps = (ui) => {
           ]),
           el("div", { class: "mx-hero-act" }, [
             ...(rep.fixes || []).filter(fixIsGlobal).map((a) => btn(fixLabel(a), () => runFix(a, () => run()), "btn-primary")),
-            el("a", { class: "btn btn-sm btn-ghost", href: "/api/secreport/html", download: "", text: "Download HTML report" }),
+            btn("Download HTML report", async () => {
+              // Fetched by the page and saved as a file from here: a browser refuses a plain download from a panel on a self-signed certificate.
+              try { const r = await fetch("/api/secreport/html", { credentials: "same-origin" }); if (!r.ok) throw new Error("Couldn't fetch the report"); downloadText(`security-report-${d.last.hostname}-${new Date(d.last.ts * 1000).toISOString().slice(0, 10)}.html`, await r.text(), "text/html"); }
+              catch (e) { toast(e.message, "bad"); }
+            }, "btn-ghost btn-sm"),
           ]),
         ]));
         body.append(el("div", { class: "sr-targets" }, rep.targets.map((t) => {

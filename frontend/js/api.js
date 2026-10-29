@@ -105,7 +105,11 @@ const API = (() => {
     // users
     usersList: (sys) => request("GET", `/api/users?include_system=${sys ? "true" : "false"}`),
     userAdd: (b) => request("POST", "/api/users/add", b),
-    userDelete: (name, remove_home) => request("POST", "/api/users/delete", { name, remove_home }),
+    userDelete: (name, remove_home, backup) => request("POST", "/api/users/delete", { name, remove_home, backup: !!backup }),
+    userTwofa: () => request("GET", "/api/users/2fa"),
+    userTwofaEnroll: (name) => request("POST", "/api/users/2fa/enroll", { name }),
+    userTwofaConfirm: (name, code) => request("POST", "/api/users/2fa/confirm", { name, code }),
+    userTwofaDisable: (name) => request("POST", "/api/users/2fa/disable", { name }),
     userLock: (name, locked) => request("POST", "/api/users/lock", { name, locked }),
     userPassword: (name, password) => request("POST", "/api/users/password", { name, password }),
 
@@ -299,6 +303,7 @@ const API = (() => {
     aboutChangelog: () => request("POST", "/api/about/changelog"),
     aboutUpdate: () => request("POST", "/api/about/update"),
     aboutUpdateStatus: () => request("GET", "/api/about/update"),
+    aboutRollback: (version) => request("POST", "/api/about/rollback", { version }),
 
     // PHP settings
     phpOverview: () => request("GET", "/api/php/settings/overview"),
@@ -417,6 +422,10 @@ const API = (() => {
     mailRoutingGet: (domain) => request("GET", `/api/mail/domains/routing?domain=${encodeURIComponent(domain)}`),
     mailCatchall: (b) => request("POST", "/api/mail/domains/catchall", b),
     mailAccounts: () => request("GET", "/api/mail/accounts"),
+    mailRemote: () => request("GET", "/api/mail/remote"),
+    mailRemoteAdd: (b) => request("POST", "/api/mail/remote/add", b),
+    mailRemoteRemove: (id) => request("POST", "/api/mail/remote/remove", { id }),
+    mailInbox: () => request("GET", "/api/mail/inbox"),
     mailAccountCreate: (b) => request("POST", "/api/mail/accounts/create", b),
     mailAccountUpdate: (b) => request("POST", "/api/mail/accounts/update", b),
     mailAccountDelete: (address, delete_mail) => request("POST", "/api/mail/accounts/delete", { address, delete_mail: !!delete_mail }),
@@ -465,6 +474,7 @@ const API = (() => {
     sysappControl: (id, action, sw) => request("POST", "/api/sysapps/control", { id, action, switch: !!sw }),
     // preferences
     prefs: () => request("GET", "/api/account/prefs"),
+    contactSuggestions: () => request("GET", "/api/account/contact-suggestions"),
     prefsSet: (b) => request("POST", "/api/account/prefs", b),
     passwordChange: (current, new_password) => request("POST", "/api/account/password", { current, new_password }),
     renameUser: (username) => request("POST", "/api/account/rename", { username }),

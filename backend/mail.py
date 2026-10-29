@@ -29,6 +29,7 @@ import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 from . import jobs
 
@@ -422,9 +423,23 @@ def list_accounts() -> dict:
 
 
 def _quota_usage() -> dict[str, int]:
-    """address -> bytes used, from Dovecot's quota counters (one call for everyone)."""
+    """address -> bytes used. Exact message sizes from every mailbox (one call for everyone), so the
+    figure matches the per-mailbox table; Dovecot's quota counter (rounded up to whole KiB) is the fallback."""
     if not shutil.which("doveadm", path=PATH):
         return {}
+    r = _run(["doveadm", "-f", "flow", "mailbox", "status", "-A", "vsize", "*"], 120)
+    exact: dict[str, int] = {}
+    for line in r.stdout.splitlines():
+        parts = line.split()
+        if not parts or "@" not in parts[0]:
+            continue
+        kv = dict(re.findall(r"(\w+)=(\S*)", line))
+        try:
+            exact[parts[0]] = exact.get(parts[0], 0) + int(kv.get("vsize") or 0)
+        except ValueError:
+            pass
+    if exact:
+        return exact
     r = _run(["doveadm", "-f", "flow", "quota", "get", "-A"], 60)
     out: dict[str, int] = {}
     for line in r.stdout.splitlines():
@@ -2473,11 +2488,12 @@ def setup_webmail() -> list[str]:
     m = re.search(r"\$config\['des_key'\]\s*=\s*'([^']+)'", cur)
     des = m.group(1) if m else "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(24))
     db = '\ninclude("/etc/roundcube/debian-db-roundcube.php");' if Path("/etc/roundcube/debian-db-roundcube.php").exists() else ""
+    rc_imap, rc_smtp = _rc_hosts()  # this server, plus the remote accounts (Gmail and friends) read here
     _write(RC_CONF, f"""<?php
 // Written by AuroraPanel (Email → Webmail). Edit in the panel — changes here are overwritten.
 $config = [];{db}
-$config['imap_host'] = ['localhost:143'];
-$config['smtp_host'] = 'tls://localhost:587';
+$config['imap_host'] = {rc_imap};
+$config['smtp_host'] = {rc_smtp};
 $config['smtp_user'] = '%u';
 $config['smtp_pass'] = '%p';
 $config['smtp_conn_options'] = ['ssl' => ['verify_peer' => false, 'verify_peer_name' => false, 'allow_self_signed' => true]];
@@ -2770,3 +2786,196 @@ def send_test(to: str, sender: str = "") -> dict:
     if r.returncode != 0:
         raise MailError(r.stderr.strip()[-300:] or "sendmail failed")
     return {"ok": True, "from": frm, "to": to}
+
+
+# --------------------------------------------------------------------------- #
+# Remote accounts: Gmail, Outlook or any IMAP server, read in this server's webmail
+# --------------------------------------------------------------------------- #
+# The panel keeps the server settings (never the password): Roundcube gets them as extra
+# hosts, and "Check Email" opens webmail with the account pre-selected. The password is
+# typed in webmail, as with any mail app.
+REMOTE_PRESETS = {
+    "gmail": {"name": "Gmail / Google Workspace", "imap_host": "imap.gmail.com", "imap_port": 993, "imap_enc": "ssl",
+              "smtp_host": "smtp.gmail.com", "smtp_port": 465, "smtp_enc": "ssl",
+              "hint": "Google needs an app password: Google Account → Security → 2-Step Verification → App passwords. The normal password doesn't work for mail apps."},
+    "outlook": {"name": "Outlook / Hotmail / Microsoft 365", "imap_host": "outlook.office365.com", "imap_port": 993, "imap_enc": "ssl",
+                "smtp_host": "smtp.office365.com", "smtp_port": 587, "smtp_enc": "tls",
+                "hint": "Personal Microsoft accounts need an app password when two-step verification is on."},
+    "yahoo": {"name": "Yahoo Mail", "imap_host": "imap.mail.yahoo.com", "imap_port": 993, "imap_enc": "ssl",
+              "smtp_host": "smtp.mail.yahoo.com", "smtp_port": 465, "smtp_enc": "ssl",
+              "hint": "Yahoo needs an app password: Account Security → Generate app password."},
+    "icloud": {"name": "iCloud Mail", "imap_host": "imap.mail.me.com", "imap_port": 993, "imap_enc": "ssl",
+               "smtp_host": "smtp.mail.me.com", "smtp_port": 587, "smtp_enc": "tls",
+               "hint": "iCloud needs an app-specific password from appleid.apple.com → Sign-In and Security."},
+    "custom": {"name": "Other IMAP server", "imap_host": "", "imap_port": 993, "imap_enc": "ssl", "smtp_host": "", "smtp_port": 587, "smtp_enc": "tls", "hint": ""},
+}
+_HOST_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")
+
+
+def _remote_spec(a: dict, kind: str) -> str:
+    enc = a.get(f"{kind}_enc", "ssl")
+    return f"{'ssl://' if enc == 'ssl' else 'tls://' if enc == 'tls' else ''}{a[f'{kind}_host']}:{a[f'{kind}_port']}"
+
+
+def remote_accounts() -> list[dict]:
+    out = []
+    for a in load().get("remote", []):
+        x = dict(a)
+        x["imap"] = _remote_spec(a, "imap")
+        x["smtp"] = _remote_spec(a, "smtp")
+        x["webmail"] = f"{webmail_url()}?_user={quote(a['username'])}&_host={quote(x['imap'])}" if webmail_url() else ""
+        out.append(x)
+    return out
+
+
+def remote_test(a: dict, password: str) -> None:
+    """Sign in to the IMAP server once with the given password, so a typo shows up now, not in webmail."""
+    import imaplib
+    try:
+        if a["imap_enc"] == "ssl":
+            c = imaplib.IMAP4_SSL(a["imap_host"], int(a["imap_port"]), timeout=20)
+        else:
+            c = imaplib.IMAP4(a["imap_host"], int(a["imap_port"]), timeout=20)
+            if a["imap_enc"] == "tls":
+                c.starttls()
+        try:
+            c.login(a["username"], password)
+        finally:
+            try:
+                c.logout()
+            except Exception:
+                pass
+    except imaplib.IMAP4.error as exc:
+        hint = REMOTE_PRESETS.get(a.get("preset", ""), {}).get("hint", "")
+        raise MailError(f"The server refused the sign-in ({str(exc)[:120]}). {hint}".strip())
+    except (OSError, socket.timeout) as exc:
+        raise MailError(f"Couldn't reach {a['imap_host']}:{a['imap_port']} ({exc})")
+
+
+def remote_add(data: dict) -> dict:
+    preset = REMOTE_PRESETS.get(str(data.get("preset") or "custom")) or REMOTE_PRESETS["custom"]
+    email_addr = str(data.get("email") or "").strip().lower()
+    if "@" not in email_addr or " " in email_addr:
+        raise MailError("Enter the address, e.g. you@gmail.com")
+    a = {"id": "", "preset": str(data.get("preset") or "custom"), "label": str(data.get("label") or "").strip() or email_addr,
+         "email": email_addr, "username": str(data.get("username") or "").strip() or email_addr}
+    for kind in ("imap", "smtp"):
+        host = str(data.get(f"{kind}_host") or preset[f"{kind}_host"] or "").strip().lower()
+        if not _HOST_RE.match(host):
+            raise MailError(f"Enter the {kind.upper()} server name, e.g. {kind}.example.com")
+        try:
+            port = int(data.get(f"{kind}_port") or preset[f"{kind}_port"])
+        except (TypeError, ValueError):
+            raise MailError(f"The {kind.upper()} port must be a number")
+        if not 1 <= port <= 65535:
+            raise MailError(f"The {kind.upper()} port must be between 1 and 65535")
+        enc = str(data.get(f"{kind}_enc") or preset[f"{kind}_enc"])
+        if enc not in ("ssl", "tls", "none"):
+            raise MailError("Encryption must be ssl, tls or none")
+        a[f"{kind}_host"], a[f"{kind}_port"], a[f"{kind}_enc"] = host, port, enc
+    s = load()
+    s.setdefault("remote", [])
+    if any(x["username"] == a["username"] and x["imap_host"] == a["imap_host"] for x in s["remote"]):
+        raise MailError("That account is already on the list")
+    if data.get("password"):
+        remote_test(a, str(data["password"]))
+    a["id"] = re.sub(r"[^a-z0-9]+", "-", email_addr).strip("-")[:40] + "-" + secrets.token_hex(3)
+    a["created"] = int(time.time())
+    s["remote"].append(a)
+    save(s)
+    _refresh_webmail_hosts()
+    return next(x for x in remote_accounts() if x["id"] == a["id"])
+
+
+def remote_remove(rid: str) -> dict:
+    s = load()
+    before = len(s.get("remote", []))
+    s["remote"] = [x for x in s.get("remote", []) if x["id"] != rid]
+    if len(s["remote"]) == before:
+        raise MailError("No such remote account")
+    save(s)
+    _refresh_webmail_hosts()
+    return {"ok": True}
+
+
+def _refresh_webmail_hosts() -> None:
+    """Roundcube's host list follows the remote accounts; a webmail that isn't installed is left alone."""
+    if RC_CONF.exists() and webmail_installed():
+        try:
+            setup_webmail()
+        except Exception:
+            pass
+
+
+def _rc_hosts() -> tuple[str, str]:
+    """PHP for Roundcube's imap_host and smtp_host: this server, plus every remote account."""
+    remote = load().get("remote", [])
+    if not remote:
+        return "['localhost:143']", "'tls://localhost:587'"
+    esc = lambda v: str(v).replace("\\", "\\\\").replace("'", "\\'")  # noqa: E731
+    hosts = [("localhost:143", f"This server ({hostname()})")] + [(_remote_spec(a, "imap"), a["label"]) for a in remote]
+    smtp = [("localhost:143", "tls://localhost:587")] + [(_remote_spec(a, "imap"), _remote_spec(a, "smtp")) for a in remote]
+    return ("[" + ", ".join(f"'{esc(k)}' => '{esc(v)}'" for k, v in hosts) + "]",
+            "[" + ", ".join(f"'{esc(k)}' => '{esc(v)}'" for k, v in smtp) + "]")
+
+
+# --------------------------------------------------------------------------- #
+# Inbox feed: the newest messages of this server's own mailboxes, for the panel's menu
+# --------------------------------------------------------------------------- #
+def _hdr(msg, name: str) -> str:
+    from email.header import decode_header, make_header
+    raw = msg.get(name, "") or ""
+    try:
+        return str(make_header(decode_header(raw))).strip()
+    except Exception:
+        return str(raw).strip()
+
+
+def inbox_feed(addresses: list[str], limit: int = 10) -> list[dict]:
+    """The newest messages in the INBOX of each address (Maildir new/ and cur/), newest first."""
+    from email.parser import BytesHeaderParser
+    from email.utils import parseaddr, parsedate_to_datetime
+    items: list[dict] = []
+    parser = BytesHeaderParser()
+    for addr in addresses:
+        if "@" not in addr:
+            continue
+        user, dom = addr.split("@", 1)
+        for sub in ("new", "cur"):
+            d = VMAIL / dom / user / "Maildir" / sub
+            if not d.is_dir():
+                continue
+            try:
+                files = sorted((p for p in d.iterdir() if p.is_file()), key=lambda p: p.stat().st_mtime, reverse=True)[:limit * 2]
+            except OSError:
+                continue
+            for f in files:
+                flags = f.name.split(":2,", 1)[1] if ":2," in f.name else ""
+                try:
+                    with f.open("rb") as fh:
+                        msg = parser.parse(fh)
+                    mtime = f.stat().st_mtime
+                except OSError:
+                    continue
+                name, from_addr = parseaddr(_hdr(msg, "From"))
+                try:
+                    ts = parsedate_to_datetime(msg.get("Date", "")).timestamp()
+                except Exception:
+                    ts = mtime
+                items.append({"account": addr, "from": name or from_addr or "unknown sender", "from_addr": from_addr,
+                              "subject": _hdr(msg, "Subject") or "(no subject)", "ts": int(ts), "unread": sub == "new" or "S" not in flags,
+                              "id": f"{addr}:{f.name}"})
+    items.sort(key=lambda x: x["ts"], reverse=True)
+    return items[:limit]
+
+
+def inbox_addresses(owner: str, contact: str) -> list[str]:
+    """Whose mail the menu shows: the contact address if it's a mailbox here, mailboxes named after
+    the panel owner, and the ones on this server's own local domain."""
+    s = load()
+    local = local_domain_name()
+    out = []
+    for a in sorted(s["accounts"]):
+        if a == (contact or "").lower() or a.split("@")[0] == (owner or "").lower() or (local and a.endswith("@" + local)):
+            out.append(a)
+    return out

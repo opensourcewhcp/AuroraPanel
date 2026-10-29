@@ -3,7 +3,7 @@
    Loaded before app.js; app.js calls window.AuroraMail(ui) once with its helpers. */
 window.AuroraMail = (ui) => {
   "use strict";
-  const { el, icon, btn, pill, kv, field, sw, toast, API, navigate, state, openModal, closeModal, copyText,
+  const { el, icon, btn, pill, kv, field, sw, toast, popNotice, API, navigate, state, openModal, closeModal, copyText,
     fmtBytes, ago, downloadText, esc } = ui;
   const MAIL = {};  // small per-session cache (domains for pickers)
   const LS_get = (k, d) => { try { const v = localStorage.getItem("ap." + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } };
@@ -208,6 +208,9 @@ window.AuroraMail = (ui) => {
     const auto = st.hostname_mode !== "manual";
     hostIn.disabled = auto;
     const autoSw = sw(auto, (v) => { hostIn.disabled = v; if (v) call(() => API.mailHostname("auto"), "Server name follows DNS automatically", () => navigate("email", { history: "none" })); });
+    const guardBox = el("div", {});
+    body.append(guardBox);
+    mailGuard(guardBox);
     body.append(el("div", { class: "card" }, [el("h3", { text: "Mail server name (HELO)" }),
       el("p", { class: "muted", text: "The name this server introduces itself with to other mail servers. Gmail and Outlook check that it points to this server and matches the IP's reverse DNS (PTR)." }),
       el("div", { class: "em-toggle" }, [autoSw, el("div", {}, [el("b", { text: "Choose automatically (recommended)" }),
@@ -239,6 +242,122 @@ window.AuroraMail = (ui) => {
     }).catch((e) => host.append(el("p", { class: "empty", text: e.message })));
   }
 
+  // ------------------------------------------------------------------ Remote accounts (Gmail, Outlook, any IMAP)
+  // The panel keeps server settings only; the password is typed in webmail, like in any mail app, and is
+  // never stored on this server. "Check Email" opens webmail with the account already selected.
+  async function remoteAccounts(box) {
+    let d;
+    const draw = async () => {
+      try { d = await API.mailRemote(); } catch (e) { box.innerHTML = ""; return; }
+      box.innerHTML = "";
+      const list = d.accounts.length ? el("div", { class: "em-list" }, d.accounts.map((a) => el("div", { class: "em-row" }, [
+        el("span", { class: "em-avatar em-remote-av", text: (a.label || a.email).charAt(0).toUpperCase() }),
+        el("div", { class: "em-row-main" }, [el("b", { text: a.label }), el("div", { class: "em-row-sub" }, [el("span", { class: "muted", text: `${a.email} · ${a.imap_host} · password never stored here` })])]),
+        el("div", { class: "em-row-act" }, [
+          a.webmail ? el("a", { class: "btn btn-sm btn-ghost", href: a.webmail, target: "_blank", rel: "noopener", title: "Open webmail on this account" }, [icon("inbox", 13), " Check Email"]) : null,
+          armed("Remove", "Sure?", async () => { try { await API.mailRemoteRemove(a.id); toast("Removed", "good"); draw(); } catch (e) { toast(e.message, "bad"); } }, "btn-ghost"),
+        ].filter(Boolean)),
+      ]))) : el("p", { class: "muted em-remote-empty", text: "None yet. Add your Gmail, Outlook, Yahoo, iCloud or any IMAP mailbox and read it in this server's webmail next to your local mail." });
+      box.append(el("div", { class: "card" }, [
+        el("div", { class: "net-card-h" }, [icon("globe", 20), el("h3", { text: "Remote accounts" }), el("span", { style: "flex:1" }),
+          d.webmail ? null : el("span", { class: "muted mx-small", text: "install Webmail to read them here" }),
+          btn("Add remote account", () => addRemote(d), "btn-primary")]),
+        el("p", { class: "muted", style: "margin:0 0 10px", text: "Mailboxes elsewhere, read through this server's webmail. Only the server settings live here; the password is typed in webmail and never kept on this server, so nothing to steal if the panel is ever compromised." }),
+        list,
+      ].filter(Boolean)));
+    };
+    function addRemote(d) {
+      let preset = "gmail";
+      const P = d.presets;
+      const f = {};
+      const inp = (k, ph, type) => (f[k] = el("input", { type: type || "text", placeholder: ph, autocomplete: type === "password" ? "new-password" : "off", spellcheck: "false" }));
+      const sel = (k, opts) => (f[k] = el("select", {}, opts.map(([v, t]) => el("option", { value: v, text: t }))));
+      const seg = el("div", { class: "cw-seg cw-seg-sm", style: "margin-bottom:12px" });
+      const hint = el("p", { class: "mx-note mx-note-dim", hidden: true });
+      const adv = el("div", { class: "em-remote-adv" });
+      const apply = () => {
+        seg.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.p === preset));
+        const p = P[preset];
+        f.imap_host.value = p.imap_host; f.imap_port.value = p.imap_port; f.imap_enc.value = p.imap_enc;
+        f.smtp_host.value = p.smtp_host; f.smtp_port.value = p.smtp_port; f.smtp_enc.value = p.smtp_enc;
+        hint.hidden = !p.hint; hint.innerHTML = ""; if (p.hint) hint.append(icon("info", 16), el("span", { text: p.hint }));
+        adv.open = preset === "custom";
+      };
+      Object.keys(P).forEach((k) => seg.append(el("button", { type: "button", "data-p": k, text: P[k].name.split(" / ")[0], onclick: () => { preset = k; apply(); } })));
+      const enc = [["ssl", "SSL/TLS"], ["tls", "STARTTLS"], ["none", "None"]];
+      const body = el("div", { class: "dm-form" }, [
+        seg,
+        el("label", { class: "cw-lbl" }, ["Email address", inp("email", "you@gmail.com", "email")]),
+        el("label", { class: "cw-lbl" }, ["Name shown in webmail", inp("label", "Gmail, Work, Mum's account…")]),
+        hint,
+        el("details", { class: "em-remote-details" }, [el("summary", { text: "Server settings" }), adv]),
+        el("label", { class: "cw-lbl" }, ["Password, only to test the sign-in now (not stored)", inp("password", "optional", "password")]),
+        el("p", { class: "muted mx-small", text: "If you leave the password empty the account is added untested; you type it in webmail each time it asks. Either way this server never keeps it." }),
+      ]);
+      adv.append(
+        el("div", { class: "em-remote-grid" }, [
+          el("label", { class: "cw-lbl" }, ["IMAP server", inp("imap_host", "imap.example.com")]), el("label", { class: "cw-lbl" }, ["Port", inp("imap_port", "993", "number")]), el("label", { class: "cw-lbl" }, ["Encryption", sel("imap_enc", enc)]),
+          el("label", { class: "cw-lbl" }, ["SMTP server", inp("smtp_host", "smtp.example.com")]), el("label", { class: "cw-lbl" }, ["Port", inp("smtp_port", "587", "number")]), el("label", { class: "cw-lbl" }, ["Encryption", sel("smtp_enc", enc)]),
+        ]),
+        el("label", { class: "cw-lbl" }, ["Sign-in name, if not the address", inp("username", "same as the address")]));
+      apply();
+      const go = el("button", { class: "btn btn-primary", text: "Add account", onclick: async () => {
+        go.disabled = true;
+        const data = { preset, email: f.email.value.trim(), label: f.label.value.trim(), username: f.username.value.trim(), password: f.password.value,
+          imap_host: f.imap_host.value.trim(), imap_port: +f.imap_port.value, imap_enc: f.imap_enc.value, smtp_host: f.smtp_host.value.trim(), smtp_port: +f.smtp_port.value, smtp_enc: f.smtp_enc.value };
+        try { const r = await API.mailRemoteAdd(data); closeModal(); toast(`${r.label} added${data.password ? ", sign-in tested" : ""}`, "good"); draw(); }
+        catch (e) { toast(e.message, "bad"); go.disabled = false; }
+      } });
+      openModal("Add a remote account", body, [go]);
+      setTimeout(() => f.email.focus(), 50);
+    }
+    draw();
+  }
+
+  // ------------------------------------------------------------------ Login protection: fail2ban's mail jails, in plain words
+  // Password guessing over IMAP, POP3 and SMTP is banned at the firewall; the trusted list is fail2ban's
+  // ignoreip, so a trusted address is never banned. (The WAF guards HTTP; mail logins are not HTTP.)
+  async function mailGuard(box) {
+    let d;
+    const draw = async () => {
+      try { d = await API.fail2ban(); } catch (e) { box.innerHTML = ""; return; }
+      box.innerHTML = "";
+      const jails = (d.jails || []).filter((j) => j.id === "dovecot" || j.id === "postfix-sasl");
+      const on = !!(d.installed && d.active && jails.length && jails.every((j) => j.enabled));
+      const tries = jails.length ? Math.max(...jails.map((j) => j.maxretry || 5)) : 5;
+      const live = jails.map((j) => j.live).filter(Boolean);
+      const failed = live.reduce((a, l) => a + (l.failed_total || 0), 0), banned = live.reduce((a, l) => a + (l.banned_total || 0), 0), now = live.reduce((a, l) => a + (l.banned_now || 0), 0);
+      const sel = el("select", { class: "em-select mx-narrow" }, [3, 5, 10].map((n) => el("option", { value: n, text: `${n} wrong passwords` })));
+      sel.value = String([3, 5, 10].includes(tries) ? tries : 5);
+      const setIt = async (enabled) => {
+        try {
+          const jl = {};
+          jails.forEach((j) => { jl[j.id] = { enabled, maxretry: +sel.value, findtime: -2, bantime: -2 }; });
+          await API.fail2banSave(null, jl);
+          toast(enabled ? `Mail logins protected: banned after ${sel.value} wrong passwords` : "Mail login protection is off", "good");
+          draw();
+        } catch (e) { toast(e.message, "bad"); }
+      };
+      box.append(el("div", { class: `card em-guard-card ${on ? "good" : ""}` }, [
+        el("div", { class: "em-card-h" }, [el("h3", { text: "Login protection" }), pill(!d.installed ? "fail2ban not installed" : on ? `on · ban after ${tries} wrong passwords` : "off", on ? "good" : "warn")]),
+        el("p", { class: "muted", text: "Whoever guesses mailbox passwords over IMAP, POP3 or SMTP is banned at the firewall after a few wrong tries. Addresses on your trusted list (IP Blocker & Trust) are never banned, so you can't lock yourself out." }),
+        d.installed ? el("div", { class: "em-guard" }, [
+          el("div", { class: "em-guard-opt" }, [el("span", { class: "muted", text: "Ban after" }), sel]),
+          btn(on ? "Apply" : "Turn on", () => setIt(true), on ? "btn-ghost" : "btn-primary"),
+          on ? btn("Turn off", () => setIt(false), "btn-ghost") : null,
+          btn("Trusted addresses", () => navigate("ipblocker"), "btn-ghost"),
+          btn("All jails", () => navigate("leech"), "btn-ghost"),
+        ].filter(Boolean)) : btn("Install Fail2ban", () => navigate("leech"), "btn-primary"),
+        live.length ? el("div", { class: "em-guard-stats" }, [
+          el("span", {}, [el("b", { text: String(failed) }), "wrong passwords seen"]),
+          el("span", {}, [el("b", { text: String(banned) }), "bans so far"]),
+          el("span", {}, [el("b", { text: String(now) }), "banned right now"])]) : null,
+      ].filter(Boolean)));
+    };
+    draw();
+  }
+
+
   // ------------------------------------------------------------------ Accounts
   async function viewAccounts(root) {
     const view = { q: "", domain: state.mailDomain || "", filter: "all", sel: new Set() };
@@ -253,7 +372,9 @@ window.AuroraMail = (ui) => {
     const list = el("div", { class: "em-list" }, el("div", { class: "loading", text: "Loading…" }));
     const summary = el("div", { class: "em-summary muted" });
     const localBox = el("div", {});
-    root.append(head, localBox, el("div", { class: "card em-pad0" }, [el("div", { class: "em-tools-bar" }, [search, filt, summary]), chips, bulk, list]));
+    const remoteBox = el("div", {});
+    root.append(head, localBox, el("div", { class: "card em-pad0" }, [el("div", { class: "em-tools-bar" }, [search, filt, summary]), chips, bulk, list]), remoteBox);
+    remoteAccounts(remoteBox);
     let data = null;
     const load = async () => {
       try { data = await API.mailAccounts(); MAIL.domains = data.domains; MAIL.candidates = data.candidates; MAIL.webmail = data.webmail; }
@@ -1108,7 +1229,7 @@ window.AuroraMail = (ui) => {
       let d;
       try { d = await API.mailDisk(sel.value); } catch (e) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); return; }
       body.innerHTML = "";
-      body.append(el("div", { class: "card" }, [usage(d.total, d.quota_mb), el("div", { class: "table-wrap" }, el("table", { class: "em-table" }, [el("thead", {}, el("tr", {}, ["Mailbox", "Messages", "Size", ""].map((h) => el("th", { text: h })))),
+      body.append(el("div", { class: "card" }, [el("div", { class: "em-card-h em-disk-h" }, [el("h3", { text: "Mailboxes" }), usage(d.total, d.quota_mb)]), el("div", { class: "table-wrap" }, el("table", { class: "em-table" }, [el("thead", {}, el("tr", {}, ["Mailbox", "Messages", "Size", ""].map((h) => el("th", { text: h })))),
         el("tbody", {}, d.mailboxes.map((m) => {
           const age = el("select", { class: "em-age" }, [["30", "older than 30 days"], ["90", "older than 90 days"], ["365", "older than a year"], ["0", "all messages"]].map(([v, l]) => el("option", { value: v, text: l })));
           return el("tr", {}, [el("td", {}, [icon(m.mailbox === "INBOX" ? "inbox" : m.mailbox === "Junk" ? "spam" : "folder", 14), ` ${m.mailbox}`]), el("td", { text: m.messages.toLocaleString() }), el("td", { text: fmtBytes(m.size) }),
@@ -1122,14 +1243,19 @@ window.AuroraMail = (ui) => {
   async function viewQueue(root) {
     const sel = new Set();
     const list = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
-    root.append(pageHead("Mail Queue", "Messages waiting to be delivered, usually because the receiving server is slow or refusing them for now.", [
-      btn("Retry all now", () => call(() => API.mailQueue("flush"), "Retrying delivery", () => setTimeout(load, 2000)), "btn-primary"),
-      armed("Delete all deferred", "Click again", () => call(() => API.mailQueue("delete_deferred"), "Deferred messages deleted", load), "btn-ghost")]),
+    let count = 0;
+    const retry = btn("Retry all now", () => {
+      if (!count) return popNotice({ title: "The queue is empty", text: "Nothing is waiting to be delivered, so there is nothing to retry.", kind: "good", icon: "info" });
+      call(() => API.mailQueue("flush"), `Retrying delivery of ${count} message${count === 1 ? "" : "s"}`, () => setTimeout(load, 2000));
+    }, "btn-primary");
+    const purge = armed("Delete all deferred", "Click again", () => call(() => API.mailQueue("delete_deferred"), "Deferred messages deleted", load), "btn-ghost");
+    root.append(pageHead("Mail Queue", "Messages waiting to be delivered, usually because the receiving server is slow or refusing them for now.", [retry, purge]),
       el("div", { class: "card em-pad0" }, list));
     async function load() {
       let d;
       try { d = await API.mailQueueGet(); } catch (e) { list.innerHTML = ""; list.append(el("p", { class: "empty", text: e.message })); return; }
       list.innerHTML = "";
+      count = d.messages.length; retry.disabled = !count; purge.disabled = !count; retry.title = purge.title = count ? "" : "Nothing is waiting";
       if (!d.messages.length) { list.append(empty("queue", "The queue is empty", "Everything has been delivered.")); return; }
       const bar = el("div", { class: "em-bulk" }, [btn("Retry selected", () => call(() => API.mailQueue("requeue", [...sel]), "Re-queued", load), "btn-ghost"),
         armed("Delete selected", "Click again", () => call(() => API.mailQueue("delete", [...sel]), "Deleted", () => { sel.clear(); load(); }), "btn-ghost")]);

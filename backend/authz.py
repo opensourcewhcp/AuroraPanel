@@ -38,6 +38,35 @@ def current() -> dict | None:
     return CURRENT.get()
 
 
+def cross_origin(headers: dict, is_ws: bool, method: str) -> bool:
+    """A browser request that changes something, or opens a WebSocket, must come from the panel's own
+    pages. The session cookie is SameSite=strict, which stops other *sites*, but a website hosted on
+    the same domain as the panel (blog.example.com against panel example.com:8088) counts as the same
+    site: a page planted on a hacked website could open the root terminal or POST to any body-less
+    endpoint with the owner's cookie. Browsers always send Origin on those requests, so it must name
+    the host the request was sent to. Requests without Origin (curl, scripts, API tokens) pass."""
+    if not is_ws and method in ("GET", "HEAD", "OPTIONS"):
+        return False
+    origin = (headers.get("origin") or "").strip().lower()
+    if not origin:
+        return False
+    if origin == "null":
+        return True
+    host = origin.split("://", 1)[1] if "://" in origin else origin
+    host = host.split("/", 1)[0]
+    wanted = {h.strip().lower() for h in (headers.get("host", ""), headers.get("x-forwarded-host", "")) if h}
+    # Origin leaves out a default port; Host may carry it (and the reverse).
+    def variants(h: str) -> set[str]:
+        out = {h}
+        for p in (":80", ":443"):
+            if h.endswith(p):
+                out.add(h[: -len(p)])
+            else:
+                out.add(h + p)
+        return out
+    return not (variants(host) & {v for w in wanted for v in variants(w)})
+
+
 def scope() -> dict | None:
     """For a website manager: {sites, roots, domains}; None for everyone else (no limits)."""
     u = CURRENT.get()
@@ -99,14 +128,19 @@ class AuthzMiddleware:
     async def __call__(self, scope_, receive, send):
         if scope_["type"] not in ("http", "websocket"):
             return await self.app(scope_, receive, send)
-        from . import audit, panelusers
+        from . import audit, auth, panelusers
         name = audit._user_from_scope(scope_)
         user = panelusers.get(name) if name else None
         token = CURRENT.set(dict(user) if user else None)
         try:
             path = scope_.get("path", "")
             if path.startswith("/api/") and user:
-                why = _decide(user, "WS" if scope_["type"] == "websocket" else scope_.get("method", "GET"), path)
+                is_ws = scope_["type"] == "websocket"
+                headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope_.get("headers", [])}
+                why = _decide(user, "WS" if is_ws else scope_.get("method", "GET"), path)
+                cookie_session = any(n + "=" in headers.get("cookie", "") for n in auth.COOKIE_NAMES)
+                if not why and cookie_session and cross_origin(headers, is_ws, scope_.get("method", "GET")):
+                    why = "Cross-origin request refused"
                 if why:
                     if scope_["type"] == "websocket":
                         await send({"type": "websocket.close", "code": 1008})

@@ -7,10 +7,56 @@
   let IS_PI = true;
   const host = (s) => (IS_PI || typeof s !== "string" ? s
     : s.replace(/(?<!Raspberry )\bPi's\b/g, "server's").replace(/(?<!Raspberry |\w\.)\bPi\b(?![-.]\w)/g, "server"));
+  // ---- Interface language. frontend/i18n/<lang>.json maps exact English strings to translations; tr() is
+  //      applied wherever text is made (el, toast, titles) and once over the static shell (nav, sign-in).
+  //      Anything that has no entry stays English, so a missing translation is never a broken page.
+  const LANGS = [["en", "English", "English"], ["es", "Español", "Spanish"], ["de", "Deutsch", "German"], ["fr", "Français", "French"],
+    ["it", "Italiano", "Italian"], ["pt-BR", "Português (Brasil)", "Portuguese (Brazil)"], ["pl", "Polski", "Polish"], ["uk", "Українська", "Ukrainian"],
+    ["ru", "Русский", "Russian"], ["tr", "Türkçe", "Turkish"], ["zh-CN", "中文（简体）", "Chinese (Simplified)"], ["ja", "日本語", "Japanese"], ["hi", "हिन्दी", "Hindi"]];
+  const I18N = { lang: "en", dict: null };
+  const tr = (s) => (I18N.dict && typeof s === "string" && Object.prototype.hasOwnProperty.call(I18N.dict, s) ? I18N.dict[s] : s);
+  const EN_TEXT = new WeakMap();  // a static text node's original English, so a later language change starts from it
+  const enText = (node) => [...node.childNodes].map((x) => (x.nodeType === 3 && EN_TEXT.has(x) ? EN_TEXT.get(x) : x.textContent)).join("").trim();
+  function translateStatic(root) {
+    if (!root) return;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    let n;
+    while ((n = walker.nextNode())) nodes.push(n);
+    for (const t of nodes) {
+      const p = t.parentElement;
+      if (!p || p.closest("script, style, code, pre, textarea, [data-raw]")) continue;
+      const en = EN_TEXT.has(t) ? EN_TEXT.get(t) : t.nodeValue;
+      const core = en.trim();
+      if (!core) continue;
+      if (!EN_TEXT.has(t)) EN_TEXT.set(t, en);
+      t.nodeValue = en.replace(core, tr(core));
+    }
+    root.querySelectorAll("[title], [placeholder], [aria-label]").forEach((x) => {
+      for (const a of ["title", "placeholder", "aria-label"]) {
+        if (!x.hasAttribute(a)) continue;
+        const key = "en" + a.replace("-", "");
+        const en = x.dataset[key] || x.getAttribute(a);
+        x.dataset[key] = en;
+        x.setAttribute(a, tr(en));
+      }
+    });
+  }
+  async function setLanguage(lang) {
+    lang = LANGS.some(([v]) => v === lang) ? lang : "en";
+    let dict = null;
+    if (lang !== "en") {
+      try { const r = await fetch(`/i18n/${lang}.json`, { cache: "no-cache" }); if (r.ok) dict = await r.json(); } catch (e) { dict = null; }
+    }
+    I18N.lang = lang; I18N.dict = dict;
+    document.documentElement.lang = lang;
+    try { localStorage.setItem("aurora-lang", lang); } catch (e) {}
+    translateStatic(document.body);
+  }
   const el = (tag, attrs = {}, children = []) => {
     const node = document.createElement(tag);
     // raw: data shown exactly as it is (log lines, URLs, user agents), never reworded, never parsed as HTML.
-    const h = attrs.raw ? (s) => s : host;
+    const h = attrs.raw ? (s) => s : (s) => host(tr(s));
     for (const [k, v] of Object.entries(attrs)) {
       if (k === "raw") continue;
       if (k === "class") node.className = v;
@@ -29,7 +75,7 @@
 
   // -------- formatting helpers --------
   const fmtBytes = (n) => {
-    if (n == null) return ", ";
+    if (n == null) return "n/a";
     const u = ["B", "KB", "MB", "GB", "TB", "PB"];
     let i = 0, v = n;
     while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
@@ -45,7 +91,7 @@
   let toastTimer = null;
   function toast(msg, kind = "good") {
     const t = $("#toast");
-    t.textContent = host(msg);
+    t.textContent = host(tr(msg));
     t.className = `toast ${kind}`;
     t.hidden = false;
     clearTimeout(toastTimer);
@@ -233,7 +279,7 @@
     files: "folder", shadow: "shadow", disk: "disk", backups: "backup", cron: "cron", indexes: "indexes",
     errorpages: "error", handlers: "handler", mime: "mime", dns: "dns",
     appmgr: "packages", sysapps: "services", phpver: "brick", password: "lock", accountprefs: "services",
-    contact: "phone", language: "globe", wordpress: "wordpress", appstore: "apps", app: "apps",
+    contact: "phone", language: "globe", wordpress: "wordpress", appstore: "apps", app: "apps", apphub: "apps",
     vpn: "vpn", wireguard: "tunnel", openvpn: "key", ipsec: "shield", portcheck: "plug", netmon: "radar",
     images: "image", dirprivacy: "lock", webdisk: "disk", ftpaccounts: "folder", backupwiz: "wizard", git: "git", inodes: "indexes",
     about: "info",
@@ -303,15 +349,15 @@
     NAV_GROUPS = [];
     let cur = null;
     document.querySelectorAll("#nav > *").forEach((n) => {
-      if (n.classList.contains("nav-group")) { cur = { name: n.dataset.group || n.textContent.trim(), items: [] }; NAV_GROUPS.push(cur); }
+      if (n.classList.contains("nav-group")) { cur = { name: n.dataset.group || enText(n), items: [] }; NAV_GROUPS.push(cur); }
       else if (cur && n.dataset.view && n.dataset.view !== "dashboard") {
-        const label = [...n.childNodes].filter((x) => !(x.classList && x.classList.contains("nav-ico"))).map((x) => x.textContent).join("").trim();
+        const label = [...n.childNodes].filter((x) => !(x.classList && x.classList.contains("nav-ico"))).map((x) => (x.nodeType === 3 && EN_TEXT.has(x) ? EN_TEXT.get(x) : x.textContent)).join("").trim();
         cur.items.push({ view: n.dataset.view, label });
       }
     });
   }
-  // An app's page (#/app/<id>) belongs to the App Installer's section.
-  const navView = (view) => (view === "app" ? (state.viewArg === "wordpress" ? "wordpress" : "appstore") : view);
+  // An app's page (#/app/<id>, and the WordPress page) belongs to the App Installer's tab.
+  const navView = (view) => (view === "app" || view === "wordpress" ? "appstore" : view);
   function groupOf(view) {
     if (view === "dashboard") return null;
     view = navView(view);
@@ -403,8 +449,8 @@
     const h = new Date().getHours();
     const part = h < 5 ? "Good night" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : h < 22 ? "Good evening" : "Good night";
     const appName = view === "app" && APPX.cat ? (APPX.cat.apps.find((x) => x.id === state.viewArg) || {}).name : null;
-    $("#view-title").textContent = g ? (appName || TITLES[view] || view) : `${part}, ${user || "there"}!`;
-    $("#view-crumb").textContent = g ? g.name : "";
+    $("#view-title").textContent = g ? (appName || tr(TITLES[view] || view)) : `${tr(part)}, ${user || tr("there")}!`;
+    $("#view-crumb").textContent = g ? tr(g.name) : "";
   }
   function isoWeek(d) {
     const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
@@ -417,6 +463,48 @@
     $("#now-time").textContent = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
     $("#now-week").textContent = `Week ${isoWeek(d)}`;
   }
+  // ---- Inbox in the account menu: the newest mail of this server's own mailboxes, a dot on the avatar
+  //      while something is unread, and a notice at the right when new mail arrives while the panel is open.
+  const inboxMenu = {
+    seen: null, timer: null,
+    start() {
+      if (this.timer) return;
+      this.refresh();
+      this.timer = setInterval(() => this.refresh(), 60000);
+      const b = $("#avatar-btn");
+      if (b) b.addEventListener("click", () => this.refresh());
+    },
+    async refresh() {
+      const box = $("#am-mail");
+      if (!box) return;
+      let d;
+      try { d = await API.mailInbox(); } catch (e) { box.hidden = true; return; }
+      const dot = $("#avatar-dot");
+      if (dot) dot.hidden = !d.unread;
+      if (!d.accounts.length) { box.hidden = true; return; }
+      box.hidden = false;
+      box.innerHTML = "";
+      const wm = d.webmail ? (a) => `${d.webmail}?_user=${encodeURIComponent(a)}` : null;
+      box.append(el("div", { class: "am-mail-h" }, [icon("inbox", 14), el("b", { text: "Inbox" }), d.unread ? pill(`${d.unread} new`, "warn") : null,
+        el("span", { style: "flex:1" }), wm ? el("a", { class: "am-mail-all", href: wm(d.accounts[0]), target: "_blank", rel: "noopener", text: "View all" }) : null].filter(Boolean)));
+      if (!d.items.length) box.append(el("div", { class: "am-mail-empty muted", text: "No mail yet." }));
+      else box.append(el("div", { class: "am-mail-list" }, d.items.map((m) => el(wm ? "a" : "div", { class: `am-mail-item ${m.unread ? "unread" : ""}`, ...(wm ? { href: wm(m.account), target: "_blank", rel: "noopener" } : {}), title: `${m.from_addr || m.from} → ${m.account}` }, [
+        el("span", { class: "am-mail-av", raw: true, text: (m.from || "?").charAt(0).toUpperCase() }),
+        el("span", { class: "am-mail-txt" }, [el("b", { raw: true, text: m.from }), el("span", { raw: true, text: m.subject })]),
+        el("span", { class: "am-mail-when muted", text: ago(m.ts) }),
+      ]))));
+      // New since the last look: a notice at the right, the way other panels announce things.
+      const ids = new Set(d.items.filter((m) => m.unread).map((m) => m.id));
+      if (this.seen) {
+        const fresh = d.items.filter((m) => m.unread && !this.seen.has(m.id));
+        if (fresh.length) {
+          const m = fresh[0];
+          popNotice({ title: fresh.length === 1 ? `New mail from ${m.from}` : `${fresh.length} new messages`, text: fresh.length === 1 ? m.subject : fresh.slice(0, 3).map((x) => `${x.from}: ${x.subject}`).join(" · "), kind: "good", icon: "inbox", ms: 9000 });
+        }
+      }
+      this.seen = ids;
+    },
+  };
   function setupAvatar(username) {
     $("#avatar-initial").textContent = (username || "?").charAt(0).toUpperCase();
     const btn = $("#avatar-btn"), menu = $("#avatar-menu");
@@ -526,6 +614,7 @@
 
   async function boot() {
     brandLogo();
+    try { await setLanguage(localStorage.getItem("aurora-lang") || "en"); } catch (e) {}
     try {
       const s = await API.status();
       IS_PI = s.pi !== false;
@@ -625,7 +714,14 @@
     try {
       await API.loginOtp(username, password, otp || null);
       $("#auth-password").value = "";
-      const me = await API.me();
+      let me;
+      try { me = await API.me(); } catch (e) {
+        // The password was right (the login call succeeded) but the browser did not keep the
+        // session cookie: cookies blocked for this site, or a stale cookie in the way.
+        if (e.status !== 401) throw e;
+        throw new Error("Signed in, but the browser did not keep the session cookie. Allow cookies for this address, "
+          + "or clear this site's cookies and sign in again.");
+      }
       if (me.must_change_password) return showPasswordChange(me.username, password);
       enterApp(me.username, me);
     } catch (err) {
@@ -655,7 +751,7 @@
     // that stops the automatic revert to HTTP.
     if (location.protocol === "https:") {
       API.panelHttps().then((st) => st.pending && API.panelHttpsConfirm()
-        .then(() => toast("Panel HTTPS is on, bookmark this https:// address", "good"))).catch(() => {});
+        .then(() => popNotice({ title: "Panel HTTPS is on", text: "Everything between your browser and this panel is encrypted now. Bookmark this https:// address.", kind: "good", icon: "lock", ms: 9000 }))).catch(() => {});
     }
     initTheme();
     decorateNav();
@@ -663,6 +759,7 @@
     buildNavGroups();
     buildRail();
     setupAvatar(username);
+    try { const p = await API.prefs(); const lang = p.language || "en"; if (lang !== I18N.lang) await setLanguage(lang); else translateStatic(document.body); } catch (e) {}
     tickClock();
     setInterval(tickClock, 15000);
     const cmdkBtn = $("#cmdk-open");
@@ -676,6 +773,7 @@
       if (v !== state.view || (argFromHash() || null) !== (state.viewArg || null)) navigate(v, { history: "none" });
     });
     API.overview().then((o) => { $("#host-label").textContent = o.hostname; $("#host-badge").textContent = o.hostname; }).catch(() => {});
+    inboxMenu.start();
     API.about().then((a) => {
       const v = $("#am-version");
       if (v) { v.textContent = `AuroraPanel ${a.label}`; v.onclick = () => { $("#avatar-menu").hidden = true; navigate("about"); }; }
@@ -707,7 +805,7 @@
     pgwiz: "PostgreSQL Wizard",
     sysapps: "System Applications", appmgr: "Application Manager", phpver: "PHP Settings",
     password: "Password & Security", accountprefs: "Account Preferences",
-    contact: "Contact Information", language: "Change Language", wordpress: "WordPress", appstore: "App Installer", app: "App",
+    contact: "Contact Information", language: "Change Language", wordpress: "WordPress", appstore: "App Installer", app: "App", apphub: "Applications",
     vpn: "VPN Overview", wireguard: "WireGuard", openvpn: "OpenVPN", ipsec: "IPsec / IKEv2 (strongSwan)",
     portcheck: "Port Checker", netmon: "Network Monitor",
     images: "Images", dirprivacy: "Directory Privacy", webdisk: "Web Disk", ftpaccounts: "FTP Accounts",
@@ -813,6 +911,7 @@
       contact: viewContact,
       language: viewLanguage,
       wordpress: viewWordPress,
+      apphub: viewAppHub,
       appstore: viewAppStore,
       app: viewAppPageRoute,
       vpn: viewVPNOverview,
@@ -1074,6 +1173,7 @@
       { label: "Users", icon: "users", view: "users" },
     ]},
     { name: "Applications", icon: "apps", tiles: [
+      { label: "Applications Overview", icon: "apps", view: "apphub" },
       { label: "App Installer", icon: "apps", view: "appstore" },
       { label: "Docker", icon: "t_docker", view: "dockerapps" },
       { label: "WordPress Toolkit", icon: "t_wptool", view: "wptoolkit" },
@@ -1291,7 +1391,8 @@
       if (b) navigate(b.dataset.go);
     });
 
-    root.append(el("div", { class: "dash-tools" }, resetBtn), grid, el("h2", { class: "section-title dash-section", text: "All tools" }), tilesWrap);
+    // "All tools" header row: the title sits on the left, in line with the panel titles below; "Reset layout" on the right.
+    root.append(grid, el("div", { class: "dash-section-row" }, [el("h2", { class: "section-title dash-section", text: "All tools" }), resetBtn]), tilesWrap);
     renderTiles(tilesWrap, refreshReset);
     try {
       if (!localStorage.getItem("aurora.dash.hint")) {
@@ -1386,11 +1487,11 @@
       </svg>
       ${bcHead("flame", "Thermal", o.pi_model ? "SoC temperature" : "CPU temperature")}
       <div class="bc-body">
-        <div class="bc-big ${hot ? "is-hot" : ""}">${t != null ? t.toFixed(1) : ", "}<small>°C</small></div>
+        <div class="bc-big ${hot ? "is-hot" : ""}">${t != null ? t.toFixed(1) : "n/a"}<small>°C</small></div>
         <div class="bc-sub">${t == null ? "No temperature sensor (normal on a virtual server)" : throttled ? "⚠ Throttled (" + esc(o.throttled) + ")" : hist.length > 1 ? `Low ${Math.min(...hist).toFixed(0)}° · High ${Math.max(...hist).toFixed(0)}°` : "No throttling"}</div>
       </div>
       <div class="bc-foot">
-        <span class="chip">${I("processes", 12)} ${o.cpu.freq_mhz ? o.cpu.freq_mhz.toFixed(0) + " MHz" : ", "}</span>
+        <span class="chip">${I("processes", 12)} ${o.cpu.freq_mhz ? o.cpu.freq_mhz.toFixed(0) + " MHz" : "n/a"}</span>
         <span class="chip ${throttled ? "chip-bad" : ""}">${t == null ? "n/a" : throttled ? "throttled" : "nominal"}</span>
       </div>`;
   }
@@ -1419,7 +1520,7 @@
     const p = clamp(rd.percent || 0);
     c.style.setProperty("--fill", `${p}%`);
     c.innerHTML = `${bcHead("disk", "Root filesystem", rd.mountpoint || "/")}
-      <div class="bc-body"><div class="bc-big accent">${rd.percent != null ? p.toFixed(0) : ", "}<small>%</small></div>
+      <div class="bc-body"><div class="bc-big accent">${rd.percent != null ? p.toFixed(0) : "n/a"}<small>%</small></div>
       <div class="bc-sub">Used · ${fmtBytes(rd.free)} free</div></div>
       <div class="bc-foot">${rbtn("disk", "disk", "Disk usage")}${rbtn("folder", "files", "File manager")}<span class="grow"></span>${tuneBtn("backups", "Backups")}</div>`;
   }
@@ -1481,11 +1582,11 @@
       <div class="sys-top"><span class="sys-loc">${I("globe", 15)} ${esc(o.hostname)}</span><span class="sys-cond">${I("dashboard", 26)}<em>${esc(model || "Linux")}</em></span></div>
       <div class="sys-mid">
         <div><div class="sys-big">${esc(fmtUptime(o.uptime_seconds))}</div>
-          <div class="sys-hl">Load ${la[0] != null ? la[0].toFixed(2) : ", "} · ${o.cpu.cores_logical} threads</div>
+          <div class="sys-hl">Load ${la[0] != null ? la[0].toFixed(2) : "n/a"} · ${o.cpu.cores_logical} threads</div>
           <div class="sys-note">${esc(o.arch)} · Python ${esc(o.python)}</div></div>
         <div class="sys-stats">
-          <div><span>Load 5m</span><b>${la[1] != null ? la[1].toFixed(2) : ", "}</b></div>
-          <div><span>Load 15m</span><b>${la[2] != null ? la[2].toFixed(2) : ", "}</b></div>
+          <div><span>Load 5m</span><b>${la[1] != null ? la[1].toFixed(2) : "n/a"}</b></div>
+          <div><span>Load 15m</span><b>${la[2] != null ? la[2].toFixed(2) : "n/a"}</b></div>
           <div><span>Swap</span><b>${o.swap.percent.toFixed(0)}%</b></div>
         </div>
       </div>
@@ -1558,7 +1659,7 @@
   // ---- Network (switch-style) ----
   function renderNetCard(c) {
     const i = netState.iface;
-    c.innerHTML = `${bcHead("network", "Network", i ? i.name : ", ")}
+    c.innerHTML = `${bcHead("network", "Network", i ? i.name : "n/a")}
       <div class="bc-body"><div class="net-rate">${I("chevron", 12)}<b>${fmtBytes(netState.rx)}/s</b><span>down</span></div>
         <div class="net-rate up">${I("chevron", 12)}<b>${fmtBytes(netState.tx)}/s</b><span>up</span></div></div>
       <div class="bc-foot"><span class="bc-sub mono">${esc((i && i.ipv4) || "no IPv4")}</span><span class="grow"></span>${tuneBtn("network", "Network")}</div>`;
@@ -1568,7 +1669,7 @@
   function renderStorageCard(c, disks) {
     const rd = rootDisk(disks) || {};
     const totalAll = disks.reduce((s, d) => s + d.total, 0);
-    c.innerHTML = `${bcHead("backup", `Storage · ${disks.length} mount${disks.length === 1 ? "" : "s"}`, rd.device || ", ")}
+    c.innerHTML = `${bcHead("backup", `Storage · ${disks.length} mount${disks.length === 1 ? "" : "s"}`, rd.device || "n/a")}
       <div class="stat3">
         <div><span>${I("disk", 12)} Used</span><b>${fmtBytes(rd.used)}</b></div>
         <div><span>${I("folder", 12)} Free</span><b>${fmtBytes(rd.free)}</b></div>
@@ -1990,7 +2091,7 @@
         return el("tr", {}, [
           el("td", { style: "width:34px" }, cb),
           nameCell,
-          el("td", { class: "muted", text: e.is_dir ? ", " : fmtBytes(e.size) }),
+          el("td", { class: "muted", text: e.is_dir ? "n/a" : fmtBytes(e.size) }),
           el("td", { class: "muted", text: e.mode }),
           el("td", { class: "muted", text: new Date(e.modified * 1000).toLocaleString() }),
           el("td", { class: "actions" }, [
@@ -2223,15 +2324,16 @@
             try { await API.trashDelete(it.id); refresh(); } catch (e) { toast(e.message, "bad"); } } }),
         ]),
       ]));
-      body.append(simpleTable(["Name", "Original location", "Size", "Deleted", ""], rows));
+      const tbl = simpleTable(["Name", "Original location", "Size", "Deleted", ""], rows); tbl.classList.add("fm-trash"); body.append(tbl);
     };
     const refresh = async () => { try { render((await API.trashList()).items); } catch (e) { toast(e.message, "bad"); } };
     render(data.items);
-    openModal("♻ Recycle Bin", body, [
+    openModal("Recycle Bin", body, [
       el("button", { class: "btn btn-danger", text: "Empty bin", onclick: async () => {
         if (!confirmInline("Permanently delete everything in the recycle bin?")) return;
         try { const r = await API.trashEmpty(); toast(`Emptied ${r.emptied} item(s)`, "good"); refresh(); } catch (e) { toast(e.message, "bad"); } } }),
     ]);
+    { const m = document.querySelector("#modal .modal"); if (m) m.classList.add("em-modal"); }
   }
 
   async function fmRestore(it, done) {
@@ -2392,8 +2494,8 @@
       top.append(
         tile("home", "Hostname", o.hostname, `${o.hostname}.local on your LAN`),
         tile("link", "You're connected via", o.panel_iface || "?", o.panel_ip || ""),
-        tile("network", "Gateway (router)", o.gateway ? o.gateway.ip : ", ", o.gateway ? `via ${o.gateway.device}` : ""),
-        tile("dns", "DNS servers", o.dns.join(", ") || ", ", ""));
+        tile("network", "Gateway (router)", o.gateway ? o.gateway.ip : "n/a", o.gateway ? `via ${o.gateway.device}` : ""),
+        tile("dns", "DNS servers", o.dns.join(", ") || "n/a", ""));
       if (!o.nm) top.append(el("div", { class: "dm-note", style: "grid-column:1/-1" }, [icon("info", 15), el("span", { text: "This machine's network is set up with netplan / systemd-networkd (normal on Ubuntu servers and VPSs), so it's shown read-only here. Wi-Fi, hotspot and IP changes need NetworkManager." })]));
       o.devices.forEach((d) => {
         const c = o.connections.find((x) => x.device === d.device);
@@ -2527,7 +2629,7 @@
       box.innerHTML = "";
       if (!d.devices.length) { box.append(el("p", { class: "empty", text: "No neighbours seen yet." })); return; }
       box.append(el("div", { class: "dm-count muted", text: `${d.devices.length} device(s)` }), simpleTable(["IP address", "Name", "Vendor", "MAC", "Status"], d.devices.map((x) => el("tr", {}, [
-        el("td", {}, el("code", { text: x.ip })), el("td", { text: x.hostname || ", " }), el("td", { class: "muted", text: x.vendor || ", " }),
+        el("td", {}, el("code", { text: x.ip })), el("td", { text: x.hostname || "n/a" }), el("td", { class: "muted", text: x.vendor || "n/a" }),
         el("td", { class: "muted" }, el("code", { text: x.mac })),
         el("td", {}, el("span", { class: `pill ${x.state === "reachable" ? "good" : "dim"}`, text: x.state === "reachable" ? "online" : "seen recently" })),
       ]))));
@@ -2543,7 +2645,7 @@
     API.netPorts().then((d) => {
       box.innerHTML = "";
       box.append(simpleTable(["Port", "Protocol", "What it is", "Program", "Reachable from"], d.ports.map((p) => el("tr", {}, [
-        el("td", {}, el("b", { text: p.port })), el("td", { class: "muted", text: p.proto.toUpperCase() }), el("td", { text: PORT_HINTS[p.port] || ", " }),
+        el("td", {}, el("b", { text: p.port })), el("td", { class: "muted", text: p.proto.toUpperCase() }), el("td", { text: PORT_HINTS[p.port] || "n/a" }),
         el("td", {}, el("code", { text: p.process })),
         el("td", {}, el("span", { class: `pill ${p.scope === "all interfaces" ? "warn" : p.scope === "this machine only" ? "good" : "dim"}`, text: p.scope })),
       ]))));
@@ -2603,8 +2705,8 @@
         const rows = data.interfaces.map((n) => el("tr", {}, [
           el("td", { text: n.name }),
           el("td", {}, el("span", { class: `pill ${n.is_up ? "good" : "dim"}`, text: n.is_up ? "up" : "down" })),
-          el("td", { class: "muted", text: n.ipv4 || ", " }),
-          el("td", { class: "muted", text: n.mac || ", " }),
+          el("td", { class: "muted", text: n.ipv4 || "n/a" }),
+          el("td", { class: "muted", text: n.mac || "n/a" }),
           el("td", { text: fmtBytes(n.bytes_recv) }),
           el("td", { text: fmtBytes(n.bytes_sent) }),
           el("td", { class: "muted", text: n.speed_mbps ? `${n.speed_mbps} Mbps` : ", " }),
@@ -3650,7 +3752,7 @@
         const dest = el("input", { type: "text", value: "/" });
         const wipe = el("input", { type: "checkbox" }); wipe.checked = true;
         put(el("h4", { text: "Pick what to bring back" }),
-          kv([["Made", b.created ? new Date(b.created * 1000).toLocaleString() : ", "], ["On", b.host || ", "]]),
+          kv([["Made", b.created ? new Date(b.created * 1000).toLocaleString() : "n/a"], ["On", b.host || "n/a"]]),
           grp("Folders", b.paths || [], "path"), grp("MariaDB databases", b.mysql || [], "mysql"), grp("PostgreSQL databases", b.pgsql || [], "pgsql"),
           (b.paths || []).length ? field("Put folders under", dest, "/ = their original location. Any other folder keeps the full path inside it (e.g. /tmp/check/home/a51).") : null,
           ((b.mysql || []).length + (b.pgsql || []).length) ? el("label", { class: "dm-check", style: "margin:10px 0 4px" }, [wipe, el("span", { text: "Empty each database first (rename the target to import a copy instead)" })]) : null,
@@ -3979,7 +4081,7 @@
       if (!d.apache) { body.append(el("p", { class: "empty", text: "Directory Privacy needs Apache (System Applications)." })); return; }
       body.append(el("h2", { class: "section-title", text: `Protected folders (${d.folders.length})` }));
       body.append(d.folders.length ? simpleTable(["Folder", "Prompt", "Users", "Status", ""], d.folders.map((f) => row(
-        el("span", {}, [el("code", { class: "net-mono", text: f.path }), f.exists ? null : pill("missing", "bad")]), f.label || ", ",
+        el("span", {}, [el("code", { class: "net-mono", text: f.path }), f.exists ? null : pill("missing", "bad")]), f.label || "n/a",
         el("div", { class: "net-chips" }, f.users.map((u) => el("button", { type: "button", class: "net-chip", title: "Remove user", text: `${u} ✕`, onclick: async () => {
           if (!confirmInline(`Remove ${u} from ${f.path}?`)) return; try { await API.dirPrivacyUser({ path: f.path, name: u, remove: true }); toast("Removed", "good"); load(); } catch (e) { toast(e.message, "bad"); } } }))),
         pill(f.enabled ? "protected" : "off", f.enabled ? "good" : "dim"),
@@ -4122,9 +4224,9 @@
       body.append(el("h2", { class: "section-title", text: `Repositories (${d.repos.length})` }));
       body.append(d.repos.length ? simpleTable(["Repository", "Branch", "Last commit", "Remote", "Deploys to", ""], d.repos.map((r) => row(
         el("div", {}, [el("b", { text: r.name }), el("div", { class: "dm-hint", text: `${r.path} · owner ${r.owner}` })]),
-        r.exists ? el("span", {}, [el("code", { text: r.branch || ", " }), r.dirty ? pill(`${r.dirty} changed`, "warn") : null]) : pill("missing", "bad"),
-        r.last ? el("div", {}, [el("span", { text: r.last.subject }), el("div", { class: "dm-hint", text: `${r.last.hash} · ${r.last.author} · ${ago(r.last.time)}` })]) : ", ",
-        r.remote || ", ", r.deploy_path || ", ",
+        r.exists ? el("span", {}, [el("code", { text: r.branch || "n/a" }), r.dirty ? pill(`${r.dirty} changed`, "warn") : null]) : pill("missing", "bad"),
+        r.last ? el("div", {}, [el("span", { text: r.last.subject }), el("div", { class: "dm-hint", text: `${r.last.hash} · ${r.last.author} · ${ago(r.last.time)}` })]) : "n/a",
+        r.remote || "n/a", r.deploy_path || "n/a",
         el("div", { class: "net-actions" }, [
           r.remote ? btn("Pull", async () => { try { const j = await API.gitPull(r.name); watchJob(jp, j.job, `Pull ${r.name}`, load); } catch (e) { toast(e.message, "bad"); } }) : null,
           btn("Deploy", async () => { try { const j = await API.gitDeploy(r.name); watchJob(jp, j.job, `Deploy ${r.name}`, load); } catch (e) { toast(e.message, "bad"); } }, "btn-primary"),
@@ -4268,10 +4370,22 @@
   // ======================================================================
   //  Users
   // ======================================================================
+  // What a login shell is, in plain words: shown next to each account and under the table.
+  const SHELLS = [
+    ["/bin/bash", "Full command line", "Can sign in over SSH and run scripts. The normal choice for a person."],
+    ["/bin/sh", "Basic shell", "A minimal command line. Fine for scripts, spartan for people."],
+    ["/usr/sbin/nologin", "No sign-in", "Owns files and runs services, but can't open a shell. For service accounts, mail and FTP-only users."],
+    ["/bin/false", "No sign-in, silent", "Like nologin, without the \"account unavailable\" message."],
+  ];
+  const shellInfo = (s) => SHELLS.find((x) => x[0] === s) || [s, /nologin|false$/.test(s || "") ? "No sign-in" : "Shell", "Another shell set by hand."];
+  const canSignIn = (s) => !/nologin|false$/.test(s || "");
+
   function viewUsers(root) {
+    let tf = null;
     const bar = el("div", { class: "toolbar" }, [
       el("input", { id: "u-name", type: "text", placeholder: "new username", style: "max-width:180px" }),
-      el("select", { id: "u-shell", style: "max-width:170px" }, ["/bin/bash", "/bin/sh", "/usr/sbin/nologin", "/bin/false"].map((s) => el("option", { value: s, text: s }))),
+      el("select", { id: "u-shell", style: "max-width:260px", title: "Login shell: whether and how the account can open a command line" },
+        SHELLS.map(([s, t]) => el("option", { value: s, text: `${s} · ${t}` }))),
       el("label", { class: "muted", style: "display:flex;align-items:center;gap:6px" }, [el("input", { id: "u-home", type: "checkbox", checked: "checked", style: "width:auto" }), "create home"]),
       el("button", { class: "btn btn-sm btn-primary", text: "Add user", onclick: addUser }),
       el("label", { class: "muted", style: "display:flex;align-items:center;gap:6px;margin-left:auto" }, [el("input", { id: "u-sys", type: "checkbox", style: "width:auto", onchange: () => load() }), "show system"]),
@@ -4282,21 +4396,49 @@
     const load = async () => {
       await guardedLoad(async () => {
         const sys = $("#u-sys") && $("#u-sys").checked;
-        const data = await API.usersList(sys);
+        const [data, t] = await Promise.all([API.usersList(sys), API.userTwofa().catch(() => null)]);
+        tf = t;
         body.innerHTML = "";
         if (!data.supported) { body.append(el("p", { class: "empty", text: "User management is only available on Linux." })); return; }
-        const rows = data.users.map((u) => el("tr", {}, [
-          el("td", { text: u.name }), el("td", { class: "muted", text: u.uid }),
-          el("td", { class: "muted", text: u.home }), el("td", { class: "muted", text: u.shell }),
-          el("td", { class: "actions" }, [
-            el("button", { class: "btn btn-sm btn-ghost", text: "Password", onclick: () => setUserPw(u.name) }),
-            el("button", { class: "btn btn-sm btn-danger", text: "Delete", onclick: () => delUser(u.name) }),
-          ]),
-        ]));
-        body.append(el("div", { class: "table-wrap" }, el("table", {}, [
-          el("thead", {}, el("tr", {}, ["User", "UID", "Home", "Shell", ""].map((h) => el("th", { text: h })))),
+        const rows = data.users.map((u) => {
+          const s = tf && tf.users ? tf.users[u.name] || "off" : "off";
+          const ssh = canSignIn(u.shell);
+          const isOwner = tf && tf.panel && tf.panel.username === u.name;
+          const [, shellShort, shellLong] = shellInfo(u.shell);
+          return el("tr", {}, [
+            el("td", {}, [el("b", { text: u.name }), u.home_owner ? el("span", { class: "muted mx-small", text: ` · home inside ${u.home_owner}'s` }) : null].filter(Boolean)),
+            el("td", { class: "muted", text: u.uid }),
+            el("td", { class: "muted", text: u.home }),
+            el("td", { class: "muted", title: shellLong }, [el("code", { class: "u-shell", text: u.shell }), " ", el("span", { class: `u-shell-tag ${ssh ? "" : "off"}`, text: shellShort })]),
+            el("td", { class: "u-2fa" }, [
+              ssh ? pill(s === "on" ? "SSH on" : s === "pending" ? "SSH pending" : "SSH off", s === "on" ? "good" : s === "pending" ? "warn" : "dim") : el("span", { class: "muted mx-small", text: "no sign-in" }),
+              isOwner ? el("button", { class: "btn btn-sm btn-ghost u-panel2fa", title: "Two-factor for the panel login of the same name", text: `Panel ${tf.panel.enabled ? "on" : "off"}`, onclick: () => navigate("security") }) : null,
+            ].filter(Boolean)),
+            el("td", { class: "actions" }, [
+              ssh ? el("button", { class: "btn btn-sm btn-ghost", text: s === "off" ? "Set up 2FA" : "Turn off 2FA", onclick: () => (s === "off" ? twofaSetup(u) : twofaOff(u)) }) : null,
+              el("button", { class: "btn btn-sm btn-ghost", text: "Password", onclick: () => setUserPw(u.name) }),
+              el("button", { class: "btn btn-sm btn-danger", text: "Delete", onclick: () => delUser(u) }),
+            ].filter(Boolean)),
+          ]);
+        });
+        body.append(el("div", { class: "table-wrap" }, el("table", { class: "u-table" }, [
+          el("thead", {}, el("tr", {}, ["User", "UID", "Home", "Shell", "2FA", ""].map((h) => el("th", { text: h })))),
           el("tbody", {}, rows),
         ])));
+        const ready = tf && tf.status && tf.status.ready;
+        body.append(el("div", { class: "u-legend" }, [
+          el("div", { class: "card" }, [
+            el("h3", { text: "What the shells mean" }),
+            el("dl", { class: "u-dl" }, SHELLS.flatMap(([s, t, d]) => [el("dt", {}, [el("code", { text: s }), el("span", { class: "u-shell-tag", text: t })]), el("dd", { class: "muted", text: d })])),
+          ]),
+          el("div", { class: "card" }, [
+            el("h3", { text: "Two-factor over SSH" }),
+            el("p", { class: "muted", text: "A 6-digit code from a phone app on top of the password when an account signs in over SSH. Logins with an SSH key are unchanged, and accounts without a code set up sign in as before." }),
+            el("p", { class: "muted", text: ready ? "Set up on this server: the PAM module is installed and sshd asks for codes."
+              : "Not set up on this server yet. The first account you turn it on for sets it up: libpam-google-authenticator is installed and sshd is told to ask for codes." }),
+            tf && tf.panel && tf.panel.username ? el("p", { class: "muted", text: `The panel login (${tf.panel.username}) has its own two-factor under Security → Two-Factor Auth.` }) : null,
+          ].filter(Boolean)),
+        ]));
       });
     };
     async function addUser() {
@@ -4306,25 +4448,81 @@
         toast("User added", "good"); $("#u-name").value = ""; load(); }
       catch (err) { toast(err.message, "bad"); }
     }
-    async function delUser(name) {
-      const rmHome = confirmInline(`Delete user "${name}"?\n\nOK = also remove home directory, Cancel = keep it.\n(To abort entirely, dismiss the next prompt.)`);
-      if (!confirmInline(`Confirm deleting user "${name}"${rmHome ? " and their home directory" : ""}?`)) return;
-      try { await API.userDelete(name, rmHome); toast("User deleted", "good"); load(); }
-      catch (err) { toast(err.message, "bad"); }
+    function delUser(u) {
+      const keep = el("input", { type: "radio", name: "u-del", value: "keep", checked: "checked" });
+      const rm = el("input", { type: "radio", name: "u-del", value: "remove" });
+      const bk = el("input", { type: "checkbox" });
+      const shared = u.home_owner;
+      if (shared) rm.disabled = true;
+      const box = el("div", { class: "dm-form" }, [
+        el("p", { text: `The Linux account ${u.name} is removed from this server. Its files can stay, be saved first, or go with it.` }),
+        el("label", { class: "dm-check" }, [keep, el("span", {}, [" Keep ", el("code", { text: u.home }), " as it is"])]),
+        el("label", { class: `dm-check ${shared ? "dm-dim" : ""}` }, [rm, el("span", {}, [" Delete ", el("code", { text: u.home }), " too"])]),
+        shared ? el("p", { class: "mx-note mx-note-dim" }, [icon("info", 16), el("span", { text: `${u.home} is inside ${shared}'s home, so it is kept. Delete the files by hand if you want them gone.` })]) : null,
+        el("label", { class: "dm-check" }, [bk, el("span", { text: " Save a backup of the home folder first (a tar.gz in the panel's backup folder)" })]),
+      ].filter(Boolean));
+      const go = el("button", { class: "btn btn-danger", text: `Delete ${u.name}`, onclick: async () => {
+        go.disabled = true;
+        try {
+          const r = await API.userDelete(u.name, rm.checked, bk.checked);
+          closeModal(); toast(r.backup ? `${u.name} deleted, backup in ${r.backup}` : `${u.name} deleted`, "good"); load();
+        } catch (e) { toast(e.message, "bad"); go.disabled = false; }
+      } });
+      openModal(`Delete user ${u.name}`, box, [go]);
     }
-    async function setUserPw(name) {
-      const pw = promptInline(`Set a new password for ${name}:`);
-      if (!pw) return;
-      try { await API.userPassword(name, pw); toast("Password set", "good"); }
-      catch (err) { toast(err.message, "bad"); }
+    function setUserPw(name) {
+      const p1 = el("input", { type: "password", placeholder: "New password", autocomplete: "new-password" });
+      const p2 = el("input", { type: "password", placeholder: "Repeat it", autocomplete: "new-password" });
+      const go = el("button", { class: "btn btn-primary", text: "Set password", onclick: async () => {
+        if (!p1.value) return toast("Enter a password", "bad");
+        if (p1.value !== p2.value) return toast("Passwords don't match", "bad");
+        go.disabled = true;
+        try { await API.userPassword(name, p1.value); closeModal(); toast(`Password set for ${name}`, "good"); }
+        catch (e) { toast(e.message, "bad"); go.disabled = false; }
+      } });
+      openModal(`Password for ${name}`, el("div", { class: "dm-form" }, [
+        el("p", { class: "muted", text: "The Linux password, used for SSH, sudo and FTP. The panel's own login is separate." }),
+        el("label", { class: "cw-lbl" }, ["New password", p1]), el("label", { class: "cw-lbl" }, ["Repeat it", p2]),
+      ]), [go]);
+      setTimeout(() => p1.focus(), 50);
     }
-    state.refreshHandler = load;
+    async function twofaSetup(u) {
+      let d;
+      try { d = await API.userTwofaEnroll(u.name); } catch (e) { return toast(e.message, "bad"); }
+      const ready = tf && tf.status && tf.status.ready;
+      const code = el("input", { type: "text", inputmode: "numeric", placeholder: "6-digit code", autocomplete: "one-time-code", style: "max-width:180px" });
+      const box = el("div", { class: "dm-form u2-box" }, [
+        el("p", { text: `Scan this with Google Authenticator, Microsoft Authenticator, Authy or any TOTP app, then type the code it shows. From then on ${u.name} needs that code together with the password when signing in over SSH. Logins with an SSH key are unchanged.` }),
+        el("div", { class: "u2-row" }, [
+          el("img", { src: d.qr, alt: "QR code", width: "168", height: "168", class: "u2-qr" }),
+          el("div", { class: "u2-side" }, [
+            el("div", { class: "muted mx-small", text: "Can't scan? Enter the secret by hand:" }),
+            el("code", { class: "u2-secret", raw: true, text: d.secret }),
+            el("div", { class: "muted mx-small", style: "margin-top:10px", text: "Backup codes, each works once. Keep them somewhere safe:" }),
+            el("div", { class: "u2-scratch" }, d.scratch.map((s) => el("code", { raw: true, text: s }))),
+          ]),
+        ]),
+        ready ? null : el("p", { class: "mx-note mx-note-dim" }, [icon("info", 16), el("span", { text: "First account on this server: turning it on installs libpam-google-authenticator and lets SSH ask for codes. Accounts without a code keep signing in exactly as before." })]),
+        el("label", { class: "cw-lbl" }, ["Code from the app", code]),
+      ].filter(Boolean));
+      const go = el("button", { class: "btn btn-primary", text: "Turn on", onclick: async () => {
+        go.disabled = true;
+        try { await API.userTwofaConfirm(u.name, code.value.trim()); closeModal(); popNotice({ title: `Two-factor is on for ${u.name}`, text: "SSH password logins for this account now ask for the code from the app.", kind: "good", icon: "shield" }); load(); }
+        catch (e) { toast(e.message, "bad"); go.disabled = false; }
+      } });
+      openModal(`Two-factor for ${u.name}`, box, [go]);
+      setTimeout(() => code.focus(), 50);
+    }
+    function twofaOff(u) {
+      const go = el("button", { class: "btn btn-danger", text: "Turn off", onclick: async () => {
+        go.disabled = true;
+        try { await API.userTwofaDisable(u.name); closeModal(); toast(`Two-factor is off for ${u.name}`, "good"); load(); }
+        catch (e) { toast(e.message, "bad"); go.disabled = false; }
+      } });
+      openModal(`Turn off two-factor for ${u.name}`, el("p", { class: "muted", text: `${u.name} signs in over SSH with the password alone again. The secret is deleted; turning it back on makes a new one.` }), [go]);
+    }
     load();
   }
-
-  // ======================================================================
-  //  Security (2FA)
-  // ======================================================================
   function viewSecurity(root, only) {
     const body = el("div", { id: "sec-body" }, el("div", { class: "loading", text: "Loading…" }));
     root.append(body);
@@ -4475,8 +4673,12 @@
         const d = await API.twofaEnroll();
         const code = el("input", { id: "sec-code", type: "text", inputmode: "numeric", autocomplete: "one-time-code", maxlength: 6, placeholder: "123456", class: "tf-code" });
         const enable = async () => {
-          try { await API.twofaEnable(code.value.trim()); toast("2FA enabled", "good"); closeModal(); load(); }
-          catch (e) { toast(e.message, "bad"); }
+          try {
+            await API.twofaEnable(code.value.trim());
+            closeModal();
+            toast("2FA is on. Sign in again with your authenticator code.", "good");
+            setTimeout(() => location.reload(), 1200);
+          } catch (e) { toast(e.message, "bad"); }
         };
         code.addEventListener("keydown", (e) => { if (e.key === "Enter") enable(); });
         code.addEventListener("input", () => { code.value = code.value.replace(/\D/g, "").slice(0, 6); if (code.value.length === 6) enable(); });
@@ -4933,7 +5135,7 @@
           d = await API.dnsNsCheck(host);
           card = el("div", { class: "card" }, [el("h3", { text: `Name servers of ${d.domain}` }),
             el("p", { class: "muted", style: "margin:0 0 10px", text: !d.ns.length ? "No NS records: the domain isn't delegated (or isn't a zone, try its parent domain)." : d.agree ? "All name servers answer and carry the same zone version (SOA serial)." : "The name servers carry different zone versions, or one doesn't answer, a change hasn't reached all of them yet." }),
-            d.ns.length ? table(["Name server", "Address", "Zone serial", "Answers"], d.servers.map((x) => el("tr", {}, [el("td", { text: x.ns }), el("td", { class: "muted", text: x.ip || "?" }), el("td", {}, el("code", { text: x.serial || ", " })), el("td", {}, el("span", { class: `pill ${x.ok ? "good" : "bad"}`, text: x.ok ? "yes" : "no" }))]))) : null]);
+            d.ns.length ? table(["Name server", "Address", "Zone serial", "Answers"], d.servers.map((x) => el("tr", {}, [el("td", { text: x.ns }), el("td", { class: "muted", text: x.ip || "?" }), el("td", {}, el("code", { text: x.serial || "n/a" })), el("td", {}, el("span", { class: `pill ${x.ok ? "good" : "bad"}`, text: x.ok ? "yes" : "no" }))]))) : null]);
         } else if (kind === "whois") {
           d = await API.dnsWhois(host);
           const keys = Object.entries(d.summary);
@@ -5010,7 +5212,7 @@
       keysWrap.append(addForm);
       if (!data.keys.length) { keysWrap.append(el("p", { class: "empty", text: "No authorized keys." })); return; }
       const rows = data.keys.map((k) => el("tr", {}, [
-        el("td", { text: k.type }), el("td", { class: "muted", text: k.comment || ", " }),
+        el("td", { text: k.type }), el("td", { class: "muted", text: k.comment || "n/a" }),
         el("td", { class: "muted", style: "font-family:monospace;font-size:11px", text: k.fingerprint }),
         el("td", { class: "actions" }, el("button", { class: "btn btn-sm btn-danger", text: "Remove", onclick: async () => {
           if (!confirmInline("Remove this key?")) return;
@@ -5028,7 +5230,7 @@
   const BAN_DURATIONS = [[3600, "1 hour"], [86400, "1 day"], [604800, "1 week"], [2592000, "30 days"], [0, "Permanent"]];
   // one colour rule for every IP shown: banned = red, trusted = green, reported (and nothing else) = orange
   const ipCls = (st, rep) => (st === "banned" ? "ip-banned" : st === "trusted" ? "ip-trusted" : rep ? "ip-reported" : "");
-  const fmtDur = (s) => s == null ? ", " : s < 3600 ? `${Math.ceil(s / 60)} min` : s < 86400 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86400)} d`;
+  const fmtDur = (s) => s == null ? "n/a" : s < 3600 ? `${Math.ceil(s / 60)} min` : s < 86400 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86400)} d`;
   function rangeOf(ip, bits) {
     const p = String(ip).split(".").map(Number);
     if (p.length !== 4) return ip;
@@ -5072,7 +5274,7 @@
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
     root.append(el("div", { class: "toolbar" }, [btn("Ban an address…", () => banDialog("", load), "btn-danger"), btn("Trust an address…", () => trustDialog("", load), "btn-primary"),
       btn("Fail2ban settings", () => navigate("leech"), "btn-ghost"), btn("Network Monitor", () => navigate("netmon"), "btn-ghost")]), body);
-    const when = (ts) => (ts ? `${new Date(ts * 1000).toLocaleString()} (${ago(ts)})` : ", ");
+    const when = (ts) => (ts ? `${new Date(ts * 1000).toLocaleString()} (${ago(ts)})` : "n/a");
     const bare = (cidr) => String(cidr || "").replace(/\/(32|128)$/, "");
     const lookup = (ip) => { const f = (extraViews()._ui || {}).ipCard; if (f) f(ip, load); };
     const reportIp = (ip, done) => { const f = (extraViews()._ui || {}).reportIp; if (f) f(ip, done); };
@@ -5091,7 +5293,7 @@
       body.append(el("h2", { class: "section-title", text: `Banned by you (${d.bans.length})` }));
       body.append(el("p", { class: "dm-hint", text: "Every ban made from the panel, the IP card, Network Monitor, WAF Firewall, Visitors or here, with when, from where and why. “reported” means its abuse desk was told." }));
       body.append(d.bans.length ? simpleTable(["Address / range", "Banned at", "Banned from", "Reason", "Expires", "Blocked packets", ""], d.bans.map((b) => row(
-        addr(bare(b.cidr), b.cidr), when(b.created), el("span", { class: "pill dim", text: b.source || "IP Blocker" }), b.reason || ", ",
+        addr(bare(b.cidr), b.cidr), when(b.created), el("span", { class: "pill dim", text: b.source || "IP Blocker" }), b.reason || "n/a",
         b.expires ? `${new Date(b.expires * 1000).toLocaleString()} (in ${fmtDur(b.expires - Date.now() / 1000)})` : "never",
         b.packets, el("div", { class: "net-actions" }, [
           single(b.cidr) ? btn("Lookup", () => lookup(bare(b.cidr)), "btn-ghost") : null,
@@ -5111,14 +5313,14 @@
       const reps = Object.entries(reported).sort((x, y) => y[1].ts - x[1].ts);
       body.append(el("h2", { class: "section-title", text: `Reported to abuse desks (${reps.length})` }));
       body.append(reps.length ? simpleTable(["Address", "Reported at", "To", "From", "Evidence", "Status here", ""], reps.map(([ip, r]) => row(
-        el("code", { class: `net-mono ${bannedSet.has(ip) ? "ip-banned" : "ip-reported"}`, text: ip }), when(r.ts), (r.to || []).join(", "), r.from || ", ", r.events ? `${r.events} event${r.events === 1 ? "" : "s"}` : ", ",
+        el("code", { class: `net-mono ${bannedSet.has(ip) ? "ip-banned" : "ip-reported"}`, text: ip }), when(r.ts), (r.to || []).join(", "), r.from || "n/a", r.events ? `${r.events} event${r.events === 1 ? "" : "s"}` : "n/a",
         bannedSet.has(ip) ? pill("banned", "bad") : pill("not banned", "dim"),
         el("div", { class: "net-actions" }, [btn("Lookup", () => lookup(ip), "btn-ghost"), btn("Read / send again", () => reportIp(ip, load), "btn-ghost"),
           bannedSet.has(ip) ? null : btn("Ban", () => banDialog(ip, load), "btn-danger")].filter(Boolean)),
       ))) : el("p", { class: "empty", text: "No abuse reports sent yet. Report an attacker from its IP card, the WAF Firewall or Network Monitor, the owner's abuse desk gets the evidence by email." }));
       body.append(el("h2", { class: "section-title", text: `Trusted (${d.trusted.length})` }));
       body.append(d.trusted.length ? simpleTable(["Address / range", "Note", "Added", ""], d.trusted.map((t) => row(
-        el("code", { class: "net-mono ip-trusted", text: t.cidr }), t.note || ", ", new Date(t.created * 1000).toLocaleDateString(),
+        el("code", { class: "net-mono ip-trusted", text: t.cidr }), t.note || "n/a", new Date(t.created * 1000).toLocaleDateString(),
         el("div", { class: "net-actions" }, [btn("Remove", async () => { if (!confirmInline(`Stop trusting ${t.cidr}? It can then be banned by fail2ban again.`)) return; try { await API.guardUntrust(t.cidr); toast("Removed", "good"); load(); } catch (e) { toast(e.message, "bad"); } }, "btn-danger")]),
       ))) : el("p", { class: "empty", text: "No trusted addresses. Tip: trust your own devices (or your LAN range) so a mistyped password never locks you out." }));
       body.append(el("p", { class: "dm-hint", text: `Always protected: ${d.protected.join(", ")}.` }));
@@ -5146,8 +5348,8 @@
         body.append(el("p", { class: "muted", style: "margin:0 0 10px", text: `Self-signed certs are written to ${d.cert_dir}` }));
         if (!d.certs.length) { body.append(el("p", { class: "empty", text: "No certificates found." })); return; }
         const rows = d.certs.map((c) => el("tr", {}, [
-          el("td", { text: c.name }), el("td", { class: "muted", text: c.subject || ", " }),
-          el("td", { class: "muted", text: c.expires || ", " }),
+          el("td", { text: c.name }), el("td", { class: "muted", text: c.subject || "n/a" }),
+          el("td", { class: "muted", text: c.expires || "n/a" }),
           el("td", {}, el("span", { class: `pill ${c.self_signed ? "warn" : "good"}`, text: c.self_signed ? "self-signed" : "CA" })),
         ]));
         body.append(simpleTable(["File", "Subject", "Expires", "Type"], rows));
@@ -5527,7 +5729,7 @@
               s.maintenance ? el("span", { class: "pill warn", text: "maintenance" }) : null,
             ]),
           ])),
-          el("td", {}, el("span", { class: "dm-root" }, [icon("home", 13), " ", s.docroot || ", "])),
+          el("td", {}, el("span", { class: s.docroot ? "dm-root" : "dm-root muted" }, [icon("home", 13), " ", s.docroot || "no document root"])),
           el("td", { class: s.redirect_url ? "" : "muted", text: s.redirect_url || "Not Redirected" }),
           s.system && !s.has_http ? el("td", { class: "muted", title: "This is the https site itself, Force HTTPS is set on the http (port 80) row", text: "already https" }) : el("td", {}, sw(s.force_https, async (v, inp) => {
             if (v && s.ssl === "none" && !s.system && !confirmInline(`${s.server_name} has no certificate yet.\n\nA self-signed certificate will be created so HTTPS works now (browsers will warn). You can switch to a free Let's Encrypt certificate in Manage.\n\nContinue?`)) { inp.checked = false; return; }
@@ -5705,14 +5907,43 @@
       el("button", { type: "button", "data-k": "domain", text: "Domain", title: "A domain name, or a local name like mysite.test", onclick: () => setKind("domain") }));
     folderBox.innerHTML = `
       <label class="cw-lbl">Site name<div class="dm-prefix"><span>http(s)://${esc(location.hostname)}/</span><input id="nf-name" type="text" placeholder="mysite" autocomplete="off" /></div></label>
-      <label class="cw-lbl">Folder<input id="nf-path" type="text" class="cw-mono" placeholder="/var/www/html/mysite" autocomplete="off" spellcheck="false" /></label>
-      <p class="muted" style="font-size:12px;margin:4px 0 0">No domain needed: the site answers on this Pi's address, over http and (when the default HTTPS site is on) https. The folder is created with a starter <code>index.html</code>; <code>.htaccess</code> files work in it. A folder outside <code id="nf-base">/var/www/html</code> is linked in with an Apache Alias, so <code>/name</code> then also works on the other sites this Pi hosts.</p>`;
-    const fName = $("#nf-name", folderBox), fPath = $("#nf-path", folderBox);
-    let base = "/var/www/html", pathTouched = false;
-    API.folderSites().then((r) => { if (r.base) { base = r.base; $("#nf-base", folderBox).textContent = base; syncPath(); } }).catch(() => {});
-    const syncPath = () => { const n = fName.value.trim().toLowerCase() || "mysite"; fPath.placeholder = `${base}/${n}`; if (!pathTouched) fPath.value = fName.value.trim() ? `${base}/${n}` : ""; };
+      <div class="cw-lbl">Folder
+        <div class="cw-seg cw-seg-sm nf-where" id="nf-where"></div>
+        <div class="dm-prefix"><span id="nf-prefix"></span><input id="nf-path" type="text" class="cw-mono" placeholder="mysite" autocomplete="off" spellcheck="false" /></div>
+        <p class="muted nf-hint" id="nf-hint"></p>
+      </div>
+      <p class="muted" style="font-size:12px;margin:4px 0 0">No domain needed: the site answers on this Pi's address, over http and (when the default HTTPS site is on) https. The folder is created with a starter <code>index.html</code>; <code>.htaccess</code> files work in it.</p>`;
+    const fName = $("#nf-name", folderBox), fPath = $("#nf-path", folderBox), fPrefix = $("#nf-prefix", folderBox), fHint = $("#nf-hint", folderBox), where = $("#nf-where", folderBox);
+    // Where the files live: inside the web root (html), a folder of its own next to the other sites (www), or any folder.
+    let base = "/var/www/html", wkind = "html", pathTouched = false;
+    const parent = () => base.replace(/\/[^/]+$/, "") || "/", leaf = () => base.replace(/^.*\//, "");
+    const HINT = {
+      html: () => `Inside the web root, Apache serves it as it is. The simplest choice.`,
+      www: () => `A folder of its own in ${parent()}, next to the other sites, linked in with an Apache Alias.`,
+      custom: () => `Any folder on this Pi: an existing one is used as it is, a new one gets a starter page. It's linked in with an Apache Alias.`,
+    };
+    const drawWhere = () => {
+      const n = fName.value.trim().toLowerCase() || "mysite";
+      where.innerHTML = "";
+      [["html", [parent() + "/", el("b", { text: leaf() }), "/…"]], ["www", [parent() + "/…"]], ["custom", ["Pick a folder"]]].forEach(([k, label]) =>
+        where.append(el("button", { type: "button", class: k === wkind ? "active" : "", onclick: () => setWhere(k) }, label)));
+      fPrefix.innerHTML = ""; fPrefix.hidden = wkind === "custom";
+      if (wkind === "html") fPrefix.append(parent() + "/", el("b", { class: "nf-hl", text: leaf() }), "/");
+      else if (wkind === "www") fPrefix.append(parent() + "/");
+      fPath.placeholder = wkind === "custom" ? `/srv/sites/${n}` : n;
+      fHint.textContent = HINT[wkind]();
+    };
+    const syncPath = () => { if (!pathTouched) fPath.value = wkind === "custom" ? "" : fName.value.trim().toLowerCase(); drawWhere(); };
+    const setWhere = (k) => { wkind = k; syncPath(); fPath.focus(); };
+    const folderPath = () => {
+      if (wkind === "custom") return fPath.value.trim();
+      const sub = fPath.value.trim().replace(/^\/+|\/+$/g, "") || fName.value.trim().toLowerCase();
+      return `${wkind === "html" ? base : parent()}/${sub}`;
+    };
+    API.folderSites().then((r) => { if (r.base) base = r.base; drawWhere(); }).catch(() => drawWhere());
     fName.addEventListener("input", syncPath);
     fPath.addEventListener("input", () => { pathTouched = !!fPath.value.trim(); });
+    drawWhere();
     f.append(kind, domainBox, folderBox);
     domainBox.innerHTML = `
       <label class="cw-lbl" id="nd-lbl">Domain<input id="nd-name" type="text" placeholder="example.com" autocomplete="off" /></label>
@@ -5741,9 +5972,10 @@
       if (!folderBox.hidden) {
         const n = fName.value.trim().toLowerCase().replace(/^\/+|\/+$/g, "");
         if (!n) return toast("Enter a name for the site", "bad");
+        if (wkind === "custom" && !fPath.value.trim()) return toast("Enter the folder for the site", "bad");
         go.disabled = true;
         try {
-          const r = await API.folderSiteCreate(n, fPath.value.trim());
+          const r = await API.folderSiteCreate(n, folderPath());
           closeModal(); toast(`Created http://${location.hostname}/${r.name}/ → ${r.path}`, "good");
           state.refreshHandler && state.refreshHandler();
         } catch (e) { toast(e.message, "bad"); go.disabled = false; }
@@ -6035,7 +6267,7 @@
       const info = (k, v) => el("div", { class: "info-row" }, [el("span", { class: "k", text: k }), el("span", { class: "v" }, v)]);
       right.append(el("div", { class: "card" }, [el("h3", { text: "Domain information" }), el("div", { class: "info-list" }, [
         info("Domain", d.settings.server_name),
-        info("Aliases", d.settings.aliases.join(", ") || ", "),
+        info("Aliases", d.settings.aliases.join(", ") || "n/a"),
         info("Redirects to", d.settings.redirect_url || "Not Redirected"),
         info("Document root", d.settings.docroot),
         info("SSL", sslPill({ ...d.settings, cert_expires: d.cert && d.cert.expires })),
@@ -6086,7 +6318,7 @@
     if (w.expiry) rows.push(infoRow("Expires", w.expiry));
     if (w.registrar) rows.push(infoRow("Registrar", w.registrar));
     if (w.created) rows.push(infoRow("Created", w.created));
-    rows.push(infoRow("Resolves to", d.resolved_ip || ", "));
+    rows.push(infoRow("Resolves to", d.resolved_ip || "n/a"));
     rows.push(infoRow("This Pi (LAN)", d.local_ip));
     if (d.public_ip) rows.push(infoRow("This Pi (public)", d.public_ip));
 
@@ -6133,10 +6365,10 @@
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
   const pill = (text, kind) => el("span", { class: `pill ${kind || "dim"}`, text });
-  const row = (...cells) => el("tr", {}, cells.map((c) => el("td", {}, c == null ? ", " : (typeof c === "object" ? c : String(c)))));
+  const row = (...cells) => el("tr", {}, cells.map((c) => el("td", {}, c == null ? "n/a" : (typeof c === "object" ? c : String(c)))));
   const btn = (text, onclick, cls) => el("button", { class: `btn btn-sm ${cls || ""}`, text, onclick });
   const kv = (pairs) => el("div", { class: "net-kv" }, pairs.filter(Boolean).map(([k, v]) =>
-    el("div", {}, [el("span", { class: "net-k", text: k }), typeof v === "object" && v ? v : el("span", { class: "net-v", text: v == null ? ", " : String(v) })])));
+    el("div", {}, [el("span", { class: "net-k", text: k }), typeof v === "object" && v ? v : el("span", { class: "net-v", text: v == null ? "n/a" : String(v) })])));
   function field(label, input, hint) {
     return el("label", { class: "net-field" }, [el("span", { text: label }), input, hint ? el("small", { class: "dm-hint", text: hint }) : null]);
   }
@@ -6327,7 +6559,7 @@
             st.peers.map((p) => row(
               el("b", { text: p.name }), p.ip,
               p.disabled ? pill("disabled") : pill(p.online ? "online" : "offline", p.online ? "good" : "dim"),
-              ago(p.latest_handshake), p.endpoint || ", ", `${fmtBytes(p.rx)} / ${fmtBytes(p.tx)}`, p.tunnel,
+              ago(p.latest_handshake), p.endpoint || "n/a", `${fmtBytes(p.rx)} / ${fmtBytes(p.tx)}`, p.tunnel,
               el("div", { class: "net-actions" }, [
                 btn("Config / QR", () => showWgConfig(p.name)),
                 btn(p.disabled ? "Enable" : "Disable", async () => { try { await API.wgToggle(p.name, !p.disabled); reload(); } catch (e) { toast(e.message, "bad"); } }, "btn-ghost"),
@@ -6439,7 +6671,7 @@
               el("b", { text: c.name }),
               pill(c.mode_label || c.mode, c.mode === "cert+password" ? "good" : "dim"),
               c.disabled ? pill("disabled", "bad") : pill(c.online ? (c.sessions > 1 ? `online ×${c.sessions}` : "online") : "offline", c.online ? "good" : "dim"),
-              c.real_address || ", ", c.virtual_address || ", ", c.online ? `${fmtBytes(c.rx)} / ${fmtBytes(c.tx)}` : ", ",
+              c.real_address || "n/a", c.virtual_address || "n/a", c.online ? `${fmtBytes(c.rx)} / ${fmtBytes(c.tx)}` : "n/a",
               el("div", { class: "net-actions" }, [
                 btn("Profile", () => downloadOvpn(c.name)),
                 c.mode !== "cert" ? btn("Password", () => ovpnPasswordDialog(c.name, reload)) : null,
@@ -6618,7 +6850,7 @@
           list.append(simpleTable(["User", "Status", "Connected from", "VPN IP", "Received / Sent", "Since", ""],
             st.users.map((u) => row(
               el("b", { text: u.name }), pill(u.online ? "online" : "offline", u.online ? "good" : "dim"),
-              u.remote || ", ", u.virtual_address || ", ", u.online ? `${fmtBytes(u.rx)} / ${fmtBytes(u.tx)}` : ", ", u.since ? ago(u.since) : ", ",
+              u.remote || "n/a", u.virtual_address || "n/a", u.online ? `${fmtBytes(u.rx)} / ${fmtBytes(u.tx)}` : "n/a", u.since ? ago(u.since) : "n/a",
               el("div", { class: "net-actions" }, [
                 btn("Profiles", () => showIpsecProfiles(u.name)),
                 btn("Remove", async () => { if (!confirmInline(`Remove user ${u.name}?`)) return; try { await API.vpnClientRemove("ipsec", u.name); toast("Removed", "good"); reload(); } catch (e) { toast(e.message, "bad"); } }, "btn-danger"),
@@ -6840,7 +7072,7 @@
       const whois = p.info.whois_url ? el("p", { class: "muted mx-small", style: "margin:4px 0 0" },
         [el("a", { href: p.info.whois_url, target: "_blank", rel: "noopener noreferrer", text: p.info.whois_label || "Look up the registry record" }), ", check the abuse address if it looks wrong."]) : null;
       openModal(`Report ${ip}`, el("div", { class: "em-form" }, [
-        kv([["Network", `${p.info.network || ", "}${p.info.country ? ` (${p.info.country})` : ""}`],
+        kv([["Network", `${p.info.network || "n/a"}${p.info.country ? ` (${p.info.country})` : ""}`],
           ["Evidence", p.summary || `${p.events} event${p.events === 1 ? "" : "s"} in the last 7 days`]]),
         p.reported ? el("div", { class: "dm-note" }, [icon("info", 15), el("span", { text: `Reported to ${p.reported.to.join(", ")} on ${new Date(p.reported.ts * 1000).toLocaleString()} from ${p.reported.from}. Sending again repeats the report.` })]) : null,
         p.accounts.length ? el("div", { class: "mx-grid2" }, [field("Send from", from, "Remembered for next time."), field("To (abuse contact)", el("div", { style: "display:contents" }, [to, toList]), "Pre-filled from the registry, edit it if the desk differs.")])
@@ -6875,13 +7107,13 @@
       body.append(el("div", { class: "nm-tiles" }, [
         tile("connection attempts", d.total), tile("unique sources", d.sources.length),
         tile("failed logins", d.failed_logins, d.failed_logins ? "bad" : ""), tile("blocked by bans", d.blocked_total || 0),
-        tile(top && top.service ? `most targeted · ${top.service}` : "most targeted", top ? (top.port != null ? `:${top.port}` : top.service || ", ") : ", "),
+        tile(top && top.service ? `most targeted · ${top.service}` : "most targeted", top ? (top.port != null ? `:${top.port}` : top.service || "n/a") : "n/a"),
       ]));
       body.append(el("div", { class: "toolbar" }, [btn("Bans & trusted list", () => navigate("ipblocker"), "btn-ghost"), btn("Fail2ban", () => navigate("leech"), "btn-ghost")]));
       body.append(el("h2", { class: "section-title", text: "Logins & VPN events" }));
       body.append(d.events.length ? simpleTable(["When", "Via", "Result", "User", "From", ""],
         d.events.slice(0, 150).map((e) => {
-          const tr = row(when(e.ts), e.source, outcomePill(e.outcome), e.user || ", ", el("span", {}, [el("span", { class: `net-mono ${ipCls(e.status, reported[e.ip])}`, text: e.ip || ", " }), " ", e.scope ? scopePill(e.scope) : null]),
+          const tr = row(when(e.ts), e.source, outcomePill(e.outcome), e.user || "n/a", el("span", {}, [el("span", { class: `net-mono ${ipCls(e.status, reported[e.ip])}`, text: e.ip || "n/a" }), " ", e.scope ? scopePill(e.scope) : null]),
             ipActions(e.ip, e.status, e.scope));
           tr.title = e.detail || "";
           return tr;
@@ -6895,12 +7127,12 @@
         : el("p", { class: "empty", text: d.logging ? "No connection attempts recorded in this period." : "Connection logging is off." }));
       if (d.ports.length) {
         body.append(el("h2", { class: "section-title", text: "Targeted ports" }));
-        body.append(simpleTable(["Port", "Service", "Attempts", "Sources"], d.ports.map((p) => row(`${p.port ?? ", "}/${p.proto}`, p.service || ", ", p.count, p.sources))));
+        body.append(simpleTable(["Port", "Service", "Attempts", "Sources"], d.ports.map((p) => row(`${p.port ?? ", "}/${p.proto}`, p.service || "n/a", p.count, p.sources))));
       }
       if (d.recent.length) {
         body.append(el("h2", { class: "section-title", text: "Latest attempts" }));
         body.append(simpleTable(["When", "From", "To port", "Service", "Result"],
-          d.recent.slice(0, 100).map((c) => row(when(c.ts), c.src, `${c.port ?? ", "}/${c.proto}`, c.service || ", ",
+          d.recent.slice(0, 100).map((c) => row(when(c.ts), c.src, `${c.port ?? ", "}/${c.proto}`, c.service || "n/a",
             c.blocked ? pill("blocked (banned)", "bad") : pill("reached the Pi", "dim")))));
       }
     });
@@ -7665,7 +7897,7 @@
         el("td", {}, [el("b", { text: r.name }), r.system ? el("span", { class: "pill dim", style: "margin-left:6px", text: "built-in" }) : null].filter(Boolean)),
         el("td", {}, flags(r).length ? flags(r) : el("span", { class: "muted", text: "regular user" })),
         el("td", {}, r.has_password ? pill("set", "good") : el("span", { class: "muted", text: r.system ? "none (local only)" : "none" })),
-        el("td", { class: "muted", text: r.owns.join(", ") || ", " }),
+        el("td", { class: "muted", text: r.owns.join(", ") || "n/a" }),
         el("td", { class: "actions" }, r.system ? "" : [
           btn("Password", () => setPassword(r)), btn("Edit", () => editRole(r)),
           el("button", { class: "btn btn-sm btn-danger", text: "Delete", onclick: () => {
@@ -8000,7 +8232,7 @@
       const lan = (await API.vpnOverview().catch(() => ({ settings: {} }))).settings || {};
       box.append(el("div", { class: "card" }, [
         el("div", { class: "net-card-h" }, [icon("folder", 20), el("h3", { text: "FTP server" }), el("span", { style: "flex:1" }), pill(s.active ? "running" : "stopped", s.active ? "good" : "bad")]),
-        kv([["Host (LAN)", location.hostname], ["Host (internet)", lan.effective_endpoint || ", "], ["Port", s.port],
+        kv([["Host (LAN)", location.hostname], ["Host (internet)", lan.effective_endpoint || "n/a"], ["Port", s.port],
             ["Encryption", s.ssl ? "FTPS available (explicit TLS)" : "Off, plain FTP sends passwords unencrypted"],
             ["Passive ports", s.passive[0] ? `${s.passive[0]}–${s.passive[1]}` : "any (set a range for access from the internet)"],
             ["Who can log in", s.only_listed ? "Only the FTP accounts below" : "Any Linux user on this Pi"]]),
@@ -8273,8 +8505,9 @@
   // ======================================================================
   //  Preferences
   // ======================================================================
+  // ---- Preferences: Password & Security ----
   function viewPassword(root) {
-    root.append(el("div", { class: "card" }, [
+    const form = el("div", { class: "card" }, [
       el("h3", { text: "Change panel password" }),
       el("div", { style: "display:flex;flex-direction:column;gap:12px;max-width:380px" }, [
         labeledInput("pw-cur", "Current password", "", "", "password"),
@@ -8286,54 +8519,138 @@
           try { await API.passwordChange(cur, nw); toast("Password updated", "good"); $("#pw-cur").value = $("#pw-new").value = $("#pw-new2").value = ""; }
           catch (e) { toast(e.message, "bad"); } } }),
       ]),
-      el("p", { class: "muted", style: "margin-top:14px;font-size:12px", text: "Tip: also enable Two-Factor Authentication (Security → Two-Factor) for extra protection." }),
-    ]));
+      el("p", { class: "muted", style: "margin-top:14px;font-size:12px", text: "A long passphrase of a few words beats a short, complicated one. Changing it signs out every other browser; this one stays signed in." }),
+    ]);
+    // Two-factor, right next to the password: what it does, whether it's on, and the switch.
+    const tfa = el("div", { class: "card ps-tfa" }, el("div", { class: "loading", text: "Loading…" }));
+    API.twofaStatus().then((s) => {
+      tfa.innerHTML = "";
+      const on = !!s.enabled, pend = !!s.pending;
+      tfa.classList.toggle("good", on);
+      tfa.append(
+        el("div", { class: "net-card-h" }, [icon("shield", 20), el("h3", { text: "Two-factor authentication" }), el("span", { style: "flex:1" }), pill(on ? "on" : pend ? "not finished" : "off", on ? "good" : pend ? "warn" : "dim")]),
+        el("p", { class: "muted", text: on
+          ? "Signing in asks for a 6-digit code from your phone on top of the password, so a stolen password alone can't open this panel."
+          : "A 6-digit code from your phone on top of the password. A stolen password alone then can't open this panel. It takes a minute: scan a QR code, type one code, done." }),
+        el("div", { class: "toolbar", style: "margin:12px 0 0" }, [
+          btn(on ? "Manage two-factor" : pend ? "Finish setting up" : "Turn on two-factor", () => navigate("security"), on ? "btn-ghost" : "btn-primary"),
+        ]),
+      );
+    }).catch((e) => { tfa.innerHTML = ""; tfa.append(el("div", { class: "net-card-h" }, [icon("shield", 20), el("h3", { text: "Two-factor authentication" })]), el("p", { class: "muted", text: e.message })); });
+    // The other doors that guard this account.
+    const links = el("div", { class: "card" }, [
+      el("h3", { text: "More ways to protect this panel" }),
+      el("div", { class: "ps-links" }, [
+        ["Panel HTTPS", "Encrypt the connection to this panel, so the password never travels in the clear.", "panelhttps"],
+        ["Panel users", "Give other people their own login instead of sharing yours.", "panelusers"],
+        ["API tokens", "Keys for scripts and other servers; revoke one without touching your password.", "tokens"],
+        ["Activity log", "Who signed in and what changed, from where.", "activity"],
+        ["SSH access", "Keys versus passwords for the shell, and who may use it.", "ssh"],
+      ].map(([t, d, v]) => el("button", { type: "button", class: "ps-link", onclick: () => navigate(v) }, [el("b", { text: t }), el("span", { text: d })]))),
+    ]);
+    root.append(el("div", { class: "ps-grid" }, [form, el("div", { class: "ps-col" }, [tfa, links])]));
   }
+
+  // ---- Preferences: Account ----
   function viewAccountPrefs(root) {
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
     root.append(body);
     (async () => {
       const p = await API.prefs().catch(() => ({}));
       body.innerHTML = "";
-      body.append(el("div", { class: "card" }, [
-        el("h3", { text: "Account preferences" }),
-        el("div", { style: "display:flex;flex-direction:column;gap:12px;max-width:380px" }, [
-          labeledInput("ac-user", "Admin username", "", p.username || ""),
-          el("label", { class: "muted", style: "display:flex;flex-direction:column;gap:6px;font-size:13px" }, ["Default theme",
-            el("select", { id: "ac-theme" }, ["dark", "light"].map((t) => el("option", { value: t, text: t, ...(p.default_theme === t ? { selected: "selected" } : {}) })))]),
-          el("button", { class: "btn btn-primary", style: "align-self:flex-start", text: "Save", onclick: async () => {
-            try {
-              const u = $("#ac-user").value.trim();
-              if (u && u !== p.username) await API.renameUser(u);
-              await API.prefsSet({ default_theme: $("#ac-theme").value });
-              applyTheme($("#ac-theme").value); try { localStorage.setItem("aurora-theme", $("#ac-theme").value); } catch (e) {}
-              toast("Saved", "good");
-            } catch (e) { toast(e.message, "bad"); } } }),
+      const name = el("input", { id: "ac-user", type: "text", value: p.username || "", autocomplete: "username", spellcheck: "false", placeholder: "admin" });
+      const rename = el("button", { class: "btn btn-primary", text: "Rename", onclick: async () => {
+        const u = name.value.trim().toLowerCase();
+        if (!u) return toast("Enter a name", "bad");
+        if (u === (p.username || "")) return toast("That's already your name", "good");
+        rename.disabled = true;
+        try {
+          const r = await API.renameUser(u);
+          p.username = r.username; name.value = r.username;
+          $("#user-label").textContent = r.username; $("#avatar-initial").textContent = r.username.charAt(0).toUpperCase();
+          renderChrome(state.view);
+          toast(`You're ${r.username} from now on`, "good");
+        } catch (e) { toast(e.message, "bad"); }
+        rename.disabled = false;
+      } });
+      const theme = el("select", { id: "ac-theme" }, ["dark", "light"].map((t) => el("option", { value: t, text: t, ...(p.default_theme === t ? { selected: "selected" } : {}) })));
+      body.append(el("div", { class: "ps-grid" }, [
+        el("div", { class: "card" }, [
+          el("h3", { text: "Account name" }),
+          el("p", { class: "muted", style: "margin:0 0 12px", text: "The name you sign in with. Change it any time: you stay signed in here, other browsers sign in again with the new name. The Linux account and panel users are not touched." }),
+          el("div", { style: "display:flex;gap:10px;max-width:440px" }, [name, rename]),
+          el("p", { class: "muted", style: "margin:10px 0 0;font-size:12px", text: "2 to 32 letters, digits, dots, dashes or underscores. Capitals are lowered." }),
+        ]),
+        el("div", { class: "card" }, [
+          el("h3", { text: "Default theme" }),
+          el("p", { class: "muted", style: "margin:0 0 12px", text: "The look a browser gets the first time it opens this panel. The moon button in the header switches it for this browser only." }),
+          el("div", { style: "display:flex;gap:10px;max-width:440px;align-items:center" }, [theme,
+            el("button", { class: "btn btn-primary", text: "Save", onclick: async () => {
+              try { await API.prefsSet({ default_theme: theme.value }); applyTheme(theme.value); try { localStorage.setItem("aurora-theme", theme.value); } catch (e) {} toast("Saved", "good"); }
+              catch (e) { toast(e.message, "bad"); } } })]),
         ]),
       ]));
     })();
   }
+
+  // ---- Preferences: Contact ----
   function viewContact(root) {
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
     root.append(body);
     (async () => {
-      const p = await API.prefs().catch(() => ({}));
+      const [p, sug] = await Promise.all([API.prefs().catch(() => ({})), API.contactSuggestions().catch(() => ({ suggestions: [] }))]);
       body.innerHTML = "";
+      const input = el("input", { id: "ct-email", type: "email", placeholder: "you@example.com", value: p.contact_email || "", style: "flex:1" });
+      const list = sug.suggestions || [];
+      const chips = el("div", { class: "ct-chips" });
+      const draw = () => {
+        chips.innerHTML = "";
+        list.forEach((s) => chips.append(el("button", { type: "button", class: `ct-chip ${s.address === input.value.trim() ? "active" : ""}`, title: s.why,
+          onclick: () => { input.value = s.address; draw(); save(); } }, [el("span", { class: "ct-at", text: "@" }), s.address])));
+      };
+      const save = async () => { try { await API.prefsSet({ contact_email: input.value.trim() }); p.contact_email = input.value.trim(); toast("Saved", "good"); draw(); } catch (e) { toast(e.message, "bad"); } };
+      input.addEventListener("input", draw);
+      draw();
       body.append(el("div", { class: "card" }, [
         el("h3", { text: "Contact information" }),
         el("p", { class: "muted", style: "margin:0 0 12px", text: "Where the panel would send notifications (informational for now)." }),
-        el("div", { style: "display:flex;gap:10px;max-width:440px" }, [
-          el("input", { id: "ct-email", type: "email", placeholder: "you@example.com", value: p.contact_email || "", style: "flex:1" }),
-          el("button", { class: "btn btn-primary", text: "Save", onclick: async () => { try { await API.prefsSet({ contact_email: $("#ct-email").value.trim() }); toast("Saved", "good"); } catch (e) { toast(e.message, "bad"); } } }),
+        el("div", { style: "display:flex;gap:10px;max-width:440px" }, [input, el("button", { class: "btn btn-primary", text: "Save", onclick: save })]),
+        el("div", { class: "ct-sug" }, [
+          el("b", { text: list.length ? "Mailboxes on this server" : "No mailbox on this server yet" }),
+          el("span", { class: "muted", text: list.length
+            ? "A mailbox here is the safest choice: a notification then never leaves the Pi. Click one to use it."
+            : "Make one under Email → Email Accounts and it will be offered here, or type any address you read." }),
+          list.length ? chips : el("div", {}, btn("Email accounts", () => navigate("mailaccounts"), "btn-ghost btn-sm")),
         ]),
       ]));
     })();
   }
+
   // ---- About & Updates ----
   const FORUM_URL = "https://forums.raspberrypi.com/viewtopic.php?p=2388892";
   const GITHUB_URL = "https://github.com/opensourcewhcp/AuroraPanel";
+  // A small notice that slides in at the top right and leaves by itself, for answers that need no
+  // action (like "you're up to date"), so the page underneath stays as it is.
+  let noticeTimer = null;
+  function popNotice({ title, text, kind = "good", tag, icon: ic = "shield", ms = 6000 }) {
+    document.querySelectorAll(".pop-notice").forEach((n) => n.remove());
+    clearTimeout(noticeTimer);
+    const hide = () => { if (!n.isConnected) return; n.classList.add("out"); setTimeout(() => n.remove(), 320); };
+    const n = el("div", { class: `pop-notice ${kind}`, role: "status" }, [
+      el("span", { class: "pop-ico" }, icon(ic, 20)),
+      el("div", { class: "pop-body" }, [
+        el("div", { class: "pop-title" }, [el("b", { text: title }), tag ? pill(tag, kind) : null]),
+        text ? el("p", { class: "muted", text }) : null,
+      ]),
+      el("button", { type: "button", class: "pop-close", "aria-label": "Close", text: "✕", onclick: hide }),
+    ]);
+    document.body.append(n);
+    noticeTimer = setTimeout(hide, ms);
+    return n;
+  }
+
   function viewAbout(root) {
-    const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
+    const body = el("div", { class: "about-wrap" }, el("div", { class: "loading", text: "Loading…" }));
     root.append(body);
     const result = el("div");
     (async () => {
@@ -8341,10 +8658,10 @@
       try { a = await API.about(); } catch (e) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); return; }
       body.innerHTML = "";
       const check = btn("Check for updates", async () => {
-        check.disabled = true; result.innerHTML = ""; result.append(el("div", { class: "loading", text: "Asking aurora51.com…" }));
+        check.disabled = true; check.textContent = "Asking aurora51.com…"; result.innerHTML = "";
         try { showResult(await API.aboutCheck()); }
-        catch (e) { result.innerHTML = ""; result.append(el("div", { class: "card net-warn" }, el("p", { text: e.message }))); }
-        check.disabled = false;
+        catch (e) { popNotice({ title: "Couldn't check for updates", text: e.message, kind: "bad", icon: "info", ms: 9000 }); }
+        check.disabled = false; check.textContent = "Check for updates";
       }, "btn-primary");
       const changes = el("div");
       const viewChanges = btn("View changes", async () => {
@@ -8354,7 +8671,7 @@
         catch (e) { changes.innerHTML = ""; changes.append(el("div", { class: "card net-warn" }, el("p", { text: e.message }))); }
         viewChanges.disabled = false;
       }, "btn-ghost");
-      body.append(el("div", { class: "card about-card" }, [
+      const panel = el("div", { class: "card about-card" }, [
         el("div", { class: "about-head" }, [
           el("span", { class: "about-logo" }, el("img", { src: "/img/logo-mark-128.png", alt: "AuroraPanel", width: "48", height: "48" })),
           el("div", {}, [el("h2", { text: "AuroraPanel" }), el("div", { class: "about-ver" }, [pill(a.label, "warn"), el("span", { class: "muted", text: ` released ${a.released}` })])]),
@@ -8363,11 +8680,114 @@
         kv([["Version", a.version], ["Installed in", a.install_dir],
           ["Website", el("a", { href: a.site, target: "_blank", rel: "noopener noreferrer", text: "aurora51.com ↗" })],
           ["Source", el("a", { href: GITHUB_URL, target: "_blank", rel: "noopener noreferrer", text: "github.com/opensourcewhcp/AuroraPanel ↗" })]]),
-        el("div", { class: "toolbar", style: "margin:16px 0 0" }, [check, viewChanges,
+        el("div", { class: "toolbar about-actions" }, [check, viewChanges,
           el("a", { class: "btn btn-sm btn-ghost", href: GITHUB_URL, target: "_blank", rel: "noopener noreferrer", text: "GitHub repository ↗" }),
           el("a", { class: "btn btn-sm btn-ghost", href: FORUM_URL, target: "_blank", rel: "noopener noreferrer", text: "Feedback on the Raspberry Pi Forums ↗" })]),
         el("div", { class: "about-privacy" }, [icon("lock", 14), el("span", { text: "The panel never contacts the internet on its own, it only asks aurora51.com for the latest version or the change log when you click one of these buttons." })]),
-      ]), changes, result);
+      ]);
+      const server = el("div", { class: "card about-srv" }, el("div", { class: "loading", text: "Looking at the server's packages…" }));
+      body.append(el("div", { class: "about-grid" }, [panel, el("div", { class: "about-col" }, [server, backCard()])]), result, changes);
+      serverUpdates(server);
+
+      // Only the build you came from is kept (the updater tidies older copies), so there is one way back, not a list.
+      function backCard() {
+        const prev = (a.rollbacks || [])[0] || null;
+        const box = el("div");
+        const when = (ts) => (ts ? new Date(ts * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "");
+        const go = prev ? btn(`Go back to ${prev.label}`, () => installUpdate({ latest: prev.version, latest_label: prev.label }, box, () => API.aboutRollback(prev.version), true), "btn-ghost") : null;
+        return el("div", { class: "card about-back" }, [
+          el("div", { class: "net-card-h" }, [icon("refresh", 20), el("h3", { text: "Previous build" }), el("span", { style: "flex:1" }), pill(prev ? prev.label : "none kept", prev ? "dim" : "dim")]),
+          el("p", { class: "muted", text: prev
+            ? "The build you updated from is kept, and only that one, so copies never pile up on this server. Going back swaps the panel's own files; your admin account, settings, VPNs and sites stay as they are, and the build you leave takes its place."
+            : "The next update keeps the build it replaces, so you can step back if something is off. Nothing is kept yet." }),
+          prev ? el("div", { class: "about-back-prev" }, [
+            el("div", {}, [el("b", { text: prev.label }), el("span", { class: "muted", text: ` · saved ${when(prev.saved)}${prev.size ? ` · ${fmtBytes(prev.size)}` : ""}` })]),
+            go,
+          ]) : null,
+          box,
+        ].filter(Boolean));
+      }
+
+      // The server's own (apt) updates, security first: the panel proposes what's waiting on the Pi.
+      async function serverUpdates(card) {
+        let d;
+        try { d = await API.updates(); }
+        catch (e) { card.innerHTML = ""; card.append(srvHead("Server updates", "packages"), el("p", { class: "muted", text: e.message })); return; }
+        card.innerHTML = "";
+        card.classList.remove("good", "warn", "bad");
+        if (!d.supported) { card.append(srvHead("Server updates", "packages"), el("p", { class: "muted", text: "This system has no apt, so the panel can't check its packages." })); return; }
+        const sec = (d.packages || []).filter((p) => p.security);
+        const n = (k, w) => `${k} ${w}${k === 1 ? "" : "s"}`;
+        const names = (l) => l.slice(0, 4).map((p) => p.name).join(", ") + (l.length > 4 ? ` and ${l.length - 4} more` : "");
+        const kind = sec.length ? "bad" : d.total ? "warn" : d.checked ? "good" : "warn";
+        card.classList.add(kind);
+        const title = sec.length ? `${n(sec.length, "security update")} waiting`
+          : d.total ? `${n(d.total, "update")} available`
+          : d.checked ? "Server packages are up to date" : "Server packages not checked yet";
+        const text = sec.length ? `Security fixes for ${names(sec)}. Install them now to keep the server protected${d.total > sec.length ? `; the other ${n(d.total - sec.length, "update")} can wait` : ""}.`
+          : d.total ? `${names(d.packages)}. None of them is a security fix.`
+          : d.checked ? `Checked ${ago(d.checked)}. Security fixes show up here as soon as Debian publishes them.` : "Check now to see whether security fixes or new package versions are waiting.";
+        const prog = el("div");
+        const auto = d.auto || {};
+        const act = [];
+        if (d.running) watch(d.running);
+        else if (sec.length) act.push(btn(`Install ${n(sec.length, "security update")}`, (e) => start(e.target, sec.map((p) => p.name)), "btn-primary"));
+        else if (d.total) act.push(btn(`Install all ${d.total}`, (e) => start(e.target, []), "btn-primary"));
+        act.push(btn(d.checked ? "Check again" : "Check now", async (e) => {
+          e.target.disabled = true; e.target.textContent = "Checking…";
+          try { await API.updatesRefresh(); } catch (err) { toast(err.message, "bad"); }
+          serverUpdates(card);
+        }, sec.length || d.total ? "btn-ghost" : "btn-primary"));
+        card.append(
+          srvHead("Server updates", sec.length ? "shield" : d.total ? "packages" : "check", auto.enabled ? pill(auto.mode === "all" ? "nightly updates on" : "nightly security on", "good") : pill("automatic off", "dim")),
+          el("div", { class: "about-srv-hero" }, [el("b", { text: title }), el("p", { class: "muted", text })]),
+          ...(d.reboot && d.reboot.required ? [el("p", { class: "about-srv-note" }, [icon("refresh", 14), el("span", { text: "A restart is needed to finish an earlier update; you can do that from the Updates page." })])] : []),
+          el("div", { class: "toolbar about-srv-act" }, act),
+          prog,
+          el("div", { class: "about-srv-links" }, [
+            auto.enabled ? null : btn("Turn on nightly security updates", async (e) => {
+              e.target.disabled = true;
+              try { const r = await API.updatesAuto(true, "security", false, "04:00"); toast(r && r.job ? "Setting up automatic updates…" : "Nightly security updates are on", "good"); }
+              catch (err) { toast(err.message, "bad"); }
+              serverUpdates(card);
+            }, "btn-ghost"),
+            btn("Updates page", () => navigate("updates"), "btn-ghost"),
+            btn("Schedule in Crontab", () => navigate("cron"), "btn-ghost"),
+          ]),
+          el("p", { class: "muted about-srv-hint", text: "Prefer your own schedule? Crontab can run apt-get update and apt-get -y upgrade at a time you choose." }),
+        );
+
+        async function start(b, pkgs) {
+          b.disabled = true;
+          try { const r = await API.updatesInstall(pkgs); watch(r.job); }
+          catch (err) { b.disabled = false; toast(err.message, "bad"); }
+        }
+        async function watch(id) {
+          let alive = true;
+          state.cleanups.push(() => { alive = false; });
+          const bar = el("div", { class: "ax-bar" }, el("span"));
+          const stage = el("div", { class: "ax-stage", text: "Starting…" });
+          const box = el("div", { class: "ax-progress about-srv-prog" }, [stage, bar]);
+          prog.innerHTML = ""; prog.append(box);
+          while (alive) {
+            let j;
+            try { j = await API.job(id); } catch (e) { break; }
+            bar.firstChild.style.width = `${Math.max(2, j.status === "done" ? 100 : (j.progress || 2))}%`;
+            stage.textContent = j.stage || j.title || "";
+            if (j.status !== "running") {
+              const ok = j.status === "done";
+              box.classList.add(ok ? "ok" : "bad");
+              toast(ok ? "Server updates installed" : "Updating failed, the Updates page has the log", ok ? "good" : "bad");
+              if (ok) setTimeout(() => { if (alive) serverUpdates(card); }, 1500);
+              break;
+            }
+            await new Promise((r) => setTimeout(r, 1500));
+          }
+        }
+      }
+      function srvHead(title, ic, right) {
+        return el("div", { class: "net-card-h" }, [icon(ic, 20), el("h3", { text: title }), el("span", { style: "flex:1" }), right || null]);
+      }
 
       function showChanges(c) {
         changes.innerHTML = "";
@@ -8383,13 +8803,16 @@
 
       // One-click update: the server downloads + verifies the release and a background
       // job installs it; the panel restarts, so poll until the new version answers.
-      async function installUpdate(r, box) {
-        if (!confirmInline(`Install ${r.latest_label} now?\n\nThe panel restarts during the update (about a minute). Your admin account, settings, VPNs and sites are kept, and the previous version is restored automatically if the new one doesn't start.`)) return;
+      async function installUpdate(r, box, run = API.aboutUpdate, back = false) {
+        const ask = back
+          ? `Go back to ${r.latest_label} now?\n\nThe panel restarts (about a minute). Your admin account, settings, VPNs and sites are kept; only the panel's own files are replaced with the saved copy, and this version is saved too so you can return to it.`
+          : `Install ${r.latest_label} now?\n\nThe panel restarts during the update (about a minute). Your admin account, settings, VPNs and sites are kept, and the previous version is restored automatically if the new one doesn't start.`;
+        if (!confirmInline(ask)) return;
         box.innerHTML = "";
-        const pre = el("pre", { class: "log ax-log", text: "Downloading and verifying the release…", hidden: true });
-        const title = el("h4", { text: `Installing ${r.latest_label}…` });
+        const pre = el("pre", { class: "log ax-log", text: back ? "Starting…" : "Downloading and verifying the release…", hidden: true });
+        const title = el("h4", { text: back ? `Going back to ${r.latest_label}…` : `Installing ${r.latest_label}…` });
         // The orange bar follows the installer's milestones (the log has the details).
-        const STEPS = [[/updating AuroraPanel/, 8, "Preparing"], [/Backing up/, 14, "Backing up the current version"], [/Copying the new files/, 22, "Copying the new files"],
+        const STEPS = [[/updating AuroraPanel|rolling back AuroraPanel/, 8, "Preparing"], [/Backing up/, 14, "Backing up the current version"], [/Copying the new files|Restoring the files/, 22, back ? "Restoring the saved files" : "Copying the new files"],
           [/Checking system packages/, 32, "Checking system packages"], [/Setting up Python environment/, 42, "Setting up Python"], [/Dependencies installed/, 66, "Python packages installed"],
           [/Writing \/etc\/systemd/, 74, "Updating the service"], [/Service enabled/, 82, "Restarting the panel"], [/Waiting for AuroraPanel/, 88, "Waiting for the panel to start"],
           [/Panel is up|is installed/, 95, "New version running"]];
@@ -8397,7 +8820,7 @@
         const stage = el("div", { class: "ax-stage" });
         const logBtn = el("button", { type: "button", class: "bk-mini", text: "Show log", onclick: () => { pre.hidden = !pre.hidden; logBtn.textContent = pre.hidden ? "Show log" : "Hide log"; } });
         const prog = el("div", { class: "ax-progress" }, [el("div", { class: "ax-prog-top" }, [stage, logBtn]), bar]);
-        let pct = 3, label = "Downloading and verifying the release";
+        let pct = 3, label = back ? "Starting" : "Downloading and verifying the release";
         const started = Date.now();
         const draw = (done) => {
           bar.firstChild.style.width = `${pct}%`;
@@ -8407,8 +8830,8 @@
             el("span", { class: "muted", text: ` · ${Math.floor((Date.now() - started) / 60000)}:${String(Math.floor((Date.now() - started) / 1000) % 60).padStart(2, "0")}` }));
         };
         box.append(title, prog, pre);
-        try { await API.aboutUpdate(); }
-        catch (e) { title.textContent = "Update not started"; prog.classList.add("bad"); label = e.message; draw("bad"); pre.textContent = e.message; return; }
+        try { await run(); }
+        catch (e) { title.textContent = back ? "Rollback not started" : "Update not started"; prog.classList.add("bad"); label = e.message; draw("bad"); pre.textContent = e.message; return; }
         draw();
         const t = setInterval(async () => {
           try {
@@ -8419,21 +8842,23 @@
             }
             pre.scrollTop = pre.scrollHeight;
             if (s.version === r.latest) {
-              clearInterval(t); title.textContent = `Updated to ${r.latest_label}`;
-              pct = 100; label = `Updated to ${r.latest_label}, reloading`; prog.classList.add("ok"); draw("ok");
-              toast(`Updated to ${r.latest_label}, reloading`, "good");
+              const done = back ? `Back on ${r.latest_label}` : `Updated to ${r.latest_label}`;
+              clearInterval(t); title.textContent = done;
+              pct = 100; label = `${done}, reloading`; prog.classList.add("ok"); draw("ok");
+              toast(`${done}, reloading`, "good");
               setTimeout(() => location.reload(), 1500);
               return;
             } else if (!s.running && s.log.some((l) => l.startsWith("✖"))) {
-              clearInterval(t); title.textContent = "Update failed, the previous version was kept";
-              prog.classList.add("bad"); label = "Update failed, the previous version was kept"; draw("bad");
+              const failed = back ? "Rollback failed, this version was kept" : "Update failed, the previous version was kept";
+              clearInterval(t); title.textContent = failed;
+              prog.classList.add("bad"); label = failed; draw("bad");
               pre.hidden = false; logBtn.textContent = "Hide log";
               return;
             }
             draw();
           } catch (e) {
             // The panel is restarting into the new version: keep the bar moving gently.
-            if (pct < 96) { pct = Math.max(pct, 88) + 0.5; label = "Panel restarting into the new version"; }
+            if (pct < 96) { pct = Math.max(pct, 88) + 0.5; label = back ? "Panel restarting into the saved version" : "Panel restarting into the new version"; }
             draw();
             pre.textContent = pre.textContent.replace(/\n?… panel restarting$/, "") + "\n… panel restarting";
           }
@@ -8448,8 +8873,8 @@
       function showResult(r) {
         result.innerHTML = "";
         if (!r.update_available) {
-          result.append(el("div", { class: "card about-result" }, [el("div", { class: "net-card-h" }, [icon("shield", 20), el("h3", { text: "You're up to date" }), el("span", { style: "flex:1" }), pill(r.label, "good")]),
-            el("p", { class: "muted", text: `The newest release is ${r.latest_label}${r.latest_released ? ` (${r.latest_released})` : ""}.` })]));
+          // Nothing to do, so no card: a notice slides in at the right and leaves by itself.
+          popNotice({ title: "You're up to date", tag: r.label, text: `The newest release is ${r.latest_label}${r.latest_released ? ` (${r.latest_released})` : ""}.` });
           return;
         }
         const cmd = el("pre", { class: "log", text: r.update_command || a.update_command });
@@ -8474,13 +8899,36 @@
     })();
   }
 
+  // ---- Preferences: Language ----
   function viewLanguage(root) {
-    root.append(el("div", { class: "card" }, [
-      el("h3", { text: "Change language" }),
-      el("p", { class: "muted", style: "margin:0 0 12px", text: "Interface language. Only English is bundled right now, more can be added." }),
-      el("select", { id: "lang-sel", style: "max-width:220px", onchange: async () => { try { await API.prefsSet({ language: $("#lang-sel").value }); toast("Saved", "good"); } catch (e) {} } },
-        [["en", "English"]].map(([v, t]) => el("option", { value: v, text: t }))),
-    ]));
+    const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
+    root.append(body);
+    (async () => {
+      const p = await API.prefs().catch(() => ({}));
+      body.innerHTML = "";
+      let cur = p.language || "en";
+      const grid = el("div", { class: "lang-grid" });
+      const draw = () => {
+        grid.innerHTML = "";
+        LANGS.forEach(([v, native, english]) => grid.append(el("button", { type: "button", class: `lang-opt ${v === cur ? "active" : ""}`, lang: v, onclick: () => pick(v) },
+          [el("b", { raw: true, text: native }), el("span", { class: "muted", text: english })])));
+      };
+      const pick = async (v) => {
+        try {
+          await API.prefsSet({ language: v });
+          cur = v;
+          await setLanguage(v);
+          toast("Saved", "good");
+          navigate(state.view, { history: "none", arg: state.viewArg });
+        } catch (e) { toast(e.message, "bad"); }
+      };
+      draw();
+      body.append(el("div", { class: "card" }, [
+        el("h3", { text: "Change language" }),
+        el("p", { class: "muted", style: "margin:0 0 14px", text: "Interface language, for everyone who uses this panel. The navigation, page titles, dashboard and the common buttons switch at once; page texts follow as their translations are added, until then they stay in English." }),
+        grid,
+      ]));
+    })();
   }
 
   // ======================================================================
@@ -8674,6 +9122,114 @@
   }
 
   function viewWordPress(root) { viewAppPage(root, "wordpress"); }
+
+  // ======================================================================
+  //  Applications overview: everything that runs on this server (web apps, Docker apps,
+  //  WordPress sites) on one page, with the quickest ways to add more. The section's landing page.
+  // ======================================================================
+  function viewAppHub(root) {
+    let filter = "all";
+    const KIND = { web: ["Web app", "#ff7a1a"], wordpress: ["WordPress", "#21759b"], docker: ["Docker", "#22c7d6"] };
+    const load = () => guardedLoad(async () => {
+      const [C, st, dk] = await Promise.all([appCatalog().catch(() => null), appStatus(true).catch(() => null), API.docker().catch(() => null)]);
+      const web = (st ? st.installed : []).map((it) => {
+        const a = (C && C.apps.find((x) => x.id === it.app)) || { id: it.app, name: it.app, color: "#888" };
+        const wp = it.app === "wordpress";
+        return { key: "web:" + it.path, kind: wp ? "wordpress" : "web", name: it.title || a.name, sub: it.url || it.path, url: it.url ? it.url + "/" : "",
+          admin: it.setup_url || it.admin_url || "", setup: !!it.setup_url, version: it.version && it.version !== "latest" ? "v" + it.version : "",
+          ok: it.exists !== false && !it.setup_url, state: it.exists === false ? "folder missing" : it.setup_url ? "finish setup" : "ready",
+          color: wp ? KIND.wordpress[1] : a.color || KIND.web[1], tile: appTile(a, ""),
+          manage: () => navigate(wp ? "wptoolkit" : "appstore", wp ? {} : { arg: "mine" }), manageLabel: wp ? "Toolkit" : "My apps" };
+      });
+      // A container someone stopped on purpose is just "stopped"; one that crashed (non-zero exit), vanished or keeps restarting needs a look.
+      const dkTrouble = (c) => c.state === "missing" || c.state === "restarting" || c.state === "dead" || /^Exited \((?!0\))/.test(c.status || "");
+      const docker = (dk && dk.apps ? dk.apps : []).map((c) => ({ key: "docker:" + c.name, kind: "docker", name: c.title || c.name, sub: c.image, url: c.url || "", admin: "", version: "",
+        ok: !dkTrouble(c), state: c.state === "running" ? "running" : c.state === "paused" ? "paused" : c.state === "missing" ? "container missing" : dkTrouble(c) ? "crashed" : "stopped", color: KIND.docker[1],
+        tile: el("span", { class: "ax-tile ah-dk", style: `--c:${KIND.docker[1]}`, text: (c.title || c.name)[0].toUpperCase() }),
+        manage: () => navigate("dockerapps"), manageLabel: "Docker" }));
+      const all = [...web, ...docker];
+      const nWp = web.filter((x) => x.kind === "wordpress").length, nDkUp = docker.filter((x) => x.state === "running").length;
+      const catalogN = C ? C.apps.length : 0, dkCatalogN = dk && dk.catalog ? dk.catalog.length : 0, dockerReady = !!(dk && dk.installed);
+      const attention = all.filter((x) => !x.ok);
+      root.innerHTML = "";
+
+      // Hero: the numbers that matter, each one a shortcut, and the two things people come here to do.
+      const stat = (n, label, sub, view) => el("button", { type: "button", class: "ah-stat", onclick: () => navigate(view) },
+        [el("b", { text: String(n) }), el("span", { text: label }), el("small", { class: "muted", text: sub })]);
+      root.append(el("div", { class: "ax-hero ah-hero" }, [
+        el("div", { class: "ah-hero-txt" }, [
+          el("h2", {}, ["Applications ", el("span", { class: "ax-spark", text: "✦" })]),
+          el("p", { text: all.length ? "Everything running on this server, in one place. Open an app, jump to its tools, or add something new in a click."
+            : "Nothing is installed yet. Pick an app from the catalog, run one in Docker, or set up WordPress. Each takes about a minute." }),
+          el("div", { class: "ah-stats" }, [
+            stat(web.length, web.length === 1 ? "web app" : "web apps", nWp ? `${nWp} of them WordPress` : "from the App Installer", "appstore"),
+            stat(docker.length, docker.length === 1 ? "Docker app" : "Docker apps", dockerReady ? `${nDkUp} running` : "Docker not set up yet", "dockerapps"),
+            stat(nWp, nWp === 1 ? "WordPress site" : "WordPress sites", "updates, hardening, staging", "wptoolkit"),
+          ]),
+        ]),
+        el("div", { class: "ah-cta" }, [
+          el("button", { class: "btn btn-primary ax-go", style: "--c:#ff7a1a", onclick: () => navigate("appstore") }, [el("span", { class: "ax-gear" }, icon("gear", 18)), el("span", { text: "Install an app" })]),
+          el("button", { class: "btn", onclick: () => navigate("wordpress") }, [icon("wordpress", 14), " Set up WordPress"]),
+        ]),
+      ]));
+
+      // Start something: the four doors, each saying what is behind it.
+      const go = (ico, title, text, view, color) => el("button", { type: "button", class: "ah-go", style: `--c:${color}`, onclick: () => navigate(view) },
+        [el("span", { class: "ah-go-ico" }, icon(ico, 18)), el("div", {}, [el("b", { text: title }), el("span", { text })])]);
+      root.append(el("div", { class: "ah-start" }, [
+        go("wordpress", "Install WordPress", "The web's favourite CMS, with an admin account made for you.", "wordpress", KIND.wordpress[1]),
+        go("apps", "Browse the App Installer", `${catalogN || "Dozens of"} apps: blogs, shops, forums, wikis, clouds and frameworks.`, "appstore", KIND.web[1]),
+        go("t_docker", dockerReady ? "Run a Docker app" : "Set up Docker", dockerReady ? `${dkCatalogN || "Many"} ready-made containers: Home Assistant, Vaultwarden, Gitea and more.`
+          : "The panel installs Docker for you, then any container is one click away.", "dockerapps", KIND.docker[1]),
+        go("t_wptool", "Manage WordPress", "Updates, security hardening, maintenance mode and staging copies.", "wptoolkit", "#818cf8"),
+      ]));
+
+      // Needs a look: stopped containers, unfinished setups, folders that went missing.
+      if (attention.length) {
+        root.append(el("div", { class: "ah-attn" }, [
+          el("span", { class: "pop-ico" }, icon("info", 18)),
+          el("b", { text: attention.length === 1 ? "One app needs a look" : `${attention.length} apps need a look` }),
+          ...attention.map((x) => el("button", { type: "button", class: "ah-attn-item", title: `Open ${x.manageLabel}`, onclick: x.manage }, [el("b", { text: x.name }), el("span", { class: "muted", text: x.state })])),
+        ]));
+      }
+
+      // Installed: one list across every source, filterable by kind.
+      if (!all.length) {
+        root.append(el("div", { class: "cw-empty" }, [icon("apps", 28), el("b", { text: "Nothing installed yet" }), el("span", { class: "muted", text: "Everything you install shows up here, with its address and a way to manage it." })]));
+        return;
+      }
+      const counts = { all: all.length, web: web.filter((x) => x.kind === "web").length, docker: docker.length, wordpress: nWp };
+      const chips = el("div", { class: "ah-chips" });
+      const grid = el("div", { class: "ax-grid ah-grid" });
+      const tone = (x) => x.state === "running" || x.state === "ready" ? "good" : x.state === "paused" || x.state === "finish setup" ? "warn" : x.state === "stopped" ? "dim" : "bad";
+      const dim = (x) => x.kind === "docker" && x.state !== "running";  // stopped containers sit back a little, they are not broken
+      const draw = () => {
+        chips.innerHTML = "";
+        [["all", "All"], ["web", "Web apps"], ["docker", "Docker"], ["wordpress", "WordPress"]].forEach(([id, label]) => {
+          if (id !== "all" && !counts[id]) return;
+          chips.append(el("button", { type: "button", class: `ah-chip ${filter === id ? "active" : ""}`, onclick: () => { filter = id; draw(); } }, [label, " ", el("span", { class: "ah-chip-n", text: String(counts[id]) })]));
+        });
+        grid.innerHTML = "";
+        all.filter((x) => filter === "all" || x.kind === filter).forEach((x) => {
+          grid.append(el("div", { class: `ax-card ah-card ${x.ok && !dim(x) ? "" : "off"}`, style: `--c:${x.color}` }, [
+            el("div", { class: "ax-card-top" }, [x.tile, el("div", { class: "ax-card-name" }, [el("b", { text: x.name, title: x.name }),
+              el("span", { class: "dm-tags" }, [pill(KIND[x.kind][0], "dim"), pill(x.state, tone(x)), x.version ? pill(x.version, "dim") : null])])]),
+            el("p", { text: x.sub, title: x.sub }),
+            el("div", { class: "ax-card-btns" }, [
+              x.url ? el("a", { class: "btn btn-sm", href: x.url, target: "_blank", rel: "noopener noreferrer" }, [icon("link", 12), " Open"]) : null,
+              x.admin ? el("a", { class: `btn btn-sm ${x.setup ? "btn-primary" : ""}`, href: x.admin, target: "_blank", rel: "noopener noreferrer" }, [icon(x.setup ? "wand" : "lock", 12), x.setup ? " Finish setup" : " Admin"]) : null,
+              el("button", { class: "btn btn-sm btn-ghost", onclick: x.manage }, [icon("gear", 12), ` ${x.manageLabel}`]),
+            ]),
+          ]));
+        });
+      };
+      draw();
+      root.append(el("div", { class: "ah-head" }, [el("h3", { class: "ax-h", text: "Installed on this server" }), chips]), grid);
+    });
+    state.refreshHandler = load;
+    load();
+  }
+
   function viewAppPageRoute(root) { viewAppPage(root, state.viewArg || "wordpress"); }
 
   function viewAppPage(root, id) {
@@ -8950,7 +9506,7 @@
   let OPSV = null;
   function opsViews() {
     if (!OPSV && window.AuroraOps) {
-      OPSV = window.AuroraOps({ el, $, icon, btn, pill, kv, field, sw, toast, API, navigate, state, openModal, closeModal, copyText, fmtBytes, ago, downloadText, esc,
+      OPSV = window.AuroraOps({ el, $, icon, btn, pill, kv, field, sw, toast, popNotice, API, navigate, state, openModal, closeModal, copyText, fmtBytes, ago, downloadText, esc,
         requireCard, jobPanel, ...(extraViews()._ui || {}), el });
     }
     return OPSV || {};
@@ -8960,7 +9516,7 @@
   let EXTRAV = null;
   function extraViews() {
     if (!EXTRAV && window.AuroraExtras) {
-      EXTRAV = window.AuroraExtras({ el, $, icon, btn, pill, kv, field, sw, toast, API, navigate, state, openModal, closeModal, copyText, fmtBytes, ago, downloadText, esc });
+      EXTRAV = window.AuroraExtras({ el, $, icon, btn, pill, kv, field, sw, toast, popNotice, API, navigate, state, openModal, closeModal, copyText, fmtBytes, ago, downloadText, esc });
     }
     return EXTRAV || {};
   }
@@ -8969,7 +9525,7 @@
   let MAILV = null;
   function mailViews() {
     if (!MAILV && window.AuroraMail) {
-      MAILV = window.AuroraMail({ el, $, icon, btn, pill, kv, field, sw, toast, API, navigate, state, openModal, closeModal, copyText,
+      MAILV = window.AuroraMail({ el, $, icon, btn, pill, kv, field, sw, toast, popNotice, API, navigate, state, openModal, closeModal, copyText,
         genPassword, fmtBytes, ago, downloadText, esc, requireCard, jobPanel });
     }
     return MAILV || {};

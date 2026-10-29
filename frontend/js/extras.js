@@ -3,7 +3,7 @@
    Loaded before app.js; app.js calls window.AuroraExtras(ui) once with its helpers. */
 window.AuroraExtras = (ui) => {
   "use strict";
-  const { icon, btn, pill, field, sw, toast, API, navigate, state, openModal, closeModal, copyText, fmtBytes, ago, downloadText } = ui;
+  const { icon, btn, pill, field, sw, toast, popNotice, API, navigate, state, openModal, closeModal, copyText, fmtBytes, ago, downloadText } = ui;
   // Text from logs (URLs, user agents, referrers, error messages) is attacker-controlled: always textContent,
   // shown exactly as recorded; an "html" attribute is refused outright.
   const el = (tag, attrs = {}, kids = []) => {
@@ -114,7 +114,18 @@ window.AuroraExtras = (ui) => {
       xl.append(el("span", { style: `left:${n === 1 ? 50 : (idx / (n - 1)) * 100}%`, text: o.xfmt(pts[idx][0]) }));
     }
     const guide = el("div", { class: "mx-guide", hidden: "" }), tip = el("div", { class: "mx-tip", hidden: "" });
-    const plot = el("div", { class: `mx-plot ${o.onPick ? "mx-plot-pick" : ""}` }, [svg, guide, tip]);
+    const sel = el("div", { class: "mx-sel", hidden: "" });
+    const plot = el("div", { class: `mx-plot ${o.onPick ? "mx-plot-pick" : ""} ${o.onRange ? "mx-plot-range" : ""}` }, [svg, guide, tip, sel]);
+    // onRange(i0, i1, points): drag across the bars to pick a span of time (a click is left to onPick).
+    if (o.onRange) {
+      let drag = null;
+      const at = (e) => { const r = plot.getBoundingClientRect(); return Math.max(0, Math.min(n - 1, Math.floor(((e.clientX - r.left) / r.width) * n))); };
+      const paint = (a, b) => { const [i0, i1] = a <= b ? [a, b] : [b, a]; sel.hidden = false; sel.style.left = `${(i0 / n) * 100}%`; sel.style.width = `${((i1 - i0 + 1) / n) * 100}%`; return [i0, i1]; };
+      plot.addEventListener("mousedown", (e) => { if (e.button !== 0) return; drag = { a: at(e), moved: false }; e.preventDefault(); });
+      window.addEventListener("mousemove", (e) => { if (!drag) return; const b = at(e); if (b !== drag.a) drag.moved = true; if (drag.moved) paint(drag.a, b); });
+      window.addEventListener("mouseup", (e) => { if (!drag) return; const d = drag; drag = null; if (!d.moved) { sel.hidden = true; return; } const [i0, i1] = paint(d.a, at(e)); o.onRange(i0, i1, pts.slice(i0, i1 + 1)); });
+      plot.addEventListener("dblclick", () => { sel.hidden = true; o.onRange(null); });
+    }
     const slot = (e) => {
       const r = plot.getBoundingClientRect(), f = (e.clientX - r.left) / r.width;
       return Math.max(0, Math.min(n - 1, o.type === "line" ? Math.round(f * (n - 1)) : Math.floor(f * n)));
@@ -924,10 +935,38 @@ window.AuroraExtras = (ui) => {
         tile("Busiest 5 minutes", rate(peak / 300), "average rate in the peak slot today", "radar"),
       ]));
       const hm = { hour: "2-digit", minute: "2-digit" };
-      body.append(
-        card("Past 24 hours", [chart({ points: day.map(([ts, v]) => [ts, Object.fromEntries(Object.entries(v).map(([k, x]) => [k, x / 5]))]), series: ser, xfmt: (t) => new Date(t * 1000).toLocaleTimeString([], hm), tipX: (t) => `${new Date(t * 1000).toLocaleTimeString([], hm)} – ${new Date((t + 300) * 1000).toLocaleTimeString([], hm)}`, yfmt: (v) => `${fmtBytes(v)}/min`, ticks: 8, bytes: true })], "", [el("span", { class: "muted mx-small", text: "5-minute slots" })]),
-        card("Past week", [chart({ points: week, series: ser, xfmt: (t) => new Date(t * 1000).toLocaleDateString([], { weekday: "short", day: "numeric" }), tipX: (t) => new Date(t * 1000).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }), yfmt: (v) => fmtBytes(v) + "/h", ticks: 7, bytes: true })], "", [el("span", { class: "muted mx-small", text: "hourly" })]),
-        card("Past year", [chart({ points: year, series: ser, xfmt: (t) => new Date(t * 1000).toLocaleDateString([], { month: "short", year: "2-digit" }), tipX: (t) => new Date(t * 1000).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", year: "numeric" }), yfmt: (v) => fmtBytes(v) + "/day", ticks: 12, bytes: true })], "", [el("span", { class: "muted mx-small", text: "daily" })]),
+      // Drag across a chart: that span of time, zoomed in, with its own numbers.
+      const rangeBox = el("div", { class: "mx-range-box" });
+      const fmtSpan = (step) => (t) => step < 3600 ? new Date(t * 1000).toLocaleTimeString([], hm) : step < 86400 ? new Date(t * 1000).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" }) : new Date(t * 1000).toLocaleDateString([], { month: "short", day: "numeric" });
+      const showRange = (name, step, unit) => (i0, i1, slice) => {
+        rangeBox.innerHTML = "";
+        if (i0 == null) return;
+        const total = sum(slice, ser), secs = slice.length * step;
+        const per = ser.map((s) => ({ s, n: slice.reduce((a, p) => a + (p[1][s.key] || 0), 0) })).filter((x) => x.n).sort((a, b) => b.n - a.n);
+        const peak = slice.reduce((a, p) => { const v = ser.reduce((b, s) => b + (p[1][s.key] || 0), 0); return v > a.v ? { v, t: p[0] } : a; }, { v: 0, t: null });
+        const from = slice[0][0], to = slice[slice.length - 1][0] + step;
+        const f = fmtSpan(step);
+        const spanText = (x) => x < 3600 ? `${Math.round(x / 60)} min` : x < 86400 ? `${(x / 3600).toFixed(x % 3600 ? 1 : 0)} h` : `${Math.round(x / 86400)} days`;
+        const dateOf = (t) => new Date(t * 1000).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+        rangeBox.append(card(`Selected: ${f(from)} to ${f(to)}`, [
+          el("div", { class: "mx-tiles" }, [
+            tile("Data in this span", fmtBytes(total), `${slice.length} ${unit}${slice.length === 1 ? "" : "s"}, ${spanText(secs)}`, "network", "accent"),
+            tile("Average rate", rate(total / secs), "over the whole span", "chart"),
+            tile("Busiest " + unit, rate(peak.v / step), peak.t != null ? `at ${f(peak.t)}` : "", "radar"),
+            tile("Share of the " + name, `${Math.round((total / Math.max(1, sum(name === "day" ? day : name === "week" ? week : year, ser))) * 100)}%`, "of the data in the whole chart", "donut"),
+          ]),
+          per.length ? el("div", { class: "mx-range-per" }, per.map((x) => el("span", {}, [el("i", { style: `background:${x.s.color}` }), `${x.s.label}: ${fmtBytes(x.n)}`]))) : el("p", { class: "muted mx-small", text: "No traffic in this span." }),
+          chart({ points: slice.map(([ts, v]) => [ts, Object.fromEntries(Object.entries(v).map(([k, x]) => [k, x / (step / 60)]))]), series: ser, xfmt: f, tipX: (t) => `${f(t)} to ${f(t + step)}${step < 86400 ? `, ${dateOf(t)}` : ""}`, yfmt: (v) => `${fmtBytes(v)}/min`, ticks: Math.min(8, slice.length), bytes: true }),
+        ], "", [btn("Clear", () => { rangeBox.innerHTML = ""; }, "btn-ghost btn-sm")]));
+        rangeBox.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      };
+      body.append(rangeBox,
+        card("Past 24 hours", [chart({ points: day.map(([ts, v]) => [ts, Object.fromEntries(Object.entries(v).map(([k, x]) => [k, x / 5]))]), series: ser, xfmt: (t) => new Date(t * 1000).toLocaleTimeString([], hm), tipX: (t) => `${new Date(t * 1000).toLocaleTimeString([], hm)} – ${new Date((t + 300) * 1000).toLocaleTimeString([], hm)}`, yfmt: (v) => `${fmtBytes(v)}/min`, ticks: 8, bytes: true,
+          onRange: (i0, i1) => showRange("day", 300, "slot")(i0, i1, i0 == null ? null : day.slice(i0, i1 + 1)) })], "", [el("span", { class: "muted mx-small", text: "5-minute slots · drag across the chart to zoom into a span" })]),
+        card("Past week", [chart({ points: week, series: ser, xfmt: (t) => new Date(t * 1000).toLocaleDateString([], { weekday: "short", day: "numeric" }), tipX: (t) => new Date(t * 1000).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }), yfmt: (v) => fmtBytes(v) + "/h", ticks: 7, bytes: true,
+          onRange: (i0, i1) => showRange("week", 3600, "hour")(i0, i1, i0 == null ? null : week.slice(i0, i1 + 1)) })], "", [el("span", { class: "muted mx-small", text: "hourly · drag to zoom" })]),
+        card("Past year", [chart({ points: year, series: ser, xfmt: (t) => new Date(t * 1000).toLocaleDateString([], { month: "short", year: "2-digit" }), tipX: (t) => new Date(t * 1000).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", year: "numeric" }), yfmt: (v) => fmtBytes(v) + "/day", ticks: 12, bytes: true,
+          onRange: (i0, i1) => showRange("year", 86400, "day")(i0, i1, i0 == null ? null : year.slice(i0, i1 + 1)) })], "", [el("span", { class: "muted mx-small", text: "daily · drag to zoom" })]),
       );
       if (view === "services" && months.length) {
         const msel = el("select", { class: "em-select mx-narrow", onchange: () => { month = msel.value; drawMonth(); } }, months.map((m) => el("option", { value: m, text: new Date(m + "-01T00:00:00").toLocaleDateString([], { month: "long", year: "numeric" }) })));

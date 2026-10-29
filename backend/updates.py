@@ -130,7 +130,7 @@ def set_auto(enabled: bool, mode: str = "security", reboot: bool = False, reboot
         AUTO_CONF.write_text('// Written by AuroraPanel (System → Updates)\n'
                              f'APT::Periodic::Update-Package-Lists "{1 if enabled else 0}";\n'
                              f'APT::Periodic::Unattended-Upgrade "{1 if enabled else 0}";\n'
-                             'APT::Periodic::AutocleanInterval "7";\n')
+                             'APT::Periodic::AutocleanInterval "7";\n', encoding="utf-8")
         origins = ['"origin=Debian,codename=${distro_codename}-security,label=Debian-Security";',
                    '"origin=Debian,codename=${distro_codename},label=Debian-Security";',
                    '"origin=Ubuntu,archive=${distro_codename}-security";',
@@ -145,7 +145,7 @@ def set_auto(enabled: bool, mode: str = "security", reboot: bool = False, reboot
                            'Unattended-Upgrade::Remove-Unused-Dependencies "true";\n'
                            f'Unattended-Upgrade::Automatic-Reboot "{"true" if reboot else "false"}";\n'
                            f'Unattended-Upgrade::Automatic-Reboot-Time "{reboot_time}";\n'
-                           'Dpkg::Options { "--force-confdef"; "--force-confold"; };\n')
+                           'Dpkg::Options { "--force-confdef"; "--force-confold"; };\n', encoding="utf-8")
 
     if enabled and not shutil.which("unattended-upgrade", path=PATH):
         def fn(log):

@@ -12,9 +12,9 @@ import re
 import urllib.error
 import urllib.request
 
-VERSION = "1.1.17"
+VERSION = "1.1.19"
 LABEL = "v" + VERSION
-RELEASED = "2026-10-26"
+RELEASED = "2026-10-28"
 VERSION_URL = "https://aurora51.com/version.json"
 CHANGELOG_URL = "https://aurora51.com/changelog.json"
 SITE = "https://aurora51.com"
@@ -67,7 +67,7 @@ def _download_url(data: dict, latest: str) -> str:
 
 def info() -> dict:
     return {"version": VERSION, "label": LABEL, "released": RELEASED, "site": SITE,
-            "install_dir": _install_dir(), "update_command": update_command()}
+            "install_dir": _install_dir(), "update_command": update_command(), "rollbacks": rollbacks()}
 
 
 def _latest() -> dict:
@@ -223,7 +223,7 @@ def apply_update() -> dict:
         raise UpdateError("The downloaded file isn't a valid zip")
 
     runner = udir / "run-update.sh"
-    runner.write_text(_RUNNER)
+    runner.write_text(_RUNNER, encoding="utf-8")
     argv = ["systemd-run", "--quiet", "--collect", f"--unit={UPDATE_UNIT}"]
     if os.environ.get("AURORA_USER"):  # install.sh keeps AURORA_USER from $SUDO_USER
         argv.append(f"--setenv=SUDO_USER={os.environ['AURORA_USER']}")
@@ -232,6 +232,100 @@ def apply_update() -> dict:
     if r.returncode != 0:
         raise UpdateError(r.stderr.strip() or "Couldn't start the updater")
     return {"ok": True, "from": VERSION, "to": latest}
+
+
+# ------------------------------------------------------------- going back
+# Every one-click update leaves backup-<version>.tgz behind (see _RUNNER). Going back
+# restores the panel's own files from it; aurora_config.json is kept as it is now, so
+# the password, 2FA and sessions of today survive, and the step back is itself backed up.
+_ROLLBACK_RUNNER = r"""#!/bin/bash
+# Written by AuroraPanel (backend/version.py) — runs as the transient unit aurorapanel-update.
+set -uo pipefail
+BK=$1 DEST=$2 CUR=$3 OLD=$4
+DIR=$(dirname "$0"); KEEP="$DIR/backup-$CUR.tgz"
+exec >>"$DIR/update.log" 2>&1
+echo "== $(date -Is) rolling back AuroraPanel $CUR -> $OLD in $DEST"
+echo "• Backing up the current install to $KEEP"
+tar -czf "$KEEP" -C "$DEST" --exclude=./.venv --exclude=__pycache__ . || { echo "✖ backup failed — nothing changed"; exit 1; }
+echo "• Restoring the files of $OLD"
+if tar -xzf "$BK" -C "$DEST" --exclude=./aurora_config.json && bash "$DEST/install.sh" --yes; then
+  echo "✔ rolled back to $OLD"; exit 0
+fi
+echo "✖ rollback failed — restoring $CUR"
+tar -xzf "$KEEP" -C "$DEST" --exclude=./aurora_config.json && bash "$DEST/install.sh" --yes && echo "↩ back on $CUR"
+exit 1
+"""
+
+
+def prune_updates(keep: int = 1) -> dict:
+    """Only the build you came from is kept, so copies never pile up on the server: the most recently
+    saved backup stays, older ones, a copy of the running version, downloaded zips and unpacked staging
+    folders go. Runs when the panel starts, which is right after every update or rollback."""
+    import shutil
+    from pathlib import Path
+    udir = Path(UPDATE_DIR)
+    if not udir.is_dir():
+        return {"kept": [], "removed": []}
+    backups, removed = [], []
+    for p in udir.glob("backup-*.tgz"):
+        ver = p.name[len("backup-"):-len(".tgz")]
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        if not _SEMVER.match(ver) or ver == VERSION:
+            removed.append(p)
+        else:
+            backups.append((st.st_mtime, p))
+    backups.sort(key=lambda x: x[0], reverse=True)
+    removed += [p for _, p in backups[keep:]]
+    removed += list(udir.glob("aurorapanel-*.zip"))
+    for p in removed:
+        try:
+            p.unlink()
+        except OSError:
+            pass
+    for d in udir.glob("staging-*"):
+        shutil.rmtree(d, ignore_errors=True)
+    return {"kept": [p.name for _, p in backups[:keep]], "removed": sorted(p.name for p in removed)}
+
+
+def rollbacks() -> list[dict]:
+    """The versions the updater kept a copy of, newest first (not the one running)."""
+    from pathlib import Path
+    out = []
+    for p in Path(UPDATE_DIR).glob("backup-*.tgz"):
+        ver = p.name[len("backup-"):-len(".tgz")]
+        if _SEMVER.match(ver) and ver != VERSION:
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            out.append({"version": ver, "label": "v" + ver, "size": st.st_size, "saved": int(st.st_mtime)})
+    return sorted(out, key=lambda x: _key(x["version"]), reverse=True)
+
+
+def apply_rollback(ver: str) -> dict:
+    """Put a kept version back, the same way an update goes in (background unit, log, restart)."""
+    import os
+    import subprocess
+    from pathlib import Path
+    ver = str(ver or "").strip()
+    if not any(r["version"] == ver for r in rollbacks()):
+        raise UpdateError("No saved copy of that version")
+    if _unit_active():
+        raise UpdateError("An update is already running")
+    udir = Path(UPDATE_DIR)
+    runner = udir / "run-rollback.sh"
+    runner.write_text(_ROLLBACK_RUNNER, encoding="utf-8")
+    argv = ["systemd-run", "--quiet", "--collect", f"--unit={UPDATE_UNIT}"]
+    if os.environ.get("AURORA_USER"):
+        argv.append(f"--setenv=SUDO_USER={os.environ['AURORA_USER']}")
+    argv += ["/bin/bash", str(runner), str(udir / f"backup-{ver}.tgz"), _install_dir(), VERSION, ver]
+    r = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        raise UpdateError(r.stderr.strip() or "Couldn't start the rollback")
+    return {"ok": True, "from": VERSION, "to": ver}
 
 
 def update_status() -> dict:

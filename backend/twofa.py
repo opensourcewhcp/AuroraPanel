@@ -34,15 +34,32 @@ def _code_at(secret_b32: str, counter: int) -> str:
     return str(bincode % (10 ** _DIGITS)).zfill(_DIGITS)
 
 
-def verify(secret_b32: str, code: str, window: int = 1) -> bool:
+def _match(secret_b32: str, code: str, window: int = 1) -> int | None:
+    """The time step the code belongs to, or None when it is wrong."""
     code = (code or "").strip().replace(" ", "")
     if not code.isdigit() or len(code) != _DIGITS:
-        return False
+        return None
     counter = int(time.time() // _PERIOD)
     for delta in range(-window, window + 1):
         if hmac.compare_digest(_code_at(secret_b32, counter + delta), code):
-            return True
-    return False
+            return counter + delta
+    return None
+
+
+def verify(secret_b32: str, code: str, window: int = 1) -> bool:
+    return _match(secret_b32, code, window) is not None
+
+
+def _verify_once(cfg: dict, code: str) -> bool:
+    """Like verify, but a code that already signed something in is refused (RFC 6238 section 5.2):
+    a code seen over someone's shoulder, or captured by a hacked site's keylogger, dies with its first
+    use instead of staying good for the next 90 seconds."""
+    step = _match(cfg["totp_secret"], code)
+    if step is None or step <= int(cfg.get("totp_last_step") or 0):
+        return False
+    cfg["totp_last_step"] = step
+    config.save_config(cfg)
+    return True
 
 
 def status() -> dict:
@@ -81,7 +98,7 @@ def confirm_enable(code: str) -> bool:
     secret = cfg.get("totp_secret")
     if not secret:
         return False
-    if not verify(secret, code):
+    if not _verify_once(cfg, code):
         return False
     cfg["totp_enabled"] = True
     config.save_config(cfg)
@@ -93,9 +110,10 @@ def disable(code: str) -> bool:
     secret = cfg.get("totp_secret")
     if not cfg.get("totp_enabled") or not secret:
         return True
-    if not verify(secret, code):
+    if not _verify_once(cfg, code):
         return False
     cfg.pop("totp_secret", None)
+    cfg.pop("totp_last_step", None)
     cfg["totp_enabled"] = False
     config.save_config(cfg)
     return True
@@ -110,4 +128,4 @@ def verify_login(code: str) -> bool:
     secret = cfg.get("totp_secret")
     if not cfg.get("totp_enabled") or not secret:
         return True  # 2FA not enabled -> always passes
-    return verify(secret, code)
+    return _verify_once(cfg, code)

@@ -5,6 +5,7 @@ with validated arguments. All mutations require the panel to run as root.
 """
 from __future__ import annotations
 
+import os
 import platform
 import re
 import shutil
@@ -50,8 +51,46 @@ def list_users(include_system: bool = False) -> list[dict]:
             "gecos": p.pw_gecos,
             "is_system": is_system,
         })
+    # A home inside (or equal to) another account's home belongs to that account: deleting it would
+    # take the other account's files with it, so the page keeps it.
+    homes = {p.pw_name: p.pw_dir for p in pwd.getpwall() if p.pw_dir and p.pw_dir not in ("/", "/nonexistent")}
+    for u in users:
+        h = u["home"]
+        other = next((n for n, d in homes.items() if n != u["name"] and (h == d or h.startswith(d.rstrip("/") + "/"))), None)
+        u["home_owner"] = other
     users.sort(key=lambda u: u["uid"])
     return users
+
+
+def _home_owner(name: str, home: str) -> str | None:
+    for p in pwd.getpwall():
+        d = p.pw_dir
+        if p.pw_name != name and d and d not in ("/", "/nonexistent") and (home == d or home.startswith(d.rstrip("/") + "/")):
+            return p.pw_name
+    return None
+
+
+def backup_home(name: str) -> str | None:
+    """The home folder as a tar.gz in the panel's backup folder, before the account goes."""
+    import time
+    from pathlib import Path
+    from . import backups
+    try:
+        home = pwd.getpwnam(name).pw_dir
+    except KeyError:
+        raise UserError("No such user")
+    if not home or not os.path.isdir(home) or home in ("/", "/nonexistent"):
+        return None
+    backups.BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    out = backups.BACKUP_DIR / f"home-{name}-{time.strftime('%Y%m%d-%H%M%S')}.tar.gz"
+    r = subprocess.run(["tar", "-czf", str(out), "-C", str(Path(home).parent), Path(home).name], capture_output=True, text=True, timeout=1800)
+    if r.returncode != 0:
+        try:
+            out.unlink()
+        except OSError:
+            pass
+        raise UserError("Backup failed: " + (r.stderr.strip().splitlines() or ["tar failed"])[-1])
+    return str(out)
 
 
 def add_user(name: str, create_home: bool = True, shell: str = "/bin/bash") -> dict:
@@ -69,20 +108,28 @@ def add_user(name: str, create_home: bool = True, shell: str = "/bin/bash") -> d
     return {"ok": True, "name": name}
 
 
-def delete_user(name: str, remove_home: bool = False) -> dict:
+def delete_user(name: str, remove_home: bool = False, backup: bool = False) -> dict:
     _require_linux()
     name = _validate_name(name)
     owner = files.default_user()
     if name == "root" or (owner and name == owner.pw_name):
         raise UserError(f"Refusing to delete protected account '{name}'")
+    try:
+        home = pwd.getpwnam(name).pw_dir
+    except KeyError:
+        raise UserError("No such user")
+    shared = _home_owner(name, home) if remove_home else None
+    if shared:
+        raise UserError(f"{home} is inside {shared}'s home, so it stays; delete the files by hand if you want them gone")
+    saved = backup_home(name) if backup else None
     argv = ["userdel"]
     if remove_home:
         argv.append("-r")
     argv.append(name)
-    out = subprocess.run(argv, capture_output=True, text=True, timeout=20)
+    out = subprocess.run(argv, capture_output=True, text=True, timeout=120)
     if out.returncode != 0:
         raise UserError(out.stderr.strip() or "userdel failed")
-    return {"ok": True, "name": name}
+    return {"ok": True, "name": name, "backup": saved}
 
 
 def set_lock(name: str, locked: bool) -> dict:

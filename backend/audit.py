@@ -115,11 +115,9 @@ def _user_from_scope(scope) -> str:
     from . import auth, apitokens
     headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
     from starlette.requests import cookie_parser  # same parsing as request.cookies (unquotes "…" values)
-    tok = cookie_parser(headers.get("cookie", "")).get(auth.COOKIE_NAME)
-    if tok:
-        u = auth.verify_token(tok)
-        if u:
-            return u
+    u = auth.session_from_cookies(cookie_parser(headers.get("cookie", "")))
+    if u:
+        return u
     b = headers.get("authorization", "")
     tok = b[7:].strip() if b.lower().startswith("bearer ") else headers.get("x-aurora-token", "")
     if tok:

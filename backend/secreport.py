@@ -580,57 +580,107 @@ _COL = {"critical": "#ff6b6b", "high": "#ff8a5b", "medium": "#ffb347", "low": "#
 
 
 def report_html(rep: dict) -> str:
+    """The report as one self-contained page: the score, what to do first (every distinct finding once,
+    worst first, with the fix), then the targets, with the ones that look the same folded into one card."""
     e = html.escape
     when = datetime.fromtimestamp(rep["ts"]).strftime("%b %d, %Y %H:%M")
-    gcol = "#3fd08f" if rep["score"] >= 90 else "#ffb347" if rep["score"] >= 65 else "#ff6b6b"
+    order = ("critical", "high", "medium", "low", "info")
+    col = lambda score: "#3fd08f" if score >= 90 else "#ffb347" if score >= 65 else "#ff6b6b"  # noqa: E731
     circ = 2 * 3.14159 * 52
-    dash = circ * rep["score"] / 100
+    dash = circ * max(0, min(100, rep["score"])) / 100
+    targets = rep["targets"]
 
     def sev(s):
         return f'<span class="sev" style="--c:{_COL.get(s, "#999")}">{e(s)}</span>'
 
+    # What to do first: each distinct finding once, with the targets it was seen on.
+    todo = {}
+    for t in targets:
+        for f in t["findings"]:
+            k = (f["severity"], f["title"])
+            todo.setdefault(k, {"f": f, "on": []})["on"].append(t["label"])
+    todo_items = sorted(todo.values(), key=lambda x: (order.index(x["f"]["severity"]) if x["f"]["severity"] in order else 9, x["f"]["title"]))
+    todo_html = "".join(
+        f'<li>{sev(x["f"]["severity"])}<div><b>{e(x["f"]["title"])}</b>'
+        f'<p>{e(x["f"]["detail"])}</p>'
+        + (f'<p class="fix"><span>Fix</span>{e(x["f"]["fix"])}</p>' if x["f"].get("fix") else "")
+        + f'<p class="on">{"Seen on " + e(", ".join(x["on"][:6])) + (f" and {len(x['on']) - 6} more" if len(x["on"]) > 6 else "") if len(x["on"]) > 1 else "Seen on " + e(x["on"][0])}</p></div></li>'
+        for x in todo_items) or '<li class="ok">Nothing to do. Every check passed.</li>'
+
+    # Targets: the ones with the same kind, score and findings fold into one card.
+    groups = []
+    for t in targets:
+        sig = (t["kind"], t["score"], tuple((f["severity"], f["title"]) for f in t["findings"]))
+        g = next((g for g in groups if g["sig"] == sig), None)
+        if not g:
+            g = {"sig": sig, "items": []}
+            groups.append(g)
+        g["items"].append(t)
     cards = []
-    for t in rep["targets"]:
-        tc = "#3fd08f" if t["score"] >= 90 else "#ffb347" if t["score"] >= 65 else "#ff6b6b"
+    for g in groups:
+        t = g["items"][0]
         rows = "".join(
             f'<li>{sev(f["severity"])}<div><b>{e(f["title"])}</b><p>{e(f["detail"])}</p>'
-            + (f'<p class="fix">Fix: {e(f["fix"])}</p>' if f.get("fix") else "") + "</div></li>"
-            for f in t["findings"]) or '<li class="ok">No findings — nicely done.</li>'
+            + (f'<p class="fix"><span>Fix</span>{e(f["fix"])}</p>' if f.get("fix") else "") + "</div></li>"
+            for f in t["findings"]) or '<li class="ok">No findings. Nicely done.</li>'
         facts = t.get("facts") or {}
         meta = []
         if facts.get("version"):
-            meta.append(f'{e(facts["version"])} · {e(facts.get("cipher", ""))}')
+            meta.append(f'{facts["version"]} · {facts.get("cipher", "")}'.strip(" ·"))
         c = facts.get("cert") or {}
         if c.get("days") is not None:
             meta.append(f'certificate expires in {c["days"]} days')
-        cards.append(f'''<section class="t"><header><div><span class="kind">{e(t["kind"])}</span><h2>{e(t["label"])}</h2>
+        names = [x["label"] for x in g["items"]]
+        if len(names) == 1:
+            head = f'<h2>{e(names[0])}</h2>'
+        else:
+            kind = e(t["kind"]).capitalize()
+            head = (f'<h2>{kind} · {len(names)} addresses, same result</h2>'
+                    f'<div class="chips">{"".join(f"<span>{e(n)}</span>" for n in names)}</div>')
+        n = len(t["findings"])
+        summary = "no findings" if not n else f"{n} finding{'s' if n > 1 else ''}"
+        cards.append(f'''<details class="t"{" open" if n else ""}><summary><div><span class="kind">{e(t["kind"])}</span>{head}
           {("<small>" + e(" · ".join(meta)) + "</small>") if meta else ""}</div>
-          <div class="g" style="--c:{tc}"><b>{t["score"]}</b><span>{e(t["grade"])}</span></div></header><ul>{rows}</ul></section>''')
-    counts = "".join(f'<div class="cnt" style="--c:{_COL[k]}"><b>{rep["counts"].get(k, 0)}</b><span>{k}</span></div>' for k in ("critical", "high", "medium", "low", "info"))
+          <div class="right"><span class="n">{summary}</span><div class="g" style="--c:{col(t["score"])}"><b>{t["score"]}</b><span>{e(t["grade"])}</span></div></div></summary><ul>{rows}</ul></details>''')
+    counts = "".join(f'<div class="cnt" style="--c:{_COL[k]}"><b>{rep["counts"].get(k, 0)}</b><span>{k}</span></div>' for k in order)
+    n_t, n_g = len(targets), len(groups)
     return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Security Report · {e(rep["hostname"])}</title>
 <style>
-:root{{--bg:#0e0c0b;--card:#17141299;--stroke:#ffffff1f;--text:#f4efeb;--dim:#b8aea6;--accent:#ff7a1a}}
-@media (prefers-color-scheme:light){{:root{{--bg:#f7f3ef;--card:#ffffffcc;--stroke:#00000014;--text:#1b1715;--dim:#6b625c}}}}
+:root{{--bg:#0e0c0b;--card:#17141299;--stroke:#ffffff1f;--text:#f4efeb;--dim:#b8aea6;--accent:#ff7a1a;--w:#ffffff0d}}
+@media (prefers-color-scheme:light){{:root{{--bg:#f7f3ef;--card:#ffffffcc;--stroke:#00000014;--text:#1b1715;--dim:#6b625c;--w:#00000008}}}}
 *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}}
 .wrap{{max-width:980px;margin:0 auto;padding:32px 16px 60px}}
 .hero{{display:flex;gap:28px;align-items:center;flex-wrap:wrap;background:var(--card);border:1px solid var(--stroke);border-radius:22px;padding:26px 28px;backdrop-filter:blur(8px)}}
-.ring{{position:relative;width:132px;height:132px;flex:none}}.ring svg{{transform:rotate(-90deg)}}.ring b{{position:absolute;inset:0;display:grid;place-items:center;font-size:38px;letter-spacing:-.03em}}
-.ring b small{{display:block;font-size:12px;font-weight:600;color:var(--dim);letter-spacing:.08em;text-transform:uppercase;text-align:center}}
+.ring{{position:relative;width:132px;height:132px;flex:none}}.ring svg{{display:block;transform:rotate(-90deg)}}
+.ring b{{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:40px;line-height:1;letter-spacing:-.03em}}
+.ring b small{{margin-top:6px;font-size:11px;font-weight:700;color:var(--dim);letter-spacing:.1em;text-transform:uppercase}}
+.hero > div:last-child{{flex:1;min-width:260px}}
 h1{{margin:0 0 4px;font-size:26px;letter-spacing:-.02em}}.sub{{color:var(--dim);margin:0 0 14px}}
-.counts{{display:flex;gap:10px;flex-wrap:wrap}}.cnt{{border:1px solid var(--stroke);border-left:4px solid var(--c);border-radius:12px;padding:6px 12px;min-width:84px}}
-.cnt b{{display:block;font-size:20px}}.cnt span{{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim)}}
-.t{{background:var(--card);border:1px solid var(--stroke);border-radius:18px;padding:18px 22px;margin-top:16px}}
-.t header{{display:flex;justify-content:space-between;gap:16px;align-items:center}}.t h2{{margin:0;font-size:18px}}.kind{{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--accent)}}
-.t small{{color:var(--dim)}}.g{{text-align:center;border:2px solid var(--c);color:var(--c);border-radius:14px;padding:4px 12px;min-width:64px}}.g b{{display:block;font-size:20px;line-height:1.1}}.g span{{font-size:12px}}
-ul{{list-style:none;margin:14px 0 0;padding:0}}li{{display:flex;gap:12px;padding:10px 0;border-top:1px solid var(--stroke)}}li p{{margin:2px 0 0;color:var(--dim);font-size:13.5px}}
-li .fix{{color:var(--text)}}li.ok{{color:#3fd08f}}.sev{{flex:none;align-self:flex-start;margin-top:3px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--c);border:1px solid var(--c);border-radius:999px;padding:1px 8px}}
-footer{{margin-top:28px;color:var(--dim);font-size:12.5px;text-align:center}}
-@media print{{body{{background:#fff;color:#111}}.hero,.t{{break-inside:avoid;background:#fff;border-color:#ddd}}}}
+.counts{{display:flex;gap:10px;flex-wrap:wrap}}.cnt{{border:1px solid var(--stroke);border-left:4px solid var(--c);border-radius:12px;padding:6px 12px;min-width:84px;background:var(--w)}}
+.cnt b{{display:block;font-size:20px;line-height:1.2}}.cnt span{{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim)}}
+h3{{margin:28px 0 10px;font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);display:flex;align-items:center;gap:10px}}h3 i{{font-style:normal;color:var(--text);font-size:15px;letter-spacing:0;text-transform:none;font-weight:600}}
+.todo{{background:var(--card);border:1px solid var(--stroke);border-radius:18px;padding:6px 22px}}
+.t{{background:var(--card);border:1px solid var(--stroke);border-radius:18px;padding:0 22px;margin-top:12px}}
+summary{{list-style:none;cursor:pointer;display:flex;justify-content:space-between;gap:16px;align-items:center;padding:16px 0}}summary::-webkit-details-marker{{display:none}}
+summary > div:first-child{{min-width:0}}.t h2{{margin:0;font-size:17px;letter-spacing:-.01em}}.kind{{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--accent)}}
+.t small{{color:var(--dim);display:block;margin-top:2px;font-size:12.5px}}.right{{display:flex;align-items:center;gap:14px;flex:none}}.n{{font-size:12.5px;color:var(--dim)}}
+.g{{text-align:center;border:2px solid var(--c);color:var(--c);border-radius:14px;padding:4px 12px;min-width:64px}}.g b{{display:block;font-size:20px;line-height:1.1}}.g span{{font-size:12px}}
+.chips{{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}}.chips span{{font-size:12px;border:1px solid var(--stroke);background:var(--w);border-radius:999px;padding:2px 10px;color:var(--dim);font-family:ui-monospace,Consolas,monospace}}
+ul{{list-style:none;margin:0;padding:0 0 8px}}li{{display:flex;gap:12px;padding:12px 0;border-top:1px solid var(--stroke)}}li p{{margin:2px 0 0;color:var(--dim);font-size:13.5px}}
+li .fix{{color:var(--text);margin-top:6px;display:flex;gap:8px;align-items:baseline}}li .fix span{{flex:none;font-size:10.5px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);border:1px solid var(--accent);border-radius:999px;padding:0 7px}}
+li .on{{font-size:12px;margin-top:6px}}li.ok{{color:#3fd08f}}
+.sev{{flex:none;align-self:flex-start;margin-top:3px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--c);border:1px solid var(--c);border-radius:999px;padding:1px 8px;min-width:68px;text-align:center}}
+footer{{margin-top:28px;color:var(--dim);font-size:12.5px;text-align:center;line-height:1.6}}
+@media (max-width:640px){{summary{{flex-direction:column;align-items:flex-start}}.right{{width:100%;justify-content:space-between}}}}
+@media print{{body{{background:#fff;color:#111}}.hero,.t,.todo{{break-inside:avoid;background:#fff;border-color:#ddd}}.t{{padding-top:0}}}}
 </style></head><body><div class="wrap">
 <div class="hero"><div class="ring"><svg width="132" height="132" viewBox="0 0 132 132"><circle cx="66" cy="66" r="52" fill="none" stroke="var(--stroke)" stroke-width="12"/>
-<circle cx="66" cy="66" r="52" fill="none" stroke="{gcol}" stroke-width="12" stroke-linecap="round" stroke-dasharray="{dash:.1f} {circ:.1f}"/></svg><b>{e(rep["grade"])}<small>{rep["score"]} / 100</small></b></div>
-<div><h1>Security Report · {e(rep["hostname"])}</h1><p class="sub">{when} · {len(rep["targets"])} targets checked in {rep["took"]} s · everything on this server, nothing else</p><div class="counts">{counts}</div></div></div>
+<circle cx="66" cy="66" r="52" fill="none" stroke="{col(rep["score"])}" stroke-width="12" stroke-linecap="round" stroke-dasharray="{dash:.1f} {circ:.1f}"/></svg><b>{e(rep["grade"])}<small>{rep["score"]} / 100</small></b></div>
+<div><h1>Security Report · {e(rep["hostname"])}</h1><p class="sub">{when} · {n_t} target{"s" if n_t != 1 else ""} checked in {rep["took"]} s · everything on this server, nothing else</p><div class="counts">{counts}</div></div></div>
+<h3>What to do first <i>{len(todo_items)} distinct finding{"s" if len(todo_items) != 1 else ""}</i></h3>
+<div class="todo"><ul>{todo_html}</ul></div>
+<h3>Every target <i>{n_t} checked{f", shown as {n_g} cards" if n_g != n_t else ""}</i></h3>
 {"".join(cards)}
-<footer>Made by AuroraPanel on {e(rep["hostname"])}. Scores: 100 minus 25 per critical, 15 per high, 8 per medium and 3 per low finding.</footer>
+<footer>Made by AuroraPanel on {e(rep["hostname"])}.<br>Scores: 100 minus 25 per critical, 15 per high, 8 per medium and 3 per low finding. Targets with the same result share one card.</footer>
 </div></body></html>'''

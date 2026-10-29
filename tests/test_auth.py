@@ -6,6 +6,7 @@ import pytest
 
 from conftest import ADMIN, PASSWORD
 from backend import auth, config
+from fastapi.testclient import TestClient
 
 
 def test_no_way_to_claim_a_fresh_panel(client):
@@ -52,7 +53,7 @@ def test_first_login_must_change_password(client):
 
 
 def test_reset_password_keeps_username_and_signs_out(admin):
-    tok = admin.cookies.get(auth.COOKIE_NAME)
+    tok = admin.cookies.get(auth.COOKIE_NAME_HTTP)  # the test client speaks plain http
     user, pw = config.issue_temporary_password()
     assert user == ADMIN and config.must_change_password()
     assert auth.verify_token(tok) is None  # every old session is gone
@@ -73,8 +74,22 @@ def test_login_wrong_and_right(client):
     assert client.post("/api/login", json={"username": "other", "password": PASSWORD}).status_code == 401
     r = client.post("/api/login", json={"username": ADMIN, "password": PASSWORD})
     assert r.status_code == 200
-    assert auth.COOKIE_NAME in r.cookies
+    assert auth.COOKIE_NAME_HTTP in r.cookies  # plain http gets the http cookie name
+    assert auth.COOKIE_NAME not in r.cookies
     assert client.get("/api/me").json()["username"] == ADMIN
+
+
+def test_https_cookie_still_accepted_over_http(client):
+    """A session issued over https (the Secure cookie name) keeps working, and so does a plain http
+    session: both names are read, so turning Panel HTTPS off never leaves the browser locked out."""
+    config.set_credentials(ADMIN, PASSWORD)
+    client.cookies.set(auth.COOKIE_NAME, auth.issue_token(ADMIN))
+    assert client.get("/api/me").json()["username"] == ADMIN
+    client.cookies.clear()
+    client.cookies.set(auth.COOKIE_NAME_HTTP, auth.issue_token(ADMIN))
+    assert client.get("/api/me").json()["username"] == ADMIN
+    r = client.post("/api/logout")
+    assert all(n in r.headers.get("set-cookie", "") for n in auth.COOKIE_NAMES)  # both names cleared
 
 
 def test_logout_and_bad_tokens(admin):
@@ -82,8 +97,10 @@ def test_logout_and_bad_tokens(admin):
     admin.post("/api/logout")
     admin.cookies.clear()
     assert admin.get("/api/me").status_code == 401
-    admin.cookies.set(auth.COOKIE_NAME, "garbage")
-    assert admin.get("/api/me").status_code == 401
+    for name in auth.COOKIE_NAMES:
+        admin.cookies.clear()
+        admin.cookies.set(name, "garbage")
+        assert admin.get("/api/me").status_code == 401
 
 
 def test_token_signature_and_rotation():
@@ -111,3 +128,50 @@ def test_2fa_enrol_has_a_qr_code_named_after_the_server():
     d = twofa.begin_enroll(ADMIN)
     assert d["qr"].startswith("data:image/svg+xml") and d["issuer"].startswith("AuroraPanel ")
     assert d["otpauth_uri"].startswith("otpauth://totp/AuroraPanel%20") and f"secret={d['secret']}" in d["otpauth_uri"]
+
+
+def _otp(step_offset=0):
+    """The current authenticator code for the test panel's secret."""
+    import time
+    from backend import twofa
+    secret = config.load_config()["totp_secret"]
+    return twofa._code_at(secret, int(time.time() // 30) + step_offset)
+
+
+def test_2fa_on_asks_for_code_right_away_and_off_is_plain_login(admin):
+    from backend import twofa
+    twofa.begin_enroll(ADMIN)
+    r = admin.post("/api/2fa/enable", json={"code": _otp(-1)})  # the three steps in the window, used in order
+    assert r.status_code == 200 and r.json()["relogin"]
+    assert admin.get("/api/me").status_code == 401  # this browser too: every session is gone
+    admin.cookies.clear()
+    r = admin.post("/api/login", json={"username": ADMIN, "password": PASSWORD})
+    assert r.status_code == 401 and r.json()["detail"] == "otp_required"
+    code = _otp(0)  # a fresh step: the enable call used up the previous one
+    assert admin.post("/api/login", json={"username": ADMIN, "password": PASSWORD, "otp": code}).status_code == 200
+    assert admin.get("/api/me").status_code == 200
+    # A code is single use: the same one again is refused.
+    other = TestClient(admin.app)
+    assert other.post("/api/login", json={"username": ADMIN, "password": PASSWORD, "otp": code}).status_code == 401
+    # Off again: password alone signs in.
+    assert admin.post("/api/2fa/disable", json={"code": _otp(1)}).status_code == 200
+    other.cookies.clear()
+    assert other.post("/api/login", json={"username": ADMIN, "password": PASSWORD}).status_code == 200
+    assert other.get("/api/me").json()["username"] == ADMIN
+
+
+def test_cookie_sessions_refuse_cross_origin_writes(admin):
+    """A page on another origin (a hacked website on the same domain, say) can't use the cookie."""
+    assert admin.post("/api/logout", headers={"origin": "https://evil.example"}).status_code == 403
+    assert admin.post("/api/logout", headers={"origin": "null"}).status_code == 403
+    assert admin.get("/api/me", headers={"origin": "https://evil.example"}).status_code == 200  # reads are harmless (CORS)
+    assert admin.get("/api/me", headers={"origin": "http://testserver"}).status_code == 200
+    assert admin.post("/api/logout", headers={"origin": "http://testserver"}).status_code == 200
+    assert admin.get("/api/me").status_code == 401
+
+
+def test_api_tokens_ignore_origin(admin):
+    from backend import apitokens
+    tok = apitokens.create("ci")["token"]
+    c = TestClient(admin.app)
+    assert c.post("/api/logout", headers={"authorization": f"Bearer {tok}", "origin": "https://evil.example"}).status_code == 200
