@@ -29,7 +29,12 @@ CRS_LOAD = Path("/usr/share/modsecurity-crs/owasp-crs.load")
 HEADER = "# Written by AuroraPanel (Security → WAF Firewall). Edit there — changes here are overwritten.\n"
 PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
 APPS = {"wordpress": "WordPress", "nextcloud": "Nextcloud", "drupal": "Drupal", "dokuwiki": "DokuWiki",
-        "phpmyadmin": "phpMyAdmin", "phpbb": "phpBB", "xenforo": "XenForo"}
+        "phpmyadmin": "phpMyAdmin", "phpbb": "phpBB", "xenforo": "XenForo", "roundcube": "Webmail (Roundcube)"}
+# Roundcube has no CRS exclusion package. Under /webmail/ its own login and CSRF tokens guard it, so the
+# rule groups it trips by design are lifted there: remote-file-inclusion (a mail host like ssl://imap.gmail.com
+# in the sign-in link looks like one), XSS and SQL injection (HTML mail being written and read).
+ROUNDCUBE_RULE = ('SecRule REQUEST_URI "@beginsWith /webmail/" "id:1000103,phase:1,pass,nolog,t:none,'
+                  'ctl:ruleRemoveById=931100-931199,ctl:ruleRemoveById=941100-941999,ctl:ruleRemoveById=942100-942999"')
 # CRS bookkeeping rules: the score summary, not an attack type of their own.
 _SUMMARY = {"949110", "959100", "980130", "980140", "980145", "959180"}
 # Noise, not attacks: someone opened a site by its IP address (920350), which on its own never blocks.
@@ -49,8 +54,8 @@ def _run(argv, timeout=60, input=None):
 
 
 def _default() -> dict:
-    return {"mode": "block", "paranoia": 1, "threshold": 5, "apps": ["wordpress", "nextcloud", "drupal", "dokuwiki", "phpmyadmin"],
-            "trusted": [], "sites_off": [], "disabled_rules": {}}
+    return {"mode": "block", "paranoia": 1, "threshold": 5, "apps": ["wordpress", "nextcloud", "drupal", "dokuwiki", "phpmyadmin", "roundcube"],
+            "trusted": [], "sites_off": [], "disabled_rules": {}, "seen": []}
 
 
 def load() -> dict:
@@ -60,7 +65,18 @@ def load() -> dict:
         s = {}
     d = _default()
     d.update({k: v for k, v in s.items() if k in d})
+    # An exception added in a later release is switched on once for installs that predate it.
+    global _PENDING_APPLY
+    if "roundcube" not in d.get("seen", []):
+        d["seen"] = list(d.get("seen", [])) + ["roundcube"]
+        if "roundcube" not in d["apps"]:
+            d["apps"] = d["apps"] + ["roundcube"]
+        _save(d)
+        _PENDING_APPLY = True   # written into Apache's rules the next time the WAF page looks at its status
     return d
+
+
+_PENDING_APPLY = False
 
 
 def _save(s: dict) -> None:
@@ -83,9 +99,11 @@ def render_pre(s: dict) -> str:
     out.append(f'SecAction "id:900000,phase:1,nolog,pass,t:none,setvar:tx.paranoia_level={int(s["paranoia"])}"')
     out.append(f'SecAction "id:900110,phase:1,nolog,pass,t:none,setvar:tx.inbound_anomaly_score_threshold={int(s["threshold"])},'
                f'setvar:tx.outbound_anomaly_score_threshold=4"')
-    apps = [a for a in s["apps"] if a in APPS]
+    apps = [a for a in s["apps"] if a in APPS and a != "roundcube"]
     if apps:
         out.append('SecAction "id:900130,phase:1,nolog,pass,t:none,' + ",".join(f"setvar:tx.crs_exclusions_{a}=1" for a in apps) + '"')
+    if "roundcube" in s["apps"]:
+        out.append(ROUNDCUBE_RULE)
     if s["trusted"]:
         out.append(f'SecRule REMOTE_ADDR "@ipMatch {",".join(s["trusted"])}" "id:1000101,phase:1,pass,nolog,ctl:ruleEngine=Off"')
     if s["sites_off"]:
@@ -151,6 +169,14 @@ def setup() -> list[str]:
 
 
 def status() -> dict:
+    global _PENDING_APPLY
+    if _PENDING_APPLY:
+        _PENDING_APPLY = False
+        if installed():
+            try:
+                apply()
+            except Exception:
+                pass
     s = load()
     crs_ver = ""
     r = _run(["dpkg-query", "-W", "-f=${Version}", "modsecurity-crs"])

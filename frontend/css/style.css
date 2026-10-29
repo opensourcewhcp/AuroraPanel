@@ -3080,3 +3080,4 @@ label.op-rule { justify-content: flex-start; cursor: pointer; }
 .act-purge-opt { align-items: flex-start; }
 .act-purge-opt span { display: flex; flex-direction: column; gap: 2px; }
 .act-purge-opt small { font-size: 12px; }
+.em-remote-av { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; flex: none; font-weight: 700; font-size: 15px; }
