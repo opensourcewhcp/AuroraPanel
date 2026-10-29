@@ -170,6 +170,7 @@ def setup() -> list[str]:
 
 def status() -> dict:
     global _PENDING_APPLY
+    load()   # may flag an exception that still has to reach Apache
     if _PENDING_APPLY:
         _PENDING_APPLY = False
         if installed():
