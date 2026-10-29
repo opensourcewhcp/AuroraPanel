@@ -3081,3 +3081,9 @@ label.op-rule { justify-content: flex-start; cursor: pointer; }
 .act-purge-opt span { display: flex; flex-direction: column; gap: 2px; }
 .act-purge-opt small { font-size: 12px; }
 .em-remote-av { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; flex: none; font-weight: 700; font-size: 15px; }
+
+/* Account menu on a phone: pinned inside the screen instead of hanging off the avatar's left edge */
+@media (max-width: 760px) {
+  .avatar-menu { position: fixed; left: 12px; right: 12px; top: 64px; width: auto; min-width: 0; max-height: calc(100vh - 80px); overflow: auto; }
+  .am-mail-list { max-height: 50vh; }
+}

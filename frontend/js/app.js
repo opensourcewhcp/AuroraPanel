@@ -479,10 +479,9 @@
       if (!box) return;
       let d;
       try { d = await API.mailInbox(); } catch (e) { box.hidden = true; return; }
-      // Cleared from the menu (this browser only): the mail itself stays in the mailbox.
-      const cleared = this.cleared();
-      d.items = d.items.filter((m) => !cleared.has(m.id));
-      d.unread = d.items.filter((m) => m.unread).length;
+      // A list cleared by an older build lived in this browser only: hand it to the server once, then forget it.
+      const legacy = this.cleared();
+      if (legacy.size) { try { localStorage.removeItem("aurora.inbox.cleared"); } catch (e) {} API.mailInboxClear([...legacy]).then(() => this.refresh()).catch(() => {}); }
       const dot = $("#avatar-dot");
       if (dot) dot.hidden = !d.unread;
       if (!d.accounts.length) { box.hidden = true; return; }
@@ -494,7 +493,7 @@
         el("span", { style: "flex:1" }),
         d.items.length ? el("button", { type: "button", class: "am-mail-clear", text: "Clear", title: "Take these off the menu; the mail stays in the mailbox", onclick: (e) => { e.stopPropagation(); this.clear(d.items.map((m) => m.id)); } }) : null,
         wm ? el("a", { class: "am-mail-all", href: wm(d.accounts[0]), target: "_blank", rel: "noopener", text: "View all" }) : null].filter(Boolean)));
-      if (!d.items.length) box.append(el("div", { class: "am-mail-empty muted", text: cleared.size ? "Nothing new." : "No mail yet." }));
+      if (!d.items.length) box.append(el("div", { class: "am-mail-empty muted", text: d.cleared ? "Nothing new." : "No mail yet." }));
       else box.append(el("div", { class: "am-mail-list" }, d.items.map((m) => el(wm ? "a" : "div", { class: `am-mail-item ${m.unread ? "unread" : ""}`, ...(wm ? { href: wm(m.account), target: "_blank", rel: "noopener" } : {}), title: `${m.from_addr || m.from} → ${m.account}` }, [
         el("span", { class: "am-mail-av", raw: true, text: (m.from || "?").charAt(0).toUpperCase() }),
         el("span", { class: "am-mail-txt" }, [el("b", { raw: true, text: m.from }), el("span", { raw: true, text: m.subject })]),
@@ -515,9 +514,8 @@
       try { return new Set(JSON.parse(localStorage.getItem("aurora.inbox.cleared") || "[]")); } catch (e) { return new Set(); }
     },
     clear(ids) {
-      const all = [...this.cleared(), ...ids].slice(-300);
-      try { localStorage.setItem("aurora.inbox.cleared", JSON.stringify(all)); } catch (e) {}
-      this.refresh();
+      // Kept on the server for this panel user, so the menu is cleared on the phone as well as here.
+      API.mailInboxClear(ids).then(() => this.refresh()).catch((e) => toast(e.message, "bad"));
     },
   };
   function setupAvatar(username) {

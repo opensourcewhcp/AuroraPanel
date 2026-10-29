@@ -2751,8 +2751,19 @@ def api_mail_inbox(user: str = auth.CurrentUser):
         return {"items": [], "unread": 0, "accounts": [], "webmail": ""}
     prefs = config.get_prefs()
     addrs = mail.inbox_addresses(panelusers.owner(), prefs.get("contact_email", ""))
-    items = mail.inbox_feed(addrs, 10) if addrs else []
-    return {"items": items, "unread": sum(1 for i in items if i["unread"]), "accounts": addrs, "webmail": mail.webmail_url()}
+    cleared = mail.inbox_cleared(user)
+    items = [i for i in mail.inbox_feed(addrs, 20) if i["id"] not in cleared][:10] if addrs else []
+    return {"items": items, "unread": sum(1 for i in items if i["unread"]), "accounts": addrs, "webmail": mail.webmail_url(), "cleared": len(cleared)}
+
+
+class InboxClearBody(BaseModel):
+    ids: list[str] = []
+
+
+@app.post("/api/mail/inbox/clear")
+def api_mail_inbox_clear(body: InboxClearBody, user: str = auth.CurrentUser):
+    """Clear messages from the menu on every device of this panel user; nothing in the mailbox changes."""
+    return {"ok": True, "cleared": mail.inbox_clear(user, body.ids[:200])}
 
 
 @app.get("/api/mail/domains")

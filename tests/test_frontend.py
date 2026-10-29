@@ -178,7 +178,7 @@ def test_small_fixes_everywhere():
     assert "onRange" in extras and 'class: "mx-sel"' in extras and "Selected: ${f(from)} to ${f(to)}" in extras
     assert "remoteAccounts(remoteBox)" in mail_js and "API.mailRemoteAdd(data)" in mail_js and "password never stored here" in mail_js
     assert "mailGuard(guardBox)" in mail_js and 'jails.forEach((j) => { jl[j.id] = { enabled, maxretry: +sel.value' in mail_js
-    assert "inboxMenu.start();" in app_js and "API.mailInbox()" in app_js and 'text: "View all"' in app_js
+    assert "inboxMenu.start();" in app_js and "API.mailInbox()" in app_js and 'text: "View all"' in app_js and "API.mailInboxClear(ids)" in app_js
     html = (FRONT / "index.html").read_text(encoding="utf-8")
     assert 'id="am-mail"' in html and 'id="avatar-dot"' in html
 

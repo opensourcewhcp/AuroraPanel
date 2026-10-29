@@ -2981,3 +2981,31 @@ def inbox_addresses(owner: str, contact: str) -> list[str]:
         if a == (contact or "").lower() or a.split("@")[0] == (owner or "").lower() or (local and a.endswith("@" + local)):
             out.append(a)
     return out
+
+
+INBOX_CLEARED = Path("/var/lib/aurora/mail/inbox-cleared.json")
+
+
+def inbox_cleared(user: str) -> set[str]:
+    try:
+        return set(json.loads(INBOX_CLEARED.read_text(encoding="utf-8")).get(user, []))
+    except (OSError, ValueError):
+        return set()
+
+
+def inbox_clear(user: str, ids: list[str]) -> int:
+    """Take messages off the menu for this panel user on every device; the mail itself stays in the mailbox."""
+    try:
+        data = json.loads(INBOX_CLEARED.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    have = data.get(user, [])
+    new = [i for i in dict.fromkeys(ids) if isinstance(i, str) and i not in have][:200]
+    data[user] = (have + new)[-500:]
+    INBOX_CLEARED.parent.mkdir(parents=True, exist_ok=True)
+    INBOX_CLEARED.write_text(json.dumps(data), encoding="utf-8")
+    try:
+        os.chmod(INBOX_CLEARED, 0o600)
+    except OSError:
+        pass
+    return len(new)

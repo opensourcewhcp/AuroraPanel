@@ -433,6 +433,7 @@ const API = (() => {
     mailRemoteAdd: (b) => request("POST", "/api/mail/remote/add", b),
     mailRemoteRemove: (id) => request("POST", "/api/mail/remote/remove", { id }),
     mailInbox: () => request("GET", "/api/mail/inbox"),
+    mailInboxClear: (ids) => request("POST", "/api/mail/inbox/clear", { ids }),
     mailAccountCreate: (b) => request("POST", "/api/mail/accounts/create", b),
     mailAccountUpdate: (b) => request("POST", "/api/mail/accounts/update", b),
     mailAccountDelete: (address, delete_mail) => request("POST", "/api/mail/accounts/delete", { address, delete_mail: !!delete_mail }),

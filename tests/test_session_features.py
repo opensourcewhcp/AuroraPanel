@@ -177,3 +177,18 @@ def test_report_html_folds_identical_targets_and_leads_with_the_fixes():
     assert "3 targets checked" in html and "shown as 2 cards" in html
     assert "flex-direction:column" in html   # the score ring's grade and number no longer overlap
     assert "Seen on ns0:8088, ns0.local:8088" in html
+
+
+def test_inbox_clear_is_kept_on_the_server_per_user(tmp_path, monkeypatch):
+    monkeypatch.setattr(mail, "INBOX_CLEARED", tmp_path / "inbox-cleared.json")
+    assert mail.inbox_cleared("a51") == set()
+    assert mail.inbox_clear("a51", ["m1", "m2", "m1"]) == 2
+    assert mail.inbox_clear("a51", ["m2", "m3"]) == 1
+    assert mail.inbox_cleared("a51") == {"m1", "m2", "m3"} and mail.inbox_cleared("other") == set()
+
+
+def test_inbox_clear_route(admin, tmp_path, monkeypatch):
+    monkeypatch.setattr(mail, "INBOX_CLEARED", tmp_path / "inbox-cleared.json")
+    r = admin.post("/api/mail/inbox/clear", json={"ids": ["x@y:1", "x@y:2"]})
+    assert r.status_code == 200 and r.json()["cleared"] == 2
+    assert admin.get("/api/mail/inbox").json()["cleared"] == 2
