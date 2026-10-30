@@ -272,7 +272,8 @@ const API = (() => {
     fail2banService: (on) => request("POST", "/api/fail2ban/service", { on }),
     fail2banBan: (jail, ip) => request("POST", "/api/fail2ban/ban", { jail, ip }),
     fail2banLogs: () => request("GET", "/api/fail2ban/logs"),
-    fail2banEvents: () => request("GET", "/api/fail2ban/events"),
+    fail2banEvents: (limit) => request("GET", "/api/fail2ban/events" + (limit ? `?limit=${limit}` : "")),
+    fail2banEventsDelete: (keys) => request("POST", "/api/fail2ban/events/delete", { keys }),
     // bans & trusted addresses
     guard: () => request("GET", "/api/guard"),
     guardBan: (target, reason, duration, source) => request("POST", "/api/guard/ban", { target, reason, duration, source }),

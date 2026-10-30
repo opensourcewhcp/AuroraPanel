@@ -11,6 +11,7 @@ port-scan (from the Network Monitor log) and recidive (repeat offenders)."""
 from __future__ import annotations
 
 import ast
+import json
 import platform
 import re
 import shutil
@@ -400,10 +401,49 @@ def parse_events(text: str) -> list[dict]:
     return out
 
 
+# Entries the admin deleted from Recent activity. fail2ban's own log is never edited; the panel just stops
+# showing these. A key is "ts|jail|kind|ip|r" (r = a restored ban), and keys older than the log itself are dropped.
+DISMISSED = Path("/var/lib/aurora/fail2ban-dismissed.json")
+MAX_EVENTS = 5000
+_KEY = re.compile(r"^\d{1,12}\|[\w.-]{1,64}\|(failure|ban|unban)\|[0-9a-fA-F.:]{1,45}\|r?$")
+
+
+def event_key(e: dict) -> str:
+    return f"{e['ts']}|{e['jail']}|{e['kind']}|{e['ip']}|{'r' if e.get('restored') else ''}"
+
+
+def _dismissed() -> set[str]:
+    try:
+        d = json.loads(DISMISSED.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    return {k for k in d if isinstance(k, str) and _KEY.match(k)} if isinstance(d, list) else set()
+
+
+def _save_dismissed(keys: set[str]) -> None:
+    DISMISSED.parent.mkdir(parents=True, exist_ok=True)
+    DISMISSED.write_text(json.dumps(sorted(keys)), encoding="utf-8")
+
+
+def dismiss(keys: list) -> dict:
+    """Take the chosen entries off Recent activity (every line with the same time, jail, kind and address).
+    Bans stay in place and the log file is not touched."""
+    ks = {k for k in (keys or []) if isinstance(k, str) and _KEY.match(k)}
+    if not ks:
+        raise Fail2banError("Nothing selected")
+    cur = _dismissed() | ks
+    try:
+        _save_dismissed(cur)
+    except OSError as exc:
+        raise Fail2banError(f"Couldn't save ({exc})")
+    return {"ok": True, "removed": len(ks)}
+
+
 def events(limit: int = 400) -> dict:
     """What fail2ban did lately, newest first: the failed attempts it noticed, every ban and unban — read from its
     log (current and previous file; the journal when there is no log file). `status` says which of those addresses
-    are banned or trusted right now, so the page can colour them."""
+    are banned or trusted right now, so the page can colour them. Entries deleted in the panel are left out, and
+    `total` is how many remain before `limit` is applied."""
     out: list[dict] = []
     source = ""
     for p in LOG_FILES:
@@ -417,7 +457,20 @@ def events(limit: int = 400) -> dict:
                                           capture_output=True, text=True).stdout)
         source = "journal"
     out.sort(key=lambda e: -e["ts"])
+    hidden = _dismissed()
+    if hidden and out:
+        oldest = out[-1]["ts"]
+        out = [e for e in out if event_key(e) not in hidden]
+        keep = {k for k in hidden if int(k.split("|", 1)[0]) >= oldest}
+        if keep != hidden:
+            try:
+                _save_dismissed(keep)
+            except OSError:
+                pass
+    total = len(out)
     out = out[:limit]
+    for e in out:
+        e["key"] = event_key(e)
     status: dict = {}
     try:
         from . import guard
@@ -431,7 +484,7 @@ def events(limit: int = 400) -> dict:
         reported = abuse.reported()
     except Exception:
         pass
-    return {"events": out, "status": status, "reported": sorted(reported), "source": source or "/var/log/fail2ban.log"}
+    return {"events": out, "total": total, "status": status, "reported": sorted(reported), "source": source or "/var/log/fail2ban.log"}
 
 
 def _add_users(events: list[dict]) -> None:

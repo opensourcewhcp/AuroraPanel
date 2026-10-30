@@ -3500,7 +3500,17 @@ def api_fail2ban_logs(lines: int = 200, user: str = auth.CurrentUser):
 @app.get("/api/fail2ban/events")
 def api_fail2ban_events(limit: int = 400, user: str = auth.CurrentUser):
     """Recent failed attempts, bans and unbans from fail2ban's log."""
-    return fail2ban.events(max(20, min(limit, 2000)))
+    return fail2ban.events(max(20, min(limit, fail2ban.MAX_EVENTS)))
+
+
+class F2BEventsBody(BaseModel):
+    keys: list[str] = []
+
+
+@app.post("/api/fail2ban/events/delete")
+def api_fail2ban_events_delete(body: F2BEventsBody, user: str = auth.CurrentUser):
+    """Take the chosen entries off Recent activity (the log file itself is left alone)."""
+    return _guard_call(lambda: fail2ban.dismiss(body.keys[:fail2ban.MAX_EVENTS]))
 
 
 # --------------------------------------------------------------------------- #
@@ -3968,6 +3978,7 @@ def _metrics_start():
     try:
         version.prune_updates()  # only the build you came from is kept, plus a snapshot of this one
         threading.Thread(target=version.snapshot_current, name="snapshot", daemon=True).start()
+        threading.Thread(target=mail.repair_webmail_hosts, name="webmail-repair", daemon=True).start()
         # The built-in https site answers requests made by IP address: keep it first for port 443.
         threading.Thread(target=lambda: sites.IS_LINUX and sites.AVAIL.exists() and sites.ensure_https_first(), name="https-first", daemon=True).start()
         # WAF rules that changed in this release reach Apache once, without waiting for someone to open the page.

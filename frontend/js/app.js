@@ -5506,9 +5506,14 @@
       const cfg = d.config, g = cfg.global;
       body.append(el("div", { class: "card" }, [
         el("div", { class: "net-card-h" }, [icon("trap", 20), el("h3", { text: "fail2ban" }), el("span", { style: "flex:1" }), pill(d.active ? "protecting" : "off", d.active ? "good" : "bad"),
-          btn(d.active ? "Turn off" : (cfg.configured ? "Turn on" : "Turn on with recommended settings"), async () => {
-            if (d.active && !confirmInline("Turn fail2ban off? Brute-force attempts will no longer be banned.")) return;
-            try { await API.fail2banService(!d.active); toast(d.active ? "fail2ban stopped" : "fail2ban is protecting this Pi", "good"); load(); } catch (e) { openModal("Couldn't change fail2ban", el("pre", { class: "log", text: e.message }), []); }
+          btn(d.active ? "Turn off" : (cfg.configured ? "Turn on" : "Turn on with recommended settings"), () => {
+            const go = async () => {
+              closeModal();
+              try { await API.fail2banService(!d.active); toast(d.active ? "fail2ban stopped" : "fail2ban is protecting this Pi", "good"); load(); } catch (e) { openModal("Couldn't change fail2ban", el("pre", { class: "log", text: e.message }), []); }
+            };
+            if (!d.active) return go();
+            openModal("Turn fail2ban off?", el("p", { text: "Brute-force attempts will no longer be banned until you turn it back on. Addresses banned so far are released." }),
+              [btn("Turn off", go, "btn-danger")]);
           }, d.active ? "btn-ghost" : "btn-primary")]),
         !cfg.configured ? el("p", { class: "dm-hint", text: "Not yet managed by the panel, turning it on (or saving below) writes the panel's settings; the stock config is left untouched." }) : null,
       ]));
@@ -5560,37 +5565,85 @@
       if (d.installed) body.append(f2bActivity(d));
     });
     // What fail2ban actually did: the failed attempts it noticed, the bans, the unbans, from its log.
+    // Rows can be ticked (the header box takes the whole page) and deleted from the list, 50 to 5,000 per page.
     function f2bActivity(d) {
       const box = el("div", { class: "card", style: "margin-top:16px" }, [el("h3", { text: "Recent activity" }), el("div", { class: "loading", text: "Reading the log…" })]);
       const names = Object.fromEntries((d.jails || []).map((j) => [j.id, j.label]));
       const KIND = { ban: ["banned", "bad"], failure: ["failed attempt", "warn"], unban: ["unbanned", "dim"] };
+      const SIZES = [50, 250, 500, 1000, 5000];
       const look = (ip) => { const f = (extraViews()._ui || {}).ipCard; if (f) f(ip); };
       const fmt = (ts) => { const f = (extraViews()._ui || {}).t2s; return f ? f(ts) : new Date(ts * 1000).toLocaleString(); };
       const since = (ts) => (typeof ago === "function" ? ago(ts) : "");
-      const report = (ip) => { const f = (extraViews()._ui || {}).reportIp; if (f) f(ip, () => { API.fail2banEvents().then((rr) => { r = rr; draw(); }).catch(() => {}); }); };
-      let only = "", r = null, draw = () => {};
+      let only = "", r = null, draw = () => {}, page = 0, per = 50;
+      const sel = new Set();
+      try { per = +localStorage.getItem("f2b.per") || 50; } catch (e) { /* storage blocked */ }
+      if (!SIZES.includes(per)) per = 50;
+      const fetchAll = () => API.fail2banEvents(5000);
+      const reload = async () => { try { r = await fetchAll(); } catch (e) { toast(e.message, "bad"); return; } sel.clear(); draw(); };
+      const report = (ip) => { const f = (extraViews()._ui || {}).reportIp; if (f) f(ip, reload); };
       (async () => {
-        try { r = await API.fail2banEvents(); } catch (e) { box.innerHTML = ""; box.append(el("h3", { text: "Recent activity" }), el("p", { class: "muted", text: e.message })); return; }
+        try { r = await fetchAll(); } catch (e) { box.innerHTML = ""; box.append(el("h3", { text: "Recent activity" }), el("p", { class: "muted", text: e.message })); return; }
         draw = () => {
           box.innerHTML = "";
           const ev = r.events.filter((e) => !only || e.kind === only);
           const n = (k) => r.events.filter((e) => e.kind === k).length;
           const chips = el("div", { class: "cw-seg cw-seg-sm" }, [["", `All · ${r.events.length}`], ["ban", `Bans · ${n("ban")}`], ["failure", `Failed attempts · ${n("failure")}`], ["unban", `Unbans · ${n("unban")}`]].map(([k, l]) =>
-            el("button", { type: "button", class: k === only ? "active" : "", text: l, onclick: () => { only = k; draw(); } })));
+            el("button", { type: "button", class: k === only ? "active" : "", text: l, onclick: () => { only = k; page = 0; draw(); } })));
           box.append(el("div", { style: "display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px" }, [el("h3", { style: "margin:0", text: "Recent activity" }), el("span", { class: "grow" }), chips]));
           box.append(el("p", { class: "muted", style: "font-size:12.5px;margin:0 0 10px", text: `Everything fail2ban wrote to its log (${r.source}): each failed attempt it noticed, every ban and unban. Bans also show under IP Blocker & Trust.` }));
           if (!ev.length) { box.append(el("p", { class: "muted", text: r.events.length ? "Nothing of that kind." : "Quiet so far: no failed attempts or bans in the log. fail2ban only writes here when a jail notices something." })); return; }
+          const pages = Math.max(1, Math.ceil(ev.length / per));
+          if (page >= pages) page = pages - 1;
+          const slice = ev.slice(page * per, (page + 1) * per);
+          // Selection: the header box ticks or clears everything on this page; Delete acts on every ticked row.
+          const headCb = el("input", { type: "checkbox", title: "Select everything on this page" });
+          const del = btn("Delete", () => {
+            const keys = [...sel];
+            if (!keys.length) return;
+            openModal(`Delete ${keys.length} ${keys.length === 1 ? "entry" : "entries"}?`,
+              el("p", { text: "They disappear from this list. fail2ban's own log file is not changed and any bans stay in place." }),
+              [btn("Delete", async () => { closeModal(); try { await API.fail2banEventsDelete(keys); toast(`${keys.length} removed`, "good"); await reload(); } catch (e) { toast(e.message, "bad"); } }, "btn-danger")]);
+          }, "btn-danger");
+          const rowCbs = [];
+          const sync = () => {
+            headCb.checked = slice.length > 0 && slice.every((e) => sel.has(e.key));
+            headCb.indeterminate = !headCb.checked && slice.some((e) => sel.has(e.key));
+            del.textContent = sel.size ? `Delete ${sel.size}` : "Delete";
+            del.disabled = !sel.size;
+            rowCbs.forEach(([c, tr, e]) => { c.checked = sel.has(e.key); tr.classList.toggle("is-sel", c.checked); });
+          };
+          headCb.onchange = () => { slice.forEach((e) => (headCb.checked ? sel.add(e.key) : sel.delete(e.key))); sync(); };
           box.append(el("div", { class: "table-wrap" }, el("table", { class: "dm-table" }, [
-            el("thead", {}, el("tr", {}, ["When", "Jail", "Event", "Tried", "Address", ""].map((h) => el("th", { text: h })))),
-            el("tbody", {}, ev.slice(0, 300).map((e) => { const rep = (r.reported || []).includes(e.ip); return el("tr", {}, [
-              el("td", { title: new Date(e.ts * 1000).toLocaleString(), text: `${fmt(e.ts)} · ${since(e.ts)}` }),
-              el("td", { text: names[e.jail] || e.jail }),
-              el("td", {}, el("span", { class: `pill ${KIND[e.kind][1]}`, text: KIND[e.kind][0] + (e.restored ? " again" : "") })),
-              el("td", {}, e.user ? [el("code", { raw: true, text: e.user }), e.service ? el("span", { class: "muted mx-small", text: ` · ${e.service}` }) : null].filter(Boolean) : el("span", { class: "muted", text: e.kind === "failure" ? "not in the log" : "-" })),
-              el("td", {}, [el("code", { class: ipCls(r.status[e.ip], rep), text: e.ip }), rep ? pill("reported", "warn") : null].filter(Boolean)),
-              el("td", { class: "actions" }, [btn("Lookup", () => look(e.ip), "btn-ghost"), r.status[e.ip] === "trusted" ? null : btn(rep ? "Report again" : "Report", () => report(e.ip), "btn-ghost")].filter(Boolean)),
-            ]); })),
+            el("thead", {}, el("tr", {}, [el("th", { class: "sel" }, headCb), ...["When", "Jail", "Event", "Tried", "Address", ""].map((h) => el("th", { text: h }))])),
+            el("tbody", {}, slice.map((e) => {
+              const rep = (r.reported || []).includes(e.ip);
+              const c = el("input", { type: "checkbox" });
+              const tr = el("tr", {}, [
+                el("td", { class: "sel" }, c),
+                el("td", { title: new Date(e.ts * 1000).toLocaleString(), text: `${fmt(e.ts)} · ${since(e.ts)}` }),
+                el("td", { text: names[e.jail] || e.jail }),
+                el("td", {}, el("span", { class: `pill ${KIND[e.kind][1]}`, text: KIND[e.kind][0] + (e.restored ? " again" : "") })),
+                el("td", {}, e.user ? [el("code", { raw: true, text: e.user }), e.service ? el("span", { class: "muted mx-small", text: ` · ${e.service}` }) : null].filter(Boolean) : el("span", { class: "muted", text: e.kind === "failure" ? "not in the log" : "-" })),
+                el("td", {}, [el("code", { class: `ip-addr ${ipCls(r.status[e.ip], rep)}`.trim(), title: "Click to select the address", text: e.ip }), rep ? pill("reported", "warn") : null].filter(Boolean)),
+                el("td", { class: "actions" }, [btn("Lookup", () => look(e.ip), "btn-ghost"), r.status[e.ip] === "trusted" ? null : btn(rep ? "Report again" : "Report", () => report(e.ip), "btn-ghost")].filter(Boolean)),
+              ]);
+              c.onchange = () => { if (c.checked) sel.add(e.key); else sel.delete(e.key); sync(); };
+              rowCbs.push([c, tr, e]);
+              return tr;
+            })),
           ])));
+          // Pager: Delete and the range on the left, page buttons and the page size on the right (size remembered on this browser).
+          const pb = (label, p, dis) => el("button", { type: "button", class: `btn btn-sm ${p === page && !dis ? "btn-primary" : "btn-ghost"}`, text: label, disabled: dis ? "" : null, onclick: () => { page = p; draw(); box.scrollIntoView({ block: "nearest" }); } });
+          const nums = [];
+          for (let i = Math.max(0, page - 2); i < Math.min(pages, page + 3); i++) nums.push(pb(String(i + 1), i));
+          box.append(el("div", { class: "f2b-pager" }, [
+            del,
+            el("span", { class: "muted mx-small", text: `${page * per + 1}–${Math.min(ev.length, (page + 1) * per)} of ${ev.length}` }),
+            el("span", { class: "grow" }),
+            pages > 1 ? el("div", { class: "f2b-pages" }, [pb("‹ Prev", page - 1, page === 0), ...nums, pb("Next ›", page + 1, page >= pages - 1)]) : null,
+            el("div", { class: "cw-seg cw-seg-sm", title: "Rows per page" }, SIZES.map((v) => el("button", { type: "button", class: v === per ? "active" : "", text: String(v), onclick: () => { per = v; page = 0; try { localStorage.setItem("f2b.per", v); } catch (e) { /* storage blocked */ } draw(); } }))),
+          ].filter(Boolean)));
+          sync();
         };
         draw();
       })();

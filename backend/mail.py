@@ -2909,6 +2909,18 @@ def _refresh_webmail_hosts() -> None:
             pass
 
 
+def repair_webmail_hosts() -> bool:
+    """Rewrite Roundcube's config when it still carries the old "host:port" smtp_host keys (1.1.28 and
+    earlier wrote them that way, which broke Send as soon as a remote account existed). Runs at start-up."""
+    try:
+        if RC_CONF.exists() and webmail_installed() and "'localhost:143' => 'tls://localhost:587'" in RC_CONF.read_text(errors="replace"):
+            setup_webmail()
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def _rc_hosts() -> tuple[str, str]:
     """PHP for Roundcube's imap_host and smtp_host: this server, plus every remote account."""
     remote = load().get("remote", [])
@@ -2916,7 +2928,9 @@ def _rc_hosts() -> tuple[str, str]:
         return "['localhost:143']", "'tls://localhost:587'"
     esc = lambda v: str(v).replace("\\", "\\\\").replace("'", "\\'")  # noqa: E731
     hosts = [("localhost:143", f"This server ({hostname()})")] + [(_remote_spec(a, "imap"), a["label"]) for a in remote]
-    smtp = [("localhost:143", "tls://localhost:587")] + [(_remote_spec(a, "imap"), _remote_spec(a, "smtp")) for a in remote]
+    # Roundcube keys smtp_host by the bare IMAP host name it stored at login (scheme and port stripped),
+    # so the keys here must be plain host names or sending fails with "No SMTP server found for IMAP host".
+    smtp = [("localhost", "tls://localhost:587")] + [(a["imap_host"], _remote_spec(a, "smtp")) for a in remote]
     return ("[" + ", ".join(f"'{esc(k)}' => '{esc(v)}'" for k, v in hosts) + "]",
             "[" + ", ".join(f"'{esc(k)}' => '{esc(v)}'" for k, v in smtp) + "]")
 

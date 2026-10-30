@@ -124,8 +124,10 @@ def test_remote_account_keeps_settings_never_the_password(mail_state):
     with pytest.raises(mail.MailError):
         mail.remote_add({"preset": "gmail", "email": "me@gmail.com"})   # twice
     imap, smtp = mail._rc_hosts()
-    assert "'ssl://imap.gmail.com:993' => 'Gmail'" in imap and "'ssl://imap.gmail.com:993' => 'ssl://smtp.gmail.com:465'" in smtp
+    assert "'ssl://imap.gmail.com:993' => 'Gmail'" in imap and "'imap.gmail.com' => 'ssl://smtp.gmail.com:465'" in smtp
     assert "localhost:143" in imap
+    # smtp_host is looked up by the bare host Roundcube keeps in its session, never by "host:port"
+    assert "'localhost' => 'tls://localhost:587'" in smtp and "localhost:143" not in smtp and "ssl://imap" not in smtp
     mail.remote_remove(a["id"])
     assert mail.remote_accounts() == [] and mail._rc_hosts() == ("['localhost:143']", "'tls://localhost:587'")
     with pytest.raises(mail.MailError):
