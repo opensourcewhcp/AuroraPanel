@@ -633,6 +633,7 @@
       IS_PI = s.pi !== false;
       if (!IS_PI) document.querySelectorAll("[data-pi]").forEach((n) => { n.textContent = host(n.textContent); });
       state.firstLogin = !!s.first_login;
+      state.firstUser = s.username || "admin";
       // Check for a live session.
       try {
         const me = await API.me();
@@ -652,9 +653,11 @@
     $("#pw-form").hidden = true;
     $("#auth-form").hidden = false;
     $("#auth-subtitle").textContent = IS_PI ? "Sign in to your Raspberry Pi" : "Sign in to your server";
-    // The installer made "admin" with a random password: say where it is.
+    // The installer (or --reset-password) made a random password: say where it is
+    // and name the account it belongs to.
     $("#auth-hint").hidden = !state.firstLogin;
-    if (state.firstLogin && !$("#auth-username").value) $("#auth-username").value = "admin";
+    $("#auth-hint-user").textContent = state.firstUser || "admin";
+    if (state.firstLogin && !$("#auth-username").value) $("#auth-username").value = state.firstUser || "admin";
     $("#auth-error").hidden = true;
   }
 

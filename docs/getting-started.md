@@ -19,7 +19,8 @@ opens. There is no "create your account" page, so nobody who finds a freshly ins
 
 Until you change it, the password is kept in `aurora_initial_password` in the AuroraPanel folder,
 readable by root only (`sudo cat aurora_initial_password`). Lost your password later?
-`sudo bash install.sh --reset-password` prints a new one-time password (the username stays).
+`sudo bash install.sh --reset-password` prints a new one-time password (the username stays) and
+switches two-factor login off, so a lost authenticator cannot keep you out either.
 
 The owner account is always an administrator, and two-factor login (TOTP) is available for it.
 More people can be added later with their own roles (see [Users and roles](users-and-roles.md)).

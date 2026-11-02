@@ -60,6 +60,19 @@ def test_reset_password_keeps_username_and_signs_out(admin):
     assert config.verify_credentials(ADMIN, pw)
 
 
+def test_reset_password_switches_2fa_off_and_names_the_account(admin, client):
+    # Whoever runs --reset-password has root on the box: a lost authenticator must not keep them out.
+    cfg = config.load_config()
+    cfg.update(totp_secret="JBSWY3DPEHPK3PXP", totp_enabled=True, totp_last_step=7)
+    config.save_config(cfg)
+    config.issue_temporary_password()
+    cfg = config.load_config()
+    assert not cfg.get("totp_enabled") and "totp_secret" not in cfg and "totp_last_step" not in cfg
+    # The sign-in page names the account the one-time password belongs to, even after a rename.
+    s = client.get("/api/status").json()
+    assert s["first_login"] is True and s["username"] == ADMIN
+
+
 @pytest.mark.skipif(sys.platform.startswith("win"), reason="file modes")
 def test_lock_down_old_world_readable_config():
     config.CONFIG_PATH.write_text("{}", encoding="utf-8")

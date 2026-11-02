@@ -155,8 +155,13 @@ def api_status():
 
     There is deliberately no "create your admin account" call: the installer makes the
     account with a random password, so nobody who finds a fresh panel can claim it."""
-    return {"initialized": config.is_initialized(), "first_login": config.must_change_password(),
-            "pi": system_info.is_pi()}
+    first_login = config.must_change_password()
+    out = {"initialized": config.is_initialized(), "first_login": first_login, "pi": system_info.is_pi()}
+    if first_login:
+        # The sign-in page names the account the one-time password belongs to
+        # (the owner may have renamed "admin" before a --reset-password).
+        out["username"] = config.load_config().get("username") or "admin"
+    return out
 
 
 def _auth_log(ok: bool, username: str, request: Request):

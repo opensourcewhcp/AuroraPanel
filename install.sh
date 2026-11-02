@@ -225,7 +225,7 @@ if [ $RESET_PW = 1 ]; then
   [ -x "$APP_DIR/.venv/bin/python" ] || die "AuroraPanel isn't installed here yet — run: sudo bash install.sh"
   ( cd "$APP_DIR" && .venv/bin/python -c 'from backend import config; config.issue_temporary_password()' ) \
     || die "Could not set a new password."
-  ok "New password set. Everyone signed in to the panel was signed out."
+  ok "New password set and two-factor login switched off. Everyone signed in to the panel was signed out."
   echo
   show_initial_password
   echo

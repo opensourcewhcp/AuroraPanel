@@ -100,10 +100,16 @@ def random_password() -> str:
 def issue_temporary_password(username: str | None = None) -> tuple[str, str]:
     """Give the owner a new random password that has to be changed at sign-in, and
     save it root-only next to the config so the installer (or `sudo cat`) can show it.
-    Also the way back in after a lost password (install.sh --reset-password)."""
+    Also the way back in after a lost password (install.sh --reset-password), so
+    two-factor login is switched off as well: whoever can run this already has
+    root on the box, and a lost authenticator must not keep the owner out."""
     username = username or load_config().get("username") or "admin"
     password = random_password()
     set_credentials(username, password, must_change=True)
+    cfg = load_config()
+    for key in ("totp_secret", "totp_last_step", "totp_enabled"):
+        cfg.pop(key, None)
+    save_config(cfg)
     _write_private(initial_password_path(), f"username: {username}\npassword: {password}\n")
     return username, password
 
