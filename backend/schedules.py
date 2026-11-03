@@ -26,6 +26,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import backups
+from . import problems
 
 STATE = Path("/var/lib/aurora/backup-plans.json")
 RCLONE_CONF = Path("/var/lib/aurora/rclone.conf")
@@ -486,8 +487,8 @@ def run(pid: str) -> dict:
         from . import audit
         audit.record("system", "", f"scheduled backup ({plan['name']})", ok=result["ok"], status=200 if result["ok"] else 500,
                      detail={"size": result.get("size"), "error": result.get("error")})
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return result
 
 
@@ -582,8 +583,8 @@ def fetch(pid: str, dest: str, name: str) -> dict:
                 m = json.loads(tf.extractfile("manifest.json").read())
             backups._remember(final.name, {"kind": "wizard", "category": "full", "paths": m.get("paths", []), "mysql": m.get("mysql", []),
                                            "pgsql": m.get("pgsql", []), "created": m.get("created"), "host": m.get("host"), "wkind": "scheduled"})
-        except Exception:
-            pass
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
         return {"ok": True, "name": final.name}
     finally:
         tmp.unlink(missing_ok=True)

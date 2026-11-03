@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from . import problems
 
 IS_LINUX = platform.system() == "Linux"
 _KEY_RE = re.compile(r"^(ssh-rsa|ssh-ed25519|ecdsa-sha2-\S+|ssh-dss)\s+([A-Za-z0-9+/=]+)(\s+(.*))?$")
@@ -84,7 +85,8 @@ def _fingerprint(b64key: str) -> str:
     try:
         raw = base64.b64decode(b64key)
         return "SHA256:" + base64.b64encode(hashlib.sha256(raw).digest()).decode().rstrip("=")
-    except Exception:
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
         return "?"
 
 

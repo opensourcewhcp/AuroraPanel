@@ -42,3 +42,14 @@ tokens are never written to the log.
 
 The log is kept in `/var/lib/aurora/audit.jsonl` and rotated automatically. Search it, filter by
 user, period or failures only, and **Export CSV**.
+
+## Problems
+
+The panel keeps running when a background job fails, so that a server stays reachable. It does not
+keep quiet about it: anything that went wrong since the panel started (a WAF rule rewrite Apache
+refused, a start-up chore that crashed, a trusted-address change that did not reach fail2ban) is
+shown at the top of the **Dashboard** with what to do about it, until you dismiss it. It comes back
+if it happens again. The same entries go to the journal (`journalctl -u aurorapanel`) as warnings.
+
+`GET /api/problems` returns them for scripts, together with the exceptions the code deliberately
+carried on from (counted and de-duplicated), so a quiet failure is never invisible.

@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 import psutil
+from . import problems
 
 SERVICE = "aurorapanel"
 DROPIN = Path(f"/etc/systemd/system/{SERVICE}.service.d/aurora-https.conf")
@@ -127,13 +128,13 @@ def _known_names() -> list[str]:
             v = fn()
             if v:
                 out.append(str(v))
-        except Exception:
-            pass
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
     try:
         from . import ddnshosts
         out += [f"{h['host']}.{h['domain']}" for h in ddnshosts._load().get("hosts", []) if h.get("host") and h.get("domain")]
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     out += _saved_names()
     seen, names = set(), []
     for n in out:

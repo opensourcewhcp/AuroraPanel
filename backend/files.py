@@ -19,6 +19,7 @@ import zipfile
 from pathlib import Path
 
 from . import sysapps
+from . import problems
 
 # Never serve/edit files bigger than this through the text editor endpoints.
 MAX_EDIT_BYTES = 2 * 1024 * 1024  # 2 MB
@@ -70,7 +71,8 @@ def _site_roots() -> list[Path]:
         from . import sites
         return [Path(s["docroot"]).resolve() for s in sites.list_sites().get("sites", [])
                 if s.get("docroot") and Path(s["docroot"]).is_dir()]
-    except Exception:  # noqa: BLE001 — Apache missing or a conf it can't read: just fewer folders
+    except Exception as quiet_exc:  # noqa: BLE001 — Apache missing or a conf it can't read: just fewer folders
+        problems.quiet(quiet_exc)
         return []
 
 
@@ -166,8 +168,8 @@ def _give_to_site(p: Path) -> None:
         if own:
             import shutil
             shutil.chown(p, own[0], own[1])
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
 
 
 def _rel(p: Path) -> str:
@@ -234,8 +236,8 @@ def _shadow(p: Path) -> None:
     try:
         from . import shadow
         shadow.before_change(p)
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
 
 
 def write_text(rel_path: str, content: str) -> dict:

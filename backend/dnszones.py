@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from . import problems
 
 IS_LINUX = platform.system() == "Linux"
 ZONE_DIR = Path("/var/lib/bind")
@@ -69,15 +70,15 @@ def _my_ips() -> set[str]:
         import psutil
         for addrs in psutil.net_if_addrs().values():
             out.update(a.address.split("%")[0] for a in addrs if a.family in (socket.AF_INET, socket.AF_INET6))
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     try:
         from . import mail
         ip = mail._public_ip()
         if ip:
             out.add(ip)
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return out
 
 
@@ -108,7 +109,8 @@ def detected_secondaries() -> dict[str, list[str]]:
         d = f.name[3:]
         try:
             z = parse(f.read_text(errors="replace"), d)
-        except Exception:
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
             continue
         for r in z["records"]:
             if r["type"] != "NS":
@@ -506,7 +508,8 @@ def list_zones(site_names: list[str]) -> dict:
                 continue
             try:
                 z = parse(f.read_text(errors="replace"), d)
-            except Exception:
+            except Exception as quiet_exc:
+                problems.quiet(quiet_exc)
                 continue
             seen.add(d)
             zones.append({"domain": d, "records": len(z["records"]), "serial": z["soa"]["serial"] if z["soa"] else None,

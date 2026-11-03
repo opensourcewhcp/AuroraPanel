@@ -24,6 +24,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from . import problems
 from .vpncommon import default_route, load_json, save_json, write_secret
 
 STATE = Path("/var/lib/aurora/guard.json")
@@ -370,6 +371,7 @@ def trust(target: str, note: str = "") -> dict:
     s["trusted"].append({"cidr": str(n), "note": (note or "").strip()[:120], "created": int(time.time())})
     _save(s)
     _sync_fail2ban()
+    _sync_waf()
     return {"ok": True, "unbanned": removed}
 
 
@@ -381,6 +383,7 @@ def untrust(target: str) -> dict:
         _del_elem("trust", n)
     _save(s)
     _sync_fail2ban()
+    _sync_waf()
     return {"ok": True}
 
 
@@ -415,9 +418,19 @@ def status_of(ips: list[str]) -> dict[str, str]:
     return out
 
 
+def _sync_waf():
+    """The WAF (ModSecurity) exempts trusted addresses too: rewrite its rules when the list changes."""
+    try:
+        from . import waf
+        if waf.installed() and waf.module_on():
+            waf.apply()
+    except Exception as exc:
+        problems.record("Trusted addresses → WAF", exc, hint="The WAF may still block a trusted address. Open Security → WAF Firewall and press Apply.")
+
+
 def _sync_fail2ban():
     try:
         from . import fail2ban
         fail2ban.sync_ignoreip()
-    except Exception:
-        pass
+    except Exception as exc:
+        problems.record("Trusted addresses → fail2ban", exc, hint="fail2ban may still ban a trusted address. Open Security → Fail2ban and save its settings once.")

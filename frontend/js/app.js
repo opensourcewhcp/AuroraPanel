@@ -283,6 +283,7 @@
     vpn: "vpn", wireguard: "tunnel", openvpn: "key", ipsec: "shield", portcheck: "plug", netmon: "radar",
     images: "image", dirprivacy: "lock", webdisk: "disk", ftpaccounts: "folder", backupwiz: "wizard", git: "git", inodes: "indexes",
     about: "info",
+    cloud: "t_cloud", cloudaws: "t_cloud", cloudgcp: "t_cloud", cloudazure: "t_cloud", connect: "plug", gdrive: "folder", gphotos: "image",
   };
   function decorateNav() {
     document.querySelectorAll("#nav .nav-item").forEach((btn) => {
@@ -331,6 +332,7 @@
   const GROUP_ICONS = {
     System: "processes", Network: "network", Applications: "apps", Databases: "database", Domains: "globe", Email: "mail", Security: "shield",
     Metrics: "metrics", Files: "folder", Advanced: "terminal", Software: "packages", Preferences: "gear",
+    "Cloud Apps": "t_cloud", "Third-party Apps": "plug",
   };
   let NAV_GROUPS = [];
   function applyRole() {
@@ -827,6 +829,8 @@
     images: "Images", dirprivacy: "Directory Privacy", webdisk: "Web Disk", ftpaccounts: "FTP Accounts",
     backupwiz: "Backup Wizard", git: "Git Version Control", inodes: "Inodes Usage",
     about: "About & Updates",
+    cloud: "Cloud Apps", cloudaws: "Amazon Web Services", cloudgcp: "Google Cloud", cloudazure: "Microsoft Azure",
+    connect: "Third-party Apps", gdrive: "Google Drive", gphotos: "Google Photos",
     email: "Email", mailaccounts: "Email Accounts", forwarders: "Forwarders", mailrouting: "Email Routing", autoresponders: "Autoresponders",
     defaultaddress: "Default Address", mailinglists: "Mailing Lists", trackdelivery: "Track Delivery", globalfilters: "Global Email Filters",
     emailfilters: "Email Filters", deliverability: "Email Deliverability", addressimporter: "Address Importer", spamfilters: "Spam Filters",
@@ -944,7 +948,7 @@
       git: viewGit,
       inodes: viewInodes,
       about: viewAbout,
-    }[view] || mailViews()[view] || extraViews()[view] || opsViews()[view] || viewDashboard);
+    }[view] || mailViews()[view] || extraViews()[view] || opsViews()[view] || cloudViews()[view] || viewDashboard);
     if (VIEW_NEEDS[view]) requireGate(root, view, VIEW_NEEDS[view], render);
     else render(root);
   }
@@ -1202,6 +1206,17 @@
       { label: "Setup Ruby App", icon: "terminal", view: "appmgr" },
       { label: "PHP Settings", icon: "brick", view: "phpver" },
     ]},
+    { name: "Cloud Apps", icon: "t_cloud", tiles: [
+      { label: "Cloud Overview", icon: "t_cloud", view: "cloud" },
+      { label: "Amazon Web Services", icon: "t_cloud", view: "cloudaws" },
+      { label: "Google Cloud", icon: "t_cloud", view: "cloudgcp" },
+      { label: "Microsoft Azure", icon: "t_cloud", view: "cloudazure" },
+    ]},
+    { name: "Third-party Apps", icon: "plug", tiles: [
+      { label: "Connected Apps", icon: "plug", view: "connect" },
+      { label: "Google Drive", icon: "folder", view: "gdrive" },
+      { label: "Google Photos", icon: "image", view: "gphotos" },
+    ]},
     { name: "Advanced", icon: "terminal", tiles: [
       { label: "Terminal", icon: "terminal", view: "terminal" },
       { label: "Cron Jobs", icon: "cron", view: "cron" },
@@ -1372,6 +1387,21 @@
   const tilesOrderNow = (root) => [...root.querySelectorAll(".tile-group")].map((x) => x.dataset.group);
 
   function viewDashboard(root) {
+    // Problems: background work that failed since the panel started (a WAF rewrite Apache refused,
+    // a start-up chore that crashed). Shown here until dismissed; back if it happens again.
+    const probBox = el("div", { id: "dash-problems" });
+    const loadProblems = async () => {
+      let r; try { r = await API.problems(); } catch (e) { return; }
+      probBox.innerHTML = "";
+      for (const p of r.problems || []) {
+        const when = new Date(p.last * 1000).toLocaleString();
+        probBox.append(el("div", { class: "dm-note warn", role: "alert" }, [icon("warning", 15),
+          el("span", {}, [el("b", { text: `${p.where}: ` }), el("span", { text: p.message }),
+            p.hint ? el("div", { class: "muted", text: p.hint }) : "",
+            el("div", { class: "muted", text: when + (p.count > 1 ? ` · ${p.count} times` : "") })].filter(Boolean)),
+          el("button", { class: "btn btn-sm btn-ghost", text: "Dismiss", onclick: async () => { try { await API.problemsDismiss(p.id); } catch (e) {} loadProblems(); } })]));
+      }
+    };
     const grid = el("div", { class: "bento", id: "bento" });
     const slots = {};
     const add = (id, cls) => { const c = el("div", { class: `bcard ${cls}`, id: `c-${id}` }, el("div", { class: "bc-loading" })); slots[id] = c; grid.append(c); };
@@ -1409,8 +1439,9 @@
     });
 
     // "All tools" header row: the title sits on the left, in line with the panel titles below; "Reset layout" on the right.
-    root.append(grid, el("div", { class: "dash-section-row" }, [el("h2", { class: "section-title dash-section", text: "All tools" }), resetBtn]), tilesWrap);
+    root.append(probBox, grid, el("div", { class: "dash-section-row" }, [el("h2", { class: "section-title dash-section", text: "All tools" }), resetBtn]), tilesWrap);
     renderTiles(tilesWrap, refreshReset);
+    loadProblems();
     try {
       if (!localStorage.getItem("aurora.dash.hint")) {
         toast("Tip: drag a dashboard card, or a tool panel by its title bar, to rearrange. Your layout is remembered.", "good");
@@ -2726,7 +2757,7 @@
           el("td", { class: "muted", text: n.mac || "n/a" }),
           el("td", { text: fmtBytes(n.bytes_recv) }),
           el("td", { text: fmtBytes(n.bytes_sent) }),
-          el("td", { class: "muted", text: n.speed_mbps ? `${n.speed_mbps} Mbps` : ", " }),
+          el("td", { class: "muted", text: n.speed_mbps ? `${n.speed_mbps} Mbps` : "n/a" }),
         ]));
         body.append(el("div", { class: "table-wrap" }, el("table", {}, [
           el("thead", {}, el("tr", {}, ["Interface", "State", "IPv4", "MAC", "↓ Recv", "↑ Sent", "Speed"].map((h) => el("th", { text: h })))),
@@ -5285,7 +5316,7 @@
       catch (e) { toast(e.message, "bad"); go.disabled = false; }
     }, "btn-primary");
     openModal("Trust an address", el("div", {}, [field("Address or range", target), field("Note (optional)", note),
-      el("p", { class: "dm-hint", text: "Trusted addresses are never blocked: existing bans on them are lifted, manual bans are refused, and fail2ban ignores them (they're added to its ignore list automatically)." })]), [go]);
+      el("p", { class: "dm-hint", text: "Trusted addresses are never blocked: existing bans on them are lifted, manual bans are refused, fail2ban ignores them (they're added to its ignore list automatically) and the WAF lets their requests through." })]), [go]);
   }
   function viewIPBlocker(root) {
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
@@ -6426,7 +6457,7 @@
     if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
     return `${Math.floor(s / 86400)}d ago`;
   };
-  const when = (ts) => ts ? new Date(ts * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }) : ", ";
+  const when = (ts) => ts ? new Date(ts * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }) : "n/a";
   const isIPv4 = (s) => /^\d{1,3}(\.\d{1,3}){3}$/.test(String(s || ""));
   function downloadText(filename, text, mime) {
     const url = URL.createObjectURL(new Blob([text], { type: mime || "text/plain" }));
@@ -7197,12 +7228,12 @@
         : el("p", { class: "empty", text: d.logging ? "No connection attempts recorded in this period." : "Connection logging is off." }));
       if (d.ports.length) {
         body.append(el("h2", { class: "section-title", text: "Targeted ports" }));
-        body.append(simpleTable(["Port", "Service", "Attempts", "Sources"], d.ports.map((p) => row(`${p.port ?? ", "}/${p.proto}`, p.service || "n/a", p.count, p.sources))));
+        body.append(simpleTable(["Port", "Service", "Attempts", "Sources"], d.ports.map((p) => row(`${p.port ?? "any"}/${p.proto}`, p.service || "n/a", p.count, p.sources))));
       }
       if (d.recent.length) {
         body.append(el("h2", { class: "section-title", text: "Latest attempts" }));
         body.append(simpleTable(["When", "From", "To port", "Service", "Result"],
-          d.recent.slice(0, 100).map((c) => row(when(c.ts), c.src, `${c.port ?? ", "}/${c.proto}`, c.service || "n/a",
+          d.recent.slice(0, 100).map((c) => row(when(c.ts), c.src, `${c.port ?? "any"}/${c.proto}`, c.service || "n/a",
             c.blocked ? pill("blocked (banned)", "bad") : pill("reached the Pi", "dim")))));
       }
     });
@@ -9580,6 +9611,16 @@
         requireCard, jobPanel, ...(extraViews()._ui || {}), el });
     }
     return OPSV || {};
+  }
+
+  // ---- Cloud Apps and Third-party Apps (frontend/js/cloud.js) ----
+  let CLOUDV = null;
+  function cloudViews() {
+    if (!CLOUDV && window.AuroraCloud) {
+      CLOUDV = window.AuroraCloud({ el, $, icon, btn, pill, kv, field, sw, toast, popNotice, API, navigate, state, openModal, closeModal, copyText, fmtBytes, ago, downloadText, esc,
+        requireCard, jobPanel, ...(extraViews()._ui || {}), el });
+    }
+    return CLOUDV || {};
   }
 
   // ---- WAF, Dynamic DNS and Metrics views (frontend/js/extras.js) ----

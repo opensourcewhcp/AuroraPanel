@@ -26,6 +26,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from . import problems
 
 STATE = Path("/var/lib/aurora/autossl.json")
 LE_LIVE = Path("/etc/letsencrypt/live")
@@ -99,8 +100,8 @@ def my_ips() -> set[str]:
     try:
         from . import dnszones
         ips |= set(dnszones._my_ips())
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     for url in ("https://api.ipify.org", "https://ipv4.icanhazip.com"):
         try:
             import urllib.request
@@ -108,7 +109,8 @@ def my_ips() -> set[str]:
             ipaddress.ip_address(ip)
             ips.add(ip)
             break
-        except Exception:
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
             continue
     _my_ips_cache = (time.time(), ips)
     return ips
@@ -203,8 +205,8 @@ def _plan() -> list[dict]:
                 st = "elsewhere" if addrs else "nodns"
             items.append({"site": host, "mail": True, "names": [{"name": host, "state": st, "addrs": addrs,
                                                                  "days": round(days) if days is not None else None, "cert": c["name"] if c else ""}]})
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return items
 
 
@@ -219,8 +221,8 @@ def status() -> dict:
     try:
         from . import dnszones
         zones = [z["domain"] for z in dnszones.list_zones([])["zones"]]
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return {"enabled": s["enabled"], "agreed": s["agreed"], "email": s["email"] or contact, "exclude": s["exclude"],
             "certbot": bool(shutil.which("certbot", path=PATH)), "last_run": s.get("last_run"), "results": s["results"],
             "plan": _plan(), "wildcards": s["wildcards"], "zones": zones, "certs": _trusted_certs(), "port80": s.get("port80"),
@@ -236,8 +238,8 @@ def _certbot_base(s: dict) -> list[str]:
         try:
             from . import config
             email = config.get_prefs().get("contact_email", "")
-        except Exception:
-            pass
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
     base = ["certbot", "certonly", "--non-interactive", "--agree-tos", "--keep-until-expiring", "--expand"]
     base += ["-m", email] if email else ["--register-unsafely-without-email"]
     return base
@@ -328,8 +330,8 @@ def run(force: bool = False, only: str = "") -> dict:
         from . import audit
         for k, v in out.items():
             audit.record("system", "", f"AutoSSL {k}", ok=v.get("ok", False), status=200 if v.get("ok") else 500, detail={"names": v.get("names"), "error": v.get("error")})
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return out
 
 

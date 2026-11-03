@@ -22,6 +22,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
+from . import problems
 
 LOG_DIR = Path("/var/log/apache2")
 SITES_DIR = Path("/etc/apache2/sites-enabled")
@@ -295,8 +296,8 @@ def visitors(sid: str, limit: int = 1000, hours: int = 0, name: str = "") -> dic
     try:
         from . import dnszones
         own |= dnszones._my_ips()
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return {"site": s, "rows": rows, "total": len(rows), "own": sorted(own),
             "period": [rows[-1]["ts"], rows[0]["ts"]] if rows else None,
             "bytes": sum(r["size"] for r in rows), "unique_ips": len(ips),
@@ -852,8 +853,8 @@ def start() -> None:
         try:
             import psutil
             psutil.cpu_percent(interval=None)
-        except Exception:
-            pass
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
         while True:
             try:
                 collect_resources()
@@ -862,8 +863,8 @@ def start() -> None:
                     _faults_scan()
                     with _lock:
                         _save_json(RES_FILE, _res_state())
-            except Exception:
-                pass
+            except Exception as quiet_exc:
+                problems.quiet(quiet_exc)
             n += 1
             time.sleep(60)
 
@@ -876,8 +877,8 @@ def _fresh() -> None:
         _last_collect = time.time()
         try:
             collect_bandwidth()
-        except Exception:
-            pass
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
 
 
 def bandwidth() -> dict:

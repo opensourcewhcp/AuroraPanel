@@ -13,6 +13,21 @@ def test_roundcube_exception_is_rendered_only_for_webmail(tmp_path, monkeypatch)
     assert "1000103" not in waf.render_pre(s)
 
 
+def test_panel_trusted_addresses_are_exempt_from_the_waf_too(tmp_path, monkeypatch):
+    # The owner's machine is Trusted (IP Blocker & Trust); opening WordPress by IP from there must never 403.
+    from backend import guard
+    monkeypatch.setattr(waf, "STATE", tmp_path / "waf.json")
+    monkeypatch.setattr(guard, "trusted_cidrs", lambda: ["192.168.0.2/32", "10.8.0.0/24"])
+    s = waf.load()
+    # A single address goes in bare: ModSecurity refuses "192.168.0.2/32" in an @ipMatch list.
+    assert 'SecRule REMOTE_ADDR "@ipMatch 10.8.0.0/24,192.168.0.2" "id:1000101,phase:1,pass,nolog,ctl:ruleEngine=Off"' in waf.render_pre(s)
+    s["trusted"] = ["10.0.0.5"]
+    assert '@ipMatch 10.0.0.5,10.8.0.0/24,192.168.0.2"' in waf.render_pre(s)   # the WAF page's own list is kept as well
+    monkeypatch.setattr(guard, "trusted_cidrs", lambda: [])
+    s["trusted"] = []
+    assert "1000101" not in waf.render_pre(s)
+
+
 def test_old_installs_get_the_exception_once(tmp_path, monkeypatch):
     import json
     monkeypatch.setattr(waf, "STATE", tmp_path / "waf.json")

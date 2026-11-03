@@ -26,6 +26,7 @@ import time
 from pathlib import Path
 
 from . import jobs
+from . import problems
 
 BACKUP_DIR = Path(os.environ.get("AURORA_BACKUP_DIR", str(Path.home() / "aurora-backups"))).resolve()
 _NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -180,7 +181,8 @@ def _my_ok() -> bool:
     from . import databases
     try:
         return databases.mysql_available()
-    except Exception:
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
         return False
 
 

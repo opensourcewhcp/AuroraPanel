@@ -150,12 +150,12 @@ class _Log:
         if stage is not None:
             self.job.stage = stage
 
-    def apt(self, args: Sequence[str], span: tuple[float, float] = (0.0, 100.0), timeout: int = 1800) -> int:
+    def apt(self, args: Sequence[str], span: tuple[float, float] = (0.0, 100.0), timeout: int = 1800, env: dict | None = None) -> int:
         """Run apt-get (args after "apt-get"), streaming its output into the log and its
         progress into the span [lo, hi] of this job's bar. Returns the exit code."""
         argv = _with_apt_progress(["apt-get", "-y", *args])
         env = {"DEBIAN_FRONTEND": "noninteractive", "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
-               "LANG": "C.UTF-8"}
+               "LANG": "C.UTF-8", **(env or {})}
         proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
         assert proc.stdout is not None
         t0 = time.time()

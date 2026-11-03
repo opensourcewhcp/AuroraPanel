@@ -26,11 +26,11 @@ from starlette.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
 
 from . import (
-    abuse, alerts, slackbot, antivirus, audit, authz, autossl, dockerapps, isolate, migrate, panelusers, servers, wptoolkit, schedules, tasks, updates, apache, apitokens, appmanager, auth, backups, config, cron,
+    abuse, alerts, cloudapps, connectors, slackbot, antivirus, audit, authz, autossl, dockerapps, isolate, migrate, panelusers, servers, wptoolkit, schedules, tasks, updates, apache, apitokens, appmanager, auth, backups, config, cron,
     apps, databases, diskusage, dnszones, domains, fail2ban, netmgr, sites, files, firewall, ipblocker, jobs,
     metrics, modsecurity, netdiag, waf, packages, perms, phpmgr, services, sslcerts, sshaccess,
     proxysites, secreport, shadow, sysapps, system_info, terminal, twofa, users,
-    appconfig, ddns, ddnshosts, ftp, gitvc, guard, images, ipsec, webaccess, netmon, openvpn, mail, panelhttps, phpsettings, portcheck, requires, version, vpncommon, wireguard,
+    appconfig, ddns, ddnshosts, ftp, gitvc, guard, images, ipsec, webaccess, netmon, openvpn, mail, panelhttps, phpsettings, portcheck, problems, requires, version, vpncommon, wireguard,
 )
 
 # The API schema is a full map of every endpoint, so it's off unless asked for.
@@ -322,7 +322,8 @@ def api_mysites(user: str = auth.CurrentUser):
         try:
             st = sites.get_site(name)["settings"]
             out.append({"name": name, "docroot": st["docroot"], "ssl": st["ssl"], "aliases": st.get("aliases", [])})
-        except Exception:
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
             continue
     return {"sites": out, "webmail": mail.webmail_url() if mail.installed() else ""}
 
@@ -371,6 +372,22 @@ def api_pu_delete(body: PanelUserBody, user: str = auth.CurrentUser):
 @app.get("/api/system/overview")
 def api_overview(user: str = auth.CurrentUser):
     return system_info.overview()
+
+
+@app.get("/api/problems")
+def api_problems(user: str = auth.CurrentUser):
+    """What went wrong in the background since the panel started: dashboard-worthy problems, and
+    the exceptions the code carried on from (counted, newest first)."""
+    return problems.listing()
+
+
+class ProblemDismissBody(BaseModel):
+    id: str = ""   # empty: all of them
+
+
+@app.post("/api/problems/dismiss")
+def api_problems_dismiss(body: ProblemDismissBody, user: str = auth.CurrentUser):
+    return problems.dismiss(body.id or None)
 
 
 @app.get("/api/system/disks")
@@ -2154,8 +2171,8 @@ def api_dns_zones(user: str = auth.CurrentUser):
     try:
         for s in sites.list_sites().get("sites", []):
             names += [s["server_name"], *s["aliases"]]
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return dnszones.list_zones(names)
 
 
@@ -3925,8 +3942,8 @@ def api_contact_suggestions(user: str = auth.CurrentUser):
         acc = mail.list_accounts()
         for a in acc.get("accounts", []):
             out.append({"address": a["address"], "why": "Mailbox on this server" + (f" ({a['name']})" if a.get("name") else "")})
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return {"suggestions": out}
 
 
@@ -3980,16 +3997,17 @@ def _metrics_start():
     config.lock_down()
     # install.sh normally makes the account before the first start; this covers
     # run.sh / run.bat and an update of a panel nobody had signed in to yet.
+    # Start-up chores run in the background; one that fails shows up on the dashboard (Problems).
     try:
         version.prune_updates()  # only the build you came from is kept, plus a snapshot of this one
-        threading.Thread(target=version.snapshot_current, name="snapshot", daemon=True).start()
-        threading.Thread(target=mail.repair_webmail_hosts, name="webmail-repair", daemon=True).start()
-        # The built-in https site answers requests made by IP address: keep it first for port 443.
-        threading.Thread(target=lambda: sites.IS_LINUX and sites.AVAIL.exists() and sites.ensure_https_first(), name="https-first", daemon=True).start()
-        # WAF rules that changed in this release reach Apache once, without waiting for someone to open the page.
-        threading.Thread(target=lambda: users.IS_LINUX and waf.refresh_rules(), name="waf-rules", daemon=True).start()
     except Exception as exc:
-        print(f"aurora: couldn't tidy the updates folder: {exc}", flush=True)
+        problems.record("Updates folder", exc, hint="Old update files in /var/lib/aurora/updates were not tidied.")
+    problems.background("Build snapshot", version.snapshot_current, "No copy of this build was saved for Previous build.")
+    problems.background("Webmail repair", mail.repair_webmail_hosts)
+    # The built-in https site answers requests made by IP address: keep it first for port 443.
+    problems.background("HTTPS site order", lambda: sites.IS_LINUX and sites.AVAIL.exists() and sites.ensure_https_first())
+    # WAF rules that changed in this release reach Apache once, without waiting for someone to open the page.
+    problems.background("WAF rules", lambda: users.IS_LINUX and waf.refresh_rules())
     made = config.ensure_initial_credentials()
     if made:
         where = config.initial_password_path()
@@ -4001,11 +4019,11 @@ def _metrics_start():
         from . import instaban
         instaban.start()
     except Exception as exc:
-        print(f"aurora: InstaBan not started: {exc}", flush=True)
+        problems.record("InstaBan", exc, hint="InstaBan is not watching the logs. Open Security → InstaBan.")
     try:
         slackbot.start()  # Socket Mode: receives button clicks and /aurora
     except Exception as exc:
-        print(f"aurora: Slack not started: {exc}", flush=True)
+        problems.record("Slack app", exc, hint="The Slack app is not connected. Open Alerts → Slack.")
     try:
         tasks.ensure_timer()
     except Exception as exc:  # never block the panel from starting
@@ -4137,6 +4155,135 @@ def api_sch_dest_del(did: str, user: str = auth.CurrentUser):
 @app.post("/api/schedules/destinations/{did}/test")
 def api_sch_dest_test(did: str, user: str = auth.CurrentUser):
     return _sch_call(lambda: schedules.test_destination(did))
+
+
+# --------------------------------------------------------------------------- #
+# Cloud Apps (AWS, Google Cloud, Azure) and Third-party Apps (Google Drive, Google Photos)
+# --------------------------------------------------------------------------- #
+def _cloud_call(fn):
+    try:
+        return fn()
+    except cloudapps.CloudError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/cloud")
+def api_cloud(user: str = auth.CurrentUser):
+    return cloudapps.listing()
+
+
+@app.get("/api/cloud/{provider}")
+def api_cloud_provider(provider: str, user: str = auth.CurrentUser):
+    return _cloud_call(lambda: cloudapps.provider_info(provider))
+
+
+@app.post("/api/cloud/{provider}/connect")
+def api_cloud_connect(provider: str, body: dict, user: str = auth.CurrentUser):
+    return _cloud_call(lambda: cloudapps.connect(provider, body))
+
+
+@app.post("/api/cloud/{provider}/disconnect")
+def api_cloud_disconnect(provider: str, user: str = auth.CurrentUser):
+    return _cloud_call(lambda: cloudapps.disconnect(provider))
+
+
+@app.get("/api/cloud/{provider}/services/{service}")
+def api_cloud_items(provider: str, service: str, user: str = auth.CurrentUser):
+    return _cloud_call(lambda: cloudapps.items(provider, service))
+
+
+class CloudVmBody(BaseModel):
+    id: str
+    action: str
+
+
+@app.post("/api/cloud/{provider}/vm")
+def api_cloud_vm(provider: str, body: CloudVmBody, user: str = auth.CurrentUser):
+    return _cloud_call(lambda: cloudapps.vm_action(provider, body.id, body.action))
+
+
+@app.get("/api/cloud/{provider}/browse")
+def api_cloud_browse(provider: str, path: str = "", user: str = auth.CurrentUser):
+    return _cloud_call(lambda: cloudapps.browse(provider, path))
+
+
+class TransferBody(BaseModel):
+    direction: str
+    local: str
+    remote: str = ""
+
+
+@app.post("/api/cloud/{provider}/transfer")
+def api_cloud_transfer(provider: str, body: TransferBody, user: str = auth.CurrentUser):
+    return _cloud_call(lambda: cloudapps.transfer(provider, body.direction, body.local, body.remote))
+
+
+def _conn_call(fn):
+    try:
+        return fn()
+    except connectors.ConnectError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/connect")
+def api_connect(user: str = auth.CurrentUser):
+    return connectors.listing()
+
+
+class ConnectStartBody(BaseModel):
+    service: str
+    client_id: str = ""
+    client_secret: str = ""
+    label: str = ""
+
+
+@app.post("/api/connect/start")
+def api_connect_start(body: ConnectStartBody, user: str = auth.CurrentUser):
+    return _conn_call(lambda: connectors.start(body.service, body.client_id, body.client_secret, body.label))
+
+
+class ConnectFinishBody(BaseModel):
+    session: str
+    auth_response: str
+
+
+@app.post("/api/connect/finish")
+def api_connect_finish(body: ConnectFinishBody, user: str = auth.CurrentUser):
+    return _conn_call(lambda: connectors.finish(body.session, body.auth_response))
+
+
+class SessionBody(BaseModel):
+    session: str = ""
+
+
+@app.post("/api/connect/cancel")
+def api_connect_cancel(body: SessionBody, user: str = auth.CurrentUser):
+    return connectors.cancel(body.session)
+
+
+class LabelBody(BaseModel):
+    label: str
+
+
+@app.post("/api/connect/{acct}/rename")
+def api_connect_rename(acct: str, body: LabelBody, user: str = auth.CurrentUser):
+    return _conn_call(lambda: connectors.rename(acct, body.label))
+
+
+@app.delete("/api/connect/{acct}")
+def api_connect_delete(acct: str, user: str = auth.CurrentUser):
+    return _conn_call(lambda: connectors.disconnect(acct))
+
+
+@app.get("/api/connect/{acct}/browse")
+def api_connect_browse(acct: str, path: str = "", user: str = auth.CurrentUser):
+    return _conn_call(lambda: connectors.browse(acct, path))
+
+
+@app.post("/api/connect/{acct}/transfer")
+def api_connect_transfer(acct: str, body: TransferBody, user: str = auth.CurrentUser):
+    return _conn_call(lambda: connectors.transfer(acct, body.direction, body.local, body.remote))
+
 
 
 # --------------------------------------------------------------------------- #
@@ -4812,8 +4959,8 @@ async def api_terminal(websocket: WebSocket):
     finally:
         try:
             await websocket.close()
-        except Exception:
-            pass
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
 
 
 @app.websocket("/api/docker/containers/{ref}/shell")
@@ -4837,8 +4984,8 @@ async def api_docker_shell(websocket: WebSocket, ref: str, user: str = ""):
     finally:
         try:
             await websocket.close()
-        except Exception:
-            pass
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
 
 
 # --------------------------------------------------------------------------- #

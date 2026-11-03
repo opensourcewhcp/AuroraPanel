@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 
 from . import jobs, sslcerts
+from . import problems
 
 IS_LINUX = platform.system() == "Linux"
 APACHE = Path("/etc/apache2")
@@ -949,8 +950,8 @@ def remove_site(name: str) -> dict:
     try:
         from . import shadow
         shadow.drop(f"site:{name}")
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return {"ok": True}
 
 
@@ -1090,8 +1091,8 @@ def _folders_found(base: Path, items: list[dict]) -> list[dict]:
     taken = {str(Path(it["path"])) for it in items} | {it["name"] for it in items}
     try:
         taken |= {str(Path(s["docroot"])) for s in list_sites().get("sites", []) if s.get("docroot")}
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     found = []
     try:
         kids = sorted(base.iterdir(), key=lambda p: p.name.lower())
@@ -1200,8 +1201,8 @@ def remove_folder_site(name: str, delete_files: bool = False, backup: bool = Fal
     try:
         from . import shadow
         shadow.drop(f"folder:{name}")
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     if not delete_files:
         return {"ok": True}
 

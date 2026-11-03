@@ -2,7 +2,8 @@
 
 The panel owns two small files and leaves the packages' own files alone:
   /etc/modsecurity/zz-aurora-waf.conf   (read before the CRS) — engine mode, paranoia level,
-        anomaly threshold, app exclusions, trusted IPs and sites with the WAF off;
+        anomaly threshold, app exclusions, trusted IPs and sites with the WAF off. The panel's
+        Trusted addresses (IP Blocker & Trust) are exempt as well, so "trusted" means trusted everywhere;
   /etc/apache2/conf-available/zz-aurora-waf.conf   (read after the CRS) — rules switched off
         because they were false alarms ("Allow this rule").
 /etc/modsecurity/modsecurity.conf is created from the package's recommended file once, with
@@ -18,6 +19,8 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
+
+from . import problems
 
 STATE = Path("/var/lib/aurora/waf.json")
 MAIN = Path("/etc/modsecurity/modsecurity.conf")
@@ -37,7 +40,7 @@ APPS = {"wordpress": "WordPress", "nextcloud": "Nextcloud", "drupal": "Drupal", 
 ROUNDCUBE_RULE = 'SecRule REQUEST_URI "@beginsWith /webmail/" "id:1000103,phase:1,pass,nolog,t:none,ctl:ruleEngine=DetectionOnly"'
 # Bump when the rules the panel renders change: an install that still has older rules in Apache rewrites
 # them once (at start, and when the WAF page is opened), so a shipped exception never stays on paper.
-RULES_REV = 3
+RULES_REV = 4
 # CRS bookkeeping rules: the score summary, not an attack type of their own.
 _SUMMARY = {"949110", "959100", "980130", "980140", "980145", "959180"}
 # Noise, not attacks: someone opened a site by its IP address (920350), which on its own never blocks.
@@ -98,6 +101,18 @@ def module_on() -> bool:
     return Path("/etc/apache2/mods-enabled/security2.load").exists()
 
 
+def _panel_trusted() -> list[str]:
+    """The panel's Trusted addresses (IP Blocker & Trust): never blocked by anything, the WAF included.
+    The owner's own machine is usually among them, and opening a site by its IP address from there
+    (numeric Host header, an IP in WordPress's redirect_to) must not end in a 403."""
+    try:
+        from . import guard
+        return _clean_ips(guard.trusted_cidrs())
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
+        return []
+
+
 def render_pre(s: dict) -> str:
     engine = {"block": "On", "detect": "DetectionOnly", "off": "Off"}[s["mode"]]
     out = [HEADER, f"SecRuleEngine {engine}", ""]
@@ -110,8 +125,10 @@ def render_pre(s: dict) -> str:
         out.append('SecAction "id:900130,phase:1,nolog,pass,t:none,' + ",".join(f"setvar:tx.crs_exclusions_{a}=1" for a in apps) + '"')
     if "roundcube" in s["apps"]:
         out.append(ROUNDCUBE_RULE)
-    if s["trusted"]:
-        out.append(f'SecRule REMOTE_ADDR "@ipMatch {",".join(s["trusted"])}" "id:1000101,phase:1,pass,nolog,ctl:ruleEngine=Off"')
+    # Single addresses go in bare: ModSecurity refuses "a.b.c.d/32" in an @ipMatch list.
+    trusted = sorted(set(s["trusted"]) | set(_clean_ips(_panel_trusted())))
+    if trusted:
+        out.append(f'SecRule REMOTE_ADDR "@ipMatch {",".join(trusted)}" "id:1000101,phase:1,pass,nolog,ctl:ruleEngine=Off"')
     if s["sites_off"]:
         out.append(f'SecRule REQUEST_HEADERS:Host "@pmFromFile /etc/modsecurity/aurora-sites-off.txt" '
                    f'"id:1000102,phase:1,pass,nolog,t:lowercase,ctl:ruleEngine=Off"')
@@ -185,7 +202,9 @@ def refresh_rules() -> bool:
         return False
     try:
         apply(s)
-    except Exception:
+    except Exception as exc:
+        # Apache kept the old rules: say so where the owner looks, instead of pretending it worked.
+        problems.record("WAF rules", exc, hint="Open Security → WAF Firewall and press Apply to see Apache's answer.")
         return False
     s["rules_rev"] = RULES_REV
     try:

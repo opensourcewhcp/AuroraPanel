@@ -20,6 +20,7 @@ import subprocess
 import tempfile
 import urllib.request
 from pathlib import Path
+from . import problems
 
 UA = {"User-Agent": "AuroraPanel (+https://aurora51.com)"}
 
@@ -60,7 +61,8 @@ def _head(url: str) -> tuple[int, str]:
     try:
         with urllib.request.urlopen(req, timeout=25) as r:
             return int(r.headers.get("Content-Length") or 0), r.url
-    except Exception:
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
         return 0, url
 
 
@@ -81,8 +83,8 @@ def _gh(repo: str, asset: str | None) -> dict:
         if sha:
             try:
                 out.update(checksum=_get(sha["browser_download_url"]).split()[0], algo="sha256")
-            except Exception:
-                pass
+            except Exception as quiet_exc:
+                problems.quiet(quiet_exc)
         return out
     return {"version": ver, "url": d["zipball_url"], "filename": f"{repo.split('/')[1]}-{ver}.zip"}
 
@@ -96,8 +98,8 @@ def _src_wordpress(_):
     out = {"version": ver, "url": url, "filename": "wordpress.zip"}
     try:
         out.update(checksum=_get(url + ".sha1").split()[0], algo="sha1")
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return out
 
 
@@ -109,8 +111,8 @@ def _src_phpbb(_):
     out = {"version": v, "url": url}
     try:
         out.update(checksum=_get(url + ".sha256").split()[0], algo="sha256")
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return out
 
 
@@ -136,8 +138,8 @@ def _src_nextcloud(_):
     out = {"version": "latest", "url": url, "filename": "nextcloud.zip"}
     try:
         out.update(checksum=_get(url + ".sha256").split()[0], algo="sha256")
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return out
 
 
@@ -418,7 +420,8 @@ def _timezone() -> str:
     try:
         tz = subprocess.run(["timedatectl", "show", "-p", "Timezone", "--value"], capture_output=True, text=True, timeout=10).stdout.strip()
         return tz if re.match(r"^[A-Za-z_]+(/[A-Za-z0-9_+-]+)*$", tz) else "UTC"
-    except Exception:
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
         return "UTC"
 
 

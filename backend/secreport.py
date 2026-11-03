@@ -29,6 +29,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
+from . import problems
 
 STATE = Path("/var/lib/aurora/secreport.json")
 TIMEOUT = 4.0
@@ -73,8 +74,8 @@ def targets() -> list[dict]:
                 continue
             add({"id": f"panel:{n}", "kind": "panel", "name": n, "port": st["port"], "scheme": scheme,
                  "label": f"Panel · {n}:{st['port']}"})
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     sites = []
     try:
         from . import sites as S
@@ -94,16 +95,16 @@ def targets() -> list[dict]:
             from . import panelhttps
             for ip in [x for x in panelhttps._known_names() if _is_ip(x) and x != "127.0.0.1"]:
                 add({"id": f"ip:{ip}", "kind": "ip", "name": ip, "label": f"Web server by address · {ip}"})
-        except Exception:
-            pass
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
     try:
         from . import mail
         ms = mail.load()
         if ms.get("domains") or ms.get("accounts"):
             h = mail.hostname(ms)
             add({"id": f"mail:{h}", "kind": "mail", "name": h, "label": f"Mail server · {h}"})
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     add({"id": "server", "kind": "server", "name": socket.gethostname(), "label": "This server's protections"})
     return out
 
@@ -416,7 +417,8 @@ def _posture() -> list[dict]:
     def chk(fn):
         try:
             return fn()
-        except Exception:
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
             return None
     from . import twofa
     if not chk(twofa.is_enabled):
@@ -453,8 +455,8 @@ def _posture() -> list[dict]:
         if ah.get("available") and ah["ok"] < ah["total"]:
             miss = ", ".join(i["label"] for i in ah["items"] if not i["ok"])
             out.append(_f("medium", "Web server not fully hardened", f"Missing: {miss}.", "One click: Harden web server.", "sysapps", "apache_harden", fid="apache-harden"))
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return out
 
 

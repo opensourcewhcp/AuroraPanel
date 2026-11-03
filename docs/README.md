@@ -18,5 +18,6 @@ also explains itself, so start there; come here for the details.
 | [Moving from cPanel](cpanel-import.md) | Importing a cPanel full backup: sites, databases, mail, DNS |
 | [System updates](updates.md) | Package updates, security-only automatic updates, reboots |
 | [Security](security.md) | WAF, IP Blocker, fail2ban, the IP card, reporting abuse |
+| [Cloud Apps and Third-party Apps](cloud-apps.md) | AWS, Google Cloud and Azure from the Pi; Google Drive and Google Photos copies |
 
 Questions, bugs and ideas: the [Raspberry Pi Forums thread](https://forums.raspberrypi.com/viewtopic.php?p=2388892).

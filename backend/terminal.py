@@ -14,6 +14,7 @@ import platform
 import shutil
 import signal
 import struct
+from . import problems
 
 IS_LINUX = platform.system() == "Linux"
 
@@ -114,5 +115,5 @@ async def run(websocket, argv: list[str] | None = None) -> None:
         await asyncio.gather(t_out, t_in, return_exceptions=True)
         try:
             await websocket.send_text(json.dumps({"type": "exit"}))
-        except Exception:
-            pass
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)

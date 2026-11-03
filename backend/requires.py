@@ -27,10 +27,10 @@ class RequiresError(RuntimeError):
     pass
 
 
-def _run(argv: list[str], timeout: int = 120) -> subprocess.CompletedProcess:
+def _run(argv: list[str], timeout: int = 120, env: dict | None = None) -> subprocess.CompletedProcess:
     try:
         return subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
-                              env={**os.environ, "PATH": PATH, "DEBIAN_FRONTEND": "noninteractive"})
+                              env={**os.environ, "PATH": PATH, "DEBIAN_FRONTEND": "noninteractive", **(env or {})})
     except (OSError, subprocess.TimeoutExpired) as e:
         return subprocess.CompletedProcess(argv, 1, "", str(e))
 
@@ -154,6 +154,25 @@ def _bind_defaults() -> list[str]:
         return [f"! {e}"]
     return ["• DNS server: lookups only for this machine, its local network and VPN; secondary DNS detected from NS records"
             + (f" ({', '.join(r['allowed'])})" if r.get("allowed") else "")]
+
+
+GCLOUD_KEYRING = Path("/usr/share/keyrings/cloud.google.gpg")
+GCLOUD_LIST = Path("/etc/apt/sources.list.d/google-cloud-sdk.list")
+
+
+def _gcloud_repo() -> list[str]:
+    """Google ships the Google Cloud CLI from its own apt repository (Debian has no package)."""
+    if GCLOUD_LIST.exists() and GCLOUD_KEYRING.exists():
+        return []
+    key = _run(["curl", "-fsSL", "--max-time", "60", "https://packages.cloud.google.com/apt/doc/apt-key.gpg"], 90)
+    if key.returncode != 0 or "BEGIN PGP" not in key.stdout:
+        raise RequiresError("Could not download Google's package signing key: " + (key.stderr or "no answer")[-200:])
+    r = subprocess.run(["gpg", "--dearmor", "--yes", "-o", str(GCLOUD_KEYRING)], input=key.stdout, text=True,
+                       capture_output=True, timeout=60, env={**os.environ, "PATH": PATH})
+    if r.returncode != 0:
+        raise RequiresError("Could not save Google's package signing key: " + r.stderr[-200:])
+    GCLOUD_LIST.write_text(f"deb [signed-by={GCLOUD_KEYRING}] https://packages.cloud.google.com/apt cloud-sdk main\n")
+    return ["• Added Google's package source for the Google Cloud CLI"]
 
 
 def _post_certbot() -> list[str]:
@@ -306,6 +325,27 @@ COMPONENTS: dict[str, dict] = {
         "check": lambda: _docker().installed(),
         "post": lambda: _docker().post_install(),
     },
+    "awscli": {
+        "name": "AWS CLI", "icon": "t_cloud", "size": "about 150 MB",
+        "desc": "Amazon's command-line tool. Cloud Apps uses it to manage EC2 servers, S3 storage and the rest of your AWS account.",
+        "pkgs": ["awscli"],
+        "check": lambda: shutil.which("aws", path=PATH) is not None,
+    },
+    "gcloud": {
+        "name": "Google Cloud CLI", "icon": "t_cloud", "size": "about 600 MB",
+        "desc": "Google's command-line tools (gcloud, gsutil, bq). Cloud Apps uses them for Compute Engine, Cloud Storage, BigQuery and more.",
+        "pkgs": ["google-cloud-cli"],
+        "pre": _gcloud_repo,
+        # The Python bundled with the package crashes on some Raspberry Pi kernels; Debian's works.
+        "env": {"CLOUDSDK_PYTHON": "/usr/bin/python3"},
+        "check": lambda: shutil.which("gcloud", path=PATH) is not None,
+    },
+    "azurecli": {
+        "name": "Azure CLI", "icon": "t_cloud", "size": "about 500 MB",
+        "desc": "Microsoft's command-line tool. Cloud Apps uses it for virtual machines, Blob Storage and the rest of your Azure subscription.",
+        "pkgs": ["azure-cli"],
+        "check": lambda: shutil.which("az", path=PATH) is not None,
+    },
     "composer": {
         "name": "Composer", "icon": "packages", "size": "about 2 MB",
         "desc": "PHP's package manager, used by Laravel, Symfony and other frameworks.",
@@ -383,12 +423,13 @@ def install(cid: str) -> jobs.Job:
         log.progress(1, "Updating the package lists")
         log.apt(["update"], (1, 8))
         log.progress(8, "Downloading packages")
-        rc = log.apt(["install", "--no-install-recommends", *pkgs], (8, 92))
+        aenv = {k: v for n in plan for k, v in (COMPONENTS[n].get("env") or {}).items()}
+        rc = log.apt(["install", "--no-install-recommends", *pkgs], (8, 92), env=aenv)
         if rc != 0:
             # A half-finished earlier install blocks apt: finish it and retry once.
             log("• apt failed — repairing any interrupted install and retrying")
-            _run(["dpkg", "--force-confold", "--configure", "-a"], 900)
-            rc = log.apt(["install", "--no-install-recommends", "-f", *pkgs], (8, 92))
+            _run(["dpkg", "--force-confold", "--configure", "-a"], 900, env=aenv)
+            rc = log.apt(["install", "--no-install-recommends", "-f", *pkgs], (8, 92), env=aenv)
             if rc != 0:
                 raise RequiresError(f"apt-get install failed (exit {rc}) — see the log")
         log.progress(93, "Configuring")

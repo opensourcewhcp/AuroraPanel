@@ -1,4 +1,6 @@
 """Docker: compose rendering for catalog and custom containers, the settings parsers, and the container listing."""
+import sys
+
 import pytest
 
 from backend import dockerapps as dk
@@ -19,6 +21,7 @@ def _custom(**over):
     return data
 
 
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="needs os.chown / os.uname (the panel runs on Linux)")
 def test_custom_spec_renders_compose_with_lan_bind_and_free_port():
     name, spec, inst = dk.custom_spec(_custom(restart="always", mem_limit="512m", cpus="1.5", command="nginx -g 'daemon off;'", uid="101"))
     assert name == "myapp" and inst["host_ports"] == {"80/tcp": 10080}  # auto-picked (below 1024 → 10000+port)
@@ -40,6 +43,7 @@ def test_custom_public_and_proxy_binds():
     assert '"127.0.0.1:10080:80/tcp"' in dk.render_compose("myapp", spec, inst)  # web port stays behind Apache
 
 
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="needs os.chown / os.uname (the panel runs on Linux)")
 @pytest.mark.parametrize("bad,msg", [
     ({"name": "My App"}, "Name"),
     ({"image": "not an image!"}, "Image"),
@@ -94,6 +98,7 @@ def test_parsers():
         dk._cid("../x")
 
 
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="needs os.chown / os.uname (the panel runs on Linux)")
 def test_own_data_hands_folders_to_the_image_user(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(dk.os, "chown", lambda p, u, g, **kw: calls.append((str(p), u, g)))

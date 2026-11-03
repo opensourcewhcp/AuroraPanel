@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 
 from . import jobs
+from . import problems
 
 IS_LINUX = platform.system() == "Linux"
 LOCAL = Path("/etc/fail2ban/jail.d/zz-aurora.local")
@@ -190,7 +191,8 @@ def _auto_ignore() -> list[str]:
     try:
         from . import guard
         return guard.trusted_cidrs()
-    except Exception:
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
         return []
 
 
@@ -475,15 +477,15 @@ def events(limit: int = 400) -> dict:
     try:
         from . import guard
         status = guard.status_of(sorted({e["ip"] for e in out}))
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     _add_users(out)
     reported: dict = {}
     try:
         from . import abuse
         reported = abuse.reported()
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return {"events": out, "total": total, "status": status, "reported": sorted(reported), "source": source or "/var/log/fail2ban.log"}
 
 
@@ -497,7 +499,8 @@ def _add_users(events: list[dict]) -> None:
         from . import netmon
         span = int(time.time() - min(e["ts"] for e in fails)) + 120
         auth = [a for a in netmon.auth_events(min(span, 14 * 86400)) if a.get("user") and a.get("outcome") != "ok"]
-    except Exception:
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
         return
     by_ip: dict[str, list[dict]] = {}
     for a in auth:

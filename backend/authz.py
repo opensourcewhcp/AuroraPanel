@@ -10,6 +10,7 @@ import contextvars
 import json
 import re
 from pathlib import Path
+from . import problems
 
 CURRENT: contextvars.ContextVar[dict | None] = contextvars.ContextVar("aurora_user", default=None)
 
@@ -28,7 +29,7 @@ SITE_ALLOW = [
 # Viewers can read every page, but not these (secrets, file contents, downloads, a shell).
 VIEWER_DENY_GET = re.compile(r"^/api/(files/(read|download)|backups/[^/]+/download|backups/download|metrics/download|"
                              r"schedules/plans/[^/]+/passphrase|docker/apps/[^/]+/secret|ddns-hosts/[^/]+/key|"
-                             r"mail/accounts/mobileconfig|apitokens|terminal|sysapps/[^/]+/file)")
+                             r"mail/accounts/mobileconfig|tokens|apitokens|terminal|sysapps/[^/]+/file)")
 VIEWER_ALLOW_POST = re.compile(r"^/api/(logout|me/password)$")
 # The owner on the installer's random password: only what it takes to replace it.
 FIRST_LOGIN_ALLOW = re.compile(r"^/api/(me|status|logout|account/password)$")
@@ -78,7 +79,8 @@ def scope() -> dict | None:
         for name in u.get("sites", []):
             try:
                 st = S.get_site(name)["settings"]
-            except Exception:
+            except Exception as quiet_exc:
+                problems.quiet(quiet_exc)
                 continue
             if st.get("docroot"):
                 roots.append(Path(st["docroot"]).resolve())

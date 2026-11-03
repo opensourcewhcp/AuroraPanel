@@ -21,6 +21,10 @@ Bans are server-wide firewall (nftables) rules, so a banned IP can't reach any s
 records where it was made (IP card, Network Monitor, WAF, IP Blocker, another server) and shows it
 in the IP Blocker. With [several servers](servers.md) a ban can be applied everywhere.
 
+**Trusted** means trusted everywhere: a trusted address can't be banned, fail2ban ignores it, InstaBan
+skips it and the WAF lets its requests through. Trust your own devices (or your LAN range) first, so a
+site opened by IP address or a mistyped password never locks you out.
+
 ## Reporting abuse
 
 **Report** prepares an abuse report for the network that owns the IP (its abuse contact from the

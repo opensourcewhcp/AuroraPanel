@@ -15,6 +15,7 @@ import subprocess
 from pathlib import Path
 
 from . import jobs
+from . import problems
 
 IS_LINUX = platform.system() == "Linux"
 PHP_DIR = Path("/etc/php")
@@ -373,5 +374,6 @@ def _timezones() -> list[str]:
     try:
         import zoneinfo
         return sorted(z for z in zoneinfo.available_timezones() if "/" in z and not z.startswith(("Etc/", "SystemV/", "posix", "right")))
-    except Exception:
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
         return []

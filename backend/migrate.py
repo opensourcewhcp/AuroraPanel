@@ -23,6 +23,7 @@ import urllib.request
 from pathlib import Path
 
 from . import jobs
+from . import problems
 
 PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
 
@@ -169,8 +170,8 @@ def analyze(path: str) -> dict:
             if m.isfile() and (rel.startswith(("userdata/", "etc/", "va/")) or rel in ("mysql.sql", "cp/" + top)) and m.size < 2_000_000:
                 try:
                     small[rel] = tf.extractfile(m).read().decode("utf-8", "replace")
-                except Exception:
-                    pass
+                except Exception as quiet_exc:
+                    problems.quiet(quiet_exc)
             if m.isfile() and rel.startswith("mysql/") and rel.endswith(".sql"):
                 dbs.append({"name": Path(rel).stem, "size": m.size})
             if m.isfile() and rel.startswith("dnszones/") and rel.endswith(".db"):
@@ -388,8 +389,8 @@ def run(path: str, opts: dict) -> jobs.Job:
             try:
                 from . import audit
                 audit.record("system", "", f"cPanel import ({info['user']})", detail={k: (len(v) if isinstance(v, list) else v) for k, v in report.items()})
-            except Exception:
-                pass
+            except Exception as quiet_exc:
+                problems.quiet(quiet_exc)
             return report
         finally:
             shutil.rmtree(work, ignore_errors=True)

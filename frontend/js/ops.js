@@ -312,7 +312,7 @@ window.AuroraOps = (ui) => {
         el("div", { class: "op-plan-facts" }, [
           el("div", {}, [el("span", { class: "muted", text: "Backs up" }), el("b", { text: what.join(", ") })]),
           el("div", {}, [el("span", { class: "muted", text: "Sends to" }), el("b", { text: [...dests, p.keep_local ? `this machine (${p.keep_local})` : null].filter(Boolean).join(", ") })]),
-          el("div", {}, [el("span", { class: "muted", text: "Last run" }), el("b", { text: last.ts ? `${ago(last.ts)}${last.size ? ` · ${fmtBytes(last.size)}` : ""}${last.secs != null ? ` · ${dur(last.secs)}` : ""}` : ", " })]),
+          el("div", {}, [el("span", { class: "muted", text: "Last run" }), el("b", { text: last.ts ? `${ago(last.ts)}${last.size ? ` · ${fmtBytes(last.size)}` : ""}${last.secs != null ? ` · ${dur(last.secs)}` : ""}` : "Never" })]),
           el("div", {}, [el("span", { class: "muted", text: "Next run" }), el("b", { text: p.enabled && p.next ? `${t2s(p.next)} (${timeIn(p.next)})` : "paused" })]),
         ]),
         last.ok === false ? el("div", { class: "mx-note" }, [icon("warning", 16), el("span", { text: last.error || "Failed, see the log." })]) : null,
@@ -341,7 +341,7 @@ window.AuroraOps = (ui) => {
       box.append(el("p", { class: "muted", text: "Restore brings a copy back to this machine (decrypting it) and opens it in Backups, where you choose exactly which files and databases to put back." }),
         el("div", { class: "table-wrap" }, el("table", { class: "mx-table" }, [el("thead", {}, el("tr", {}, ["Copy", "Where", "Size", "Made", ""].map((h) => el("th", { text: h })))),
           el("tbody", {}, r.snapshots.map((s) => el("tr", {}, [el("td", { class: "mx-ell", text: s.name }), el("td", { text: s.where }), el("td", { class: "num", text: fmtBytes(s.size) }),
-            el("td", { text: s.time ? ago(s.time) : ", " }),
+            el("td", { text: s.time ? ago(s.time) : "Never" }),
             el("td", { class: "mx-actions" }, btn("Restore…", async (e) => { e.target.disabled = true; e.target.textContent = "Fetching…";
               const x = await call(() => API.schedFetch(p.id, s.dest, s.name), "Copy fetched, choose what to restore");
               if (x) { closeModal(); state.backupFocus = x.name; navigate("backupwiz"); } else { e.target.disabled = false; e.target.textContent = "Restore…"; } }, "btn-primary"))])))])));
@@ -1691,7 +1691,7 @@ window.AuroraOps = (ui) => {
           el("div", {}, [el("b", { text: num(u.versions) }), el("span", { text: "versions" })]),
           el("div", {}, [el("b", { text: num(u.files) }), el("span", { text: "files" })]),
           el("div", {}, [el("b", { text: fmtBytes(u.bytes) }), el("span", { text: `of ${s.max_mb} MB` })]),
-          el("div", {}, [el("b", { text: s.last_run ? ago(s.last_run) : ", " }), el("span", { text: "last snapshot" })]),
+          el("div", {}, [el("b", { text: s.last_run ? ago(s.last_run) : "Never" }), el("span", { text: "last snapshot" })]),
         ]),
         s.enabled ? el("div", { class: `em-use-bar ${pct(s) >= 90 ? "bad" : pct(s) >= 70 ? "warn" : ""}` }, el("span", { style: `width:${Math.max(pct(s), u.bytes ? 1 : 0)}%` })) : null,
         el("div", { class: "toolbar" }, [

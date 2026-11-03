@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 
 from . import jobs
+from . import problems
 
 IS_LINUX = platform.system() == "Linux"
 _HOSTNAME = re.compile(r"^(?=.{1,253}$)([A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$")
@@ -46,7 +47,8 @@ def public_ip() -> str | None:
                 if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", ip):
                     _public_ip_cache.update(ip=ip, ts=time.time())
                     return ip
-        except Exception:
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
             continue
     return None
 

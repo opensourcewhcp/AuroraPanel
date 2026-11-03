@@ -988,8 +988,8 @@ window.AuroraExtras = (ui) => {
           items.sort((a, b) => b.n - a.n);
           if (!items.length) { mbox.append(el("p", { class: "muted", text: "No traffic recorded for this month." })); return; }
           mbox.append(el("div", { class: "mx-bw-month" }, [
-            sortableTable([{ k: "label", label: "Website / service" }, { k: "hits", label: "Requests", num: true, render: (r) => r.hits != null ? num(r.hits) : ", " },
-              { k: "visitors", label: "Visitors", num: true, render: (r) => r.visitors != null ? num(r.visitors) : ", " }, { k: "n", label: "Data", num: true, render: (r) => fmtBytes(r.n) }], items, { sort: "n" }),
+            sortableTable([{ k: "label", label: "Website / service" }, { k: "hits", label: "Requests", num: true, render: (r) => r.hits != null ? num(r.hits) : "n/a" },
+              { k: "visitors", label: "Visitors", num: true, render: (r) => r.visitors != null ? num(r.visitors) : "n/a" }, { k: "n", label: "Data", num: true, render: (r) => fmtBytes(r.n) }], items, { sort: "n" }),
             donut(items.slice(0, 9).concat(items.length > 9 ? [{ label: "Everything else", n: items.slice(9).reduce((a, x) => a + x.n, 0) }] : []), fmtBytes),
           ]));
         };

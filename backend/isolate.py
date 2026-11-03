@@ -18,6 +18,7 @@ import subprocess
 from pathlib import Path
 
 from . import jobs
+from . import problems
 
 try:
     import pwd  # Linux only (the panel runs on Linux; tests also run on Windows)
@@ -121,8 +122,8 @@ def status() -> dict:
             try:
                 import psutil
                 rss = sum(p.info["memory_info"].rss for p in psutil.process_iter(["username", "memory_info"]) if p.info.get("username") == info.get("user") and p.info.get("memory_info"))
-            except Exception:
-                pass
+            except Exception as quiet_exc:
+                problems.quiet(quiet_exc)
         out.append({"site": s["server_name"], "docroot": s["docroot"], "on": on, "user": info.get("user", user), "pool": info.get("pool", pool),
                     "socket": f"/run/php/{pool}.sock", "socket_ok": on and Path(f"/run/php/{info.get('pool', pool)}.sock").exists(),
                     "ram": rss, "since": info.get("since")})
@@ -302,7 +303,8 @@ def owner_of(path: str) -> tuple[str, str] | None:
     for name, info in _load()["sites"].items():
         try:
             root = str(Path(sites.get_site(name)["settings"]["docroot"]).resolve())
-        except Exception:
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
             continue
         if p == root or p.startswith(root + "/"):
             return info["owner"], info["user"]

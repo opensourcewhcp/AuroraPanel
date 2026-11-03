@@ -16,6 +16,7 @@ import time
 import urllib.request
 from datetime import datetime
 from pathlib import Path
+from . import problems
 
 STATE = Path("/var/lib/aurora/alerts.json")
 SNOOZE = Path("/var/lib/aurora/alerts-snooze.json")  # own file: written from Slack buttons in the panel process
@@ -81,8 +82,8 @@ def public(s: dict | None = None) -> dict:
         from . import mail
         if mail.installed():
             accounts = sorted(a for a in mail.load()["accounts"] if not mail.is_local(a.split("@")[1]))
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return {"channels": ch, "rules": s["rules"], "min_level": s["min_level"], "remind_hours": s["remind_hours"], "quiet": s["quiet"],
             "active": sorted(s["active"].values(), key=lambda a: (-LEVELS.get(a["level"], 0), -a["since"])),
             "history": s["history"][-200:][::-1], "mail_accounts": accounts, "sendmail": bool(shutil.which("sendmail", path=PATH)),
@@ -169,7 +170,8 @@ def _slack_on() -> bool:
     try:
         from . import slackbot
         return slackbot.enabled()
-    except Exception:
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
         return False
 
 
@@ -188,8 +190,8 @@ def _default_from() -> str:
         local = mail.local_domain_name()
         if local in mail.load().get("domains", {}):
             return f"aurora@{local}"
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     host = socket.getfqdn() or "localhost"
     return f"aurora@{host if '.' in host else host + '.local'}"
 
@@ -370,8 +372,8 @@ def collect(s: dict) -> dict[str, tuple]:
                 top = ", ".join(f"{ip} ×{n}" for ip, n in sorted(ips.items(), key=lambda x: -x[1])[:5])
                 found["waf"] = ("warning", f"Attack wave: the WAF blocked {len(ev)} requests in 10 minutes", f"Top sources: {top}. You can ban them from Security → WAF Firewall.",
                                 {"ips": sorted(ips.items(), key=lambda x: -x[1])[:5]})
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     try:
         from . import audit
         fails = [e for e in audit.entries(days=1, q="login failed")["entries"] if e["ts"] >= now - 900]
@@ -382,8 +384,8 @@ def collect(s: dict) -> dict[str, tuple]:
             found["logins"] = ("warning", f"{len(fails)} failed panel logins in 15 minutes",
                                f"From: {', '.join(sorted(per)[:6])}. Fail2ban bans repeat offenders; make sure 2FA is on.",
                                {"ips": sorted(per.items(), key=lambda x: -x[1])[:5]})
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     if r["backups"]:
         try:
             from . import schedules
@@ -394,8 +396,8 @@ def collect(s: dict) -> dict[str, tuple]:
                 elif p.get("enabled") and p.get("last_ok_ts") and now - p["last_ok_ts"] > schedules.period(p) * 2 + 3600:
                     found[f"backup:{p['id']}:stale"] = ("warning", f"Backup “{p['name']}” hasn't succeeded since {datetime.fromtimestamp(p['last_ok_ts']):%b %d}",
                                                        "Scheduled Backups shows the last runs.")
-        except Exception:
-            pass
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
     if r["updates"]:
         try:
             from . import updates
@@ -403,8 +405,8 @@ def collect(s: dict) -> dict[str, tuple]:
             if u.get("security"):
                 found["updates"] = ("warning", f"{u['security']} security update{'s' if u['security'] != 1 else ''} waiting",
                                     "System → Updates installs them in one click (or turn on automatic security updates).")
-        except Exception:
-            pass
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
     if r["reboot"] and Path("/var/run/reboot-required").exists():
         pk = ""
         try:
@@ -451,8 +453,8 @@ def check() -> dict:
         if a.get("last_sent") and channels_on and not s["quiet"]:
             try:
                 _send(s, "resolved", f"Resolved: {a['title']}", f"Back to normal after {_dur(now - a['since'])}.")
-            except Exception:
-                pass
+            except Exception as quiet_exc:
+                problems.quiet(quiet_exc)
     s["history"] = s["history"][-500:]
     s["checked"] = now
     _save(s)

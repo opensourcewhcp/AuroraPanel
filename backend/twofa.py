@@ -13,6 +13,7 @@ import struct
 import time
 
 from . import config
+from . import problems
 
 _DIGITS = 6
 _PERIOD = 30
@@ -89,7 +90,8 @@ def qr_data_uri(text: str) -> str:
     try:
         import segno
         return segno.make(text, error="m").svg_data_uri(scale=6, border=3, dark="#000", light="#fff")
-    except Exception:
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
         return ""
 
 

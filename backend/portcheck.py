@@ -18,6 +18,7 @@ import urllib.request
 
 from . import jobs
 from .vpncommon import APT, APT_ENV, default_route, public_ip
+from . import problems
 
 UA = {"User-Agent": "AuroraPanel-PortCheck/1.0", "Accept": "application/json"}
 
@@ -92,8 +93,8 @@ def _probe_tcp(ip: str, port: int) -> bool | None:
             d = json.loads(r.read().decode())
         if d.get("ip") == ip:
             return bool(d.get("reachable"))
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     try:
         body = json.dumps({"host": ip, "ports": [port]}).encode()
         req = urllib.request.Request("https://portchecker.io/api/v1/query", data=body,
@@ -101,7 +102,8 @@ def _probe_tcp(ip: str, port: int) -> bool | None:
         with urllib.request.urlopen(req, timeout=15) as r:
             d = json.loads(r.read().decode())
         return bool(d["check"][0]["status"])
-    except Exception:
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
         return None
 
 

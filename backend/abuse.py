@@ -15,6 +15,7 @@ import time
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+from . import problems
 
 CONF = Path("/var/lib/aurora/abuse.json")
 RDAP = "https://rdap.org/ip/{ip}"
@@ -121,8 +122,8 @@ def evidence(ip: str, days: int = 7) -> list[dict]:
                 port = f"{c['port']}/{c.get('proto') or 'tcp'}" if c.get("port") else (c.get("proto") or "?")
                 ev.append({"ts": c["ts"], "source": "firewall", "kind": "probe", "port": port,
                            "detail": f"connection attempt to port {port}" + (" — dropped (banned)" if c.get("blocked") else "")})
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     try:
         from . import waf
         for w in waf.events(hours=days * 24, limit=500, ip=ip):
@@ -130,8 +131,8 @@ def evidence(ip: str, days: int = 7) -> list[dict]:
             req = " ".join(w["request"].split(" ")[:2])[:160]
             ev.append({"ts": w["ts"], "source": "web firewall", "kind": "attack",
                        "detail": f"{r['category']} ({r['msg'][:80]}) — {req}" + (" — blocked" if w["blocked"] else "")})
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return sorted(ev, key=lambda e: -e["ts"])
 
 

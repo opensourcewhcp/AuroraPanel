@@ -11,8 +11,9 @@ import json
 import re
 import urllib.error
 import urllib.request
+from . import problems
 
-VERSION = "1.1.30"
+VERSION = "1.1.31"
 LABEL = "v" + VERSION
 RELEASED = "2026-11-02"
 VERSION_URL = "https://aurora51.com/version.json"
@@ -316,7 +317,8 @@ def snapshot_current() -> str | None:
             return None
         tmp.replace(dest)
         return str(dest)
-    except Exception:
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
         return None
 
 

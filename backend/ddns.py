@@ -16,6 +16,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from . import problems
 
 CONFIG = Path("/var/lib/aurora/ddns.json")
 UNIT_DIR = Path("/etc/systemd/system")
@@ -88,7 +89,8 @@ def _public_ip() -> str:
                 ip = r.read().decode().strip()
             if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", ip):
                 return ip
-        except Exception:
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
             continue
     raise DDNSError("Could not determine the public IP (no internet?)")
 

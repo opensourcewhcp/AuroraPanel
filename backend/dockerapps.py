@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 from . import jobs
+from . import problems
 
 BASE = Path("/opt/aurora-apps")
 PATH = "/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bin"
@@ -152,8 +153,8 @@ def post_install() -> list[str]:
     try:
         if mem_cgroup()["can_enable"] and enable_mem_cgroup()["changed"]:
             notes.append("• Memory accounting for containers turned on in cmdline.txt — RAM figures and limits work after the next reboot")
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return notes
 
 
@@ -189,8 +190,8 @@ def enable_mem_cgroup() -> dict:
     try:
         from . import audit
         audit.record("system", "", "docker: memory cgroup enabled in cmdline.txt (reboot to apply)")
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return {"ok": True, "changed": True}
 
 
@@ -209,8 +210,8 @@ def _lan_ip() -> str:
                     ip = ipaddress.ip_address(a.address)
                     if ip.is_private and not ip.is_loopback:
                         return a.address
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return ""
 
 
@@ -461,8 +462,8 @@ def _lan_net() -> str:
             for a in addrs:
                 if a.family == socket.AF_INET and a.address == ip and a.netmask:
                     return str(ipaddress.ip_network(f"{ip}/{a.netmask}", strict=False))
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return str(ipaddress.ip_network(f"{ip}/24", strict=False))
 
 
@@ -511,8 +512,8 @@ def _tls_pair(name: str) -> tuple[str, str]:
         from . import panelhttps
         if panelhttps.SELF_CRT.is_file() and panelhttps.SELF_KEY.is_file():
             return str(panelhttps.SELF_CRT), str(panelhttps.SELF_KEY)
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     d = BASE / name / "tls"
     d.mkdir(parents=True, exist_ok=True)
     crt, key = d / "cert.pem", d / "key.pem"
@@ -736,8 +737,8 @@ def install(app_id: str, name: str = "", access: str = "proxy", domain: str = ""
         try:
             from . import audit
             audit.record("system", "", f"docker app installed ({name}: {app_id})")
-        except Exception:
-            pass
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
         return {"ok": True, "name": name}
 
     return jobs.launch_fn(f"install {app['name']}", fn, meta={"docker": name})
@@ -798,13 +799,13 @@ def remove(name: str, delete_data: bool = False) -> dict:
         try:
             from . import sites
             sites.remove_site(inst["domain"])
-        except Exception:
-            pass
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
     if inst.get("tls_port"):
         try:
             tls_front_remove(name, inst)
-        except Exception:
-            pass
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
     if delete_data:
         shutil.rmtree(BASE / name, ignore_errors=True)
     d = _state()
@@ -996,8 +997,8 @@ def container_action(ref: str, action: str) -> dict:
     try:
         from . import audit
         audit.record("system", "", f"docker container {action} ({ref})")
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return {"ok": True}
 
 
@@ -1205,15 +1206,15 @@ def update_settings(name: str, data: dict) -> jobs.Job:
             try:
                 from . import sites
                 sites.remove_site(old_domain)
-            except Exception:
-                pass
+            except Exception as quiet_exc:
+                problems.quiet(quiet_exc)
         log.progress(100, "Settings applied")
         log("✓ Settings applied")
         try:
             from . import audit
             audit.record("system", "", f"docker container settings changed ({name})")
-        except Exception:
-            pass
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
         return {"ok": True}
     return jobs.launch_fn(f"reconfigure {name}", fn, meta={"docker": name})
 
@@ -1299,8 +1300,8 @@ def recreate_external(ref: str, data: dict) -> jobs.Job:
         try:
             from . import audit
             audit.record("system", "", f"docker container re-created ({name})")
-        except Exception:
-            pass
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
         return {"ok": True}
     return jobs.launch_fn(f"re-create {name}", fn, meta={"docker": name})
 
@@ -1499,8 +1500,8 @@ def create_custom(data: dict) -> jobs.Job:
         try:
             from . import audit
             audit.record("system", "", f"docker custom container created ({name}: {spec['image']})")
-        except Exception:
-            pass
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
         return {"ok": True, "name": name}
     return jobs.launch_fn(f"create {name}", fn, meta={"docker": name})
 

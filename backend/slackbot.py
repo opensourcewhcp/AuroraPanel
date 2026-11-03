@@ -28,6 +28,7 @@ import time
 import urllib.request
 from datetime import datetime
 from pathlib import Path
+from . import problems
 
 STATE = Path("/var/lib/aurora/slack.json")        # settings + tokens (written by the panel)
 SEEN = Path("/var/lib/aurora/slack-seen.json")     # which attackers were reported (written by the task runner)
@@ -194,7 +195,8 @@ def _ip_state(ip: str) -> str:
     try:
         from . import guard
         return guard.status_of([ip]).get(ip, "")
-    except Exception:
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
         return ""
 
 
@@ -202,7 +204,8 @@ def _rule_allowed(rule: str) -> bool:
     try:
         from . import waf
         return str(rule) in waf.load().get("disabled_rules", {})
-    except Exception:
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
         return False
 
 
@@ -386,8 +389,8 @@ def _audit(name: str, action: str, ok: bool = True, detail=None) -> None:
     try:
         from . import audit
         audit.record(f"slack:{name}"[:64], "slack", action, ok=ok, status=200 if ok else 400, detail=detail, method="SLACK", path="/slack")
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
 
 
 def _do(action: str, v: dict, name: str) -> str:
@@ -561,22 +564,22 @@ def _ip_summary(ip: str) -> list[str]:
             ev = waf.events(hours=24, limit=2000, ip=ip)
             if ev:
                 out.append(f"WAF: *{len(ev)}* blocked or flagged requests in 24 h, e.g. `{esc(ev[0]['request'][:150])}`")
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     try:
         from . import audit
         n = sum(1 for e in audit.entries(days=1, q="login failed")["entries"] if e.get("ip") == ip)
         if n:
             out.append(f"Failed panel logins in 24 h: *{n}*")
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     try:
         from . import guard
         j = guard._f2b_jails_by_ip().get(ip)
         if j:
             out.append(f"fail2ban: banned in {esc(', '.join(j))}")
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return out or ["Nothing from this address in the last 24 hours."]
 
 

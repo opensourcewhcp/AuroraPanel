@@ -21,6 +21,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from . import guard
+from . import problems
 
 STATE = Path("/var/lib/aurora/instaban.json")
 LOG_DIR = Path("/var/log/apache2")
@@ -232,7 +233,8 @@ def _ports_source() -> bool:
     try:
         from . import netmon
         return bool(netmon.unit_state("aurora-netmon.service")["active"])
-    except Exception:
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
         return False
 
 
@@ -527,12 +529,14 @@ def _port_events(now: float, s: dict) -> list[dict]:
     """New inbound connections since the last pass, from the kernel log the Network Monitor keeps."""
     try:
         from . import netmon
-    except Exception:
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
         return []
     last_scan = s.get("last_scan") or (now - 30)
     try:
         rows = netmon.connections(max(15, min(3600, int(now - last_scan) + 5)))
-    except Exception:
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
         return []
     last = s.get("ports_seen_ts", 0)
     out = [{"ts": r["ts"], "src": r["src"], "port": r["port"]} for r in rows if r.get("port") and r["ts"] > last]
@@ -556,8 +560,8 @@ def start(interval: int = 10) -> None:
             try:
                 if load()["enabled"]:
                     scan()
-            except Exception:
-                pass
+            except Exception as quiet_exc:
+                problems.quiet(quiet_exc)
 
     _thread = threading.Thread(target=loop, name="instaban", daemon=True)
     _thread.start()

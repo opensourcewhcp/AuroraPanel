@@ -6,6 +6,8 @@ one-shot container actions with docker mocked, so regressions in that logic fail
 import json
 import types
 
+import sys
+
 import pytest
 
 from backend import dockerapps as dk
@@ -183,6 +185,7 @@ def test_recreate_external_refuses_managed(monkeypatch):
         dk.recreate_external("web", {})
 
 
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="needs os.chown / os.uname (the panel runs on Linux)")
 def test_catalog_shape():
     c = dk.catalog()
     ids = {x["id"] for x in c["catalog"]}

@@ -22,6 +22,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import urlsplit
+from . import problems
 
 STATE = Path("/var/lib/aurora/servers.json")
 
@@ -158,14 +159,14 @@ def self_summary() -> dict:
             if temps.get(k):
                 out["temp"] = round(temps[k][0].current)
                 break
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     try:
         from . import system_info
         out["pi"] = system_info.is_pi()
         out["model"] = Path("/proc/device-tree/model").read_text().strip("\x00").strip() if Path("/proc/device-tree/model").exists() else ""
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     try:
         from . import alerts
         a = alerts.load()["active"]
@@ -176,8 +177,8 @@ def self_summary() -> dict:
         from . import updates
         u = updates.cached()
         out["updates"] = {"total": u.get("total", 0), "security": u.get("security", 0), "reboot": Path("/var/run/reboot-required").exists()}
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     try:
         import subprocess
         r = subprocess.run(["systemctl", "--failed", "--no-legend", "--plain"], capture_output=True, text=True, timeout=10)
@@ -188,8 +189,8 @@ def self_summary() -> dict:
         from . import guard
         g = guard.listing()
         out["bans"] = len(g["bans"]) + len(g["fail2ban"])
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return out
 
 

@@ -30,7 +30,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from . import jobs
+from . import jobs, problems
 from .vpncommon import (
     STATE_DIR, VPNError, control as _control, default_route, dns_servers, enable_forwarding,
     endpoint, load_json, ns_cleanup, ns_exec, ns_ping, run, save_json, set_nat, TEST_NS,
@@ -75,7 +75,8 @@ def check(stored, pw):
         algo, iters, salt, digest = stored.split("$")
         got = hashlib.pbkdf2_hmac("sha256", pw.encode(), bytes.fromhex(salt), int(iters)).hex()
         return algo == "pbkdf2_sha256" and hmac.compare_digest(got, digest)
-    except Exception:
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
         return False
 
 def main():
@@ -84,15 +85,16 @@ def main():
         with open(sys.argv[1], encoding="utf-8", errors="replace") as f:
             lines = f.read().split("\n")
         user, pw = lines[0].strip(), (lines[1] if len(lines) > 1 else "")
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     cn = os.environ.get("common_name") or os.environ.get("X509_0_CN") or ""
     if cn == "UNDEF":
         cn = ""
     try:
         with open(DB, encoding="utf-8") as f:
             users = json.load(f).get("users", {})
-    except Exception:
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
         return log(False, user, "user database unreadable")
     c = users.get(cn) if cn else None
     if c and c.get("mode") == "cert":

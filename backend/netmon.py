@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 from .vpncommon import VPNError, default_route, run, unit_state
+from . import problems
 
 MON_FILE = Path("/var/lib/aurora/netmon.nft")
 MON_UNIT = Path("/etc/systemd/system/aurora-netmon.service")
@@ -44,8 +45,8 @@ def _service_names() -> dict[int, str]:
         from . import openvpn, wireguard
         names[wireguard._state()["port"]] = "WireGuard"
         names[openvpn._state()["port"]] = "OpenVPN"
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return names
 
 
@@ -199,8 +200,8 @@ def auth_events(since_s: int) -> list[dict]:
                 events.append({"ts": p["latest_handshake"], "source": "WireGuard", "kind": "vpn", "outcome": "ok",
                                "ip": clean(ip, 45), "user": p["name"], "scope": _scope(ip, lan_net),
                                "detail": "Latest handshake"})
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     events.sort(key=lambda x: x["ts"], reverse=True)
     return events[:500]
 

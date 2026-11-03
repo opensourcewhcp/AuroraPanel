@@ -34,6 +34,7 @@ import zipfile
 from pathlib import Path
 
 from . import appcatalog, databases, jobs, sites
+from . import problems
 
 REGISTRY = Path("/var/lib/aurora/apps.json")
 APP_DATA = Path("/var/lib/aurora/app-data")
@@ -112,7 +113,8 @@ def _db_pw(n: int = 28) -> str:
 def _pi_ip() -> str:
     try:
         return sites._local_ip()
-    except Exception:
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
         return ""
 
 
@@ -286,8 +288,8 @@ def _own_scheme() -> str:
         for x in sites.list_sites().get("sites", []):
             if x["system"] and x.get("has_http") and x["enabled"] and x.get("force_https") and x.get("https_via"):
                 return "https"
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return "http"
 
 
@@ -844,8 +846,8 @@ def _work(app: dict, o: dict, log) -> dict:
             try:
                 databases._mysql(f"DROP DATABASE IF EXISTS `{entry['db']}`;")
                 databases._mysql(f"DROP USER IF EXISTS '{entry['db_user']}'@'localhost';")
-            except Exception:
-                pass
+            except Exception as quiet_exc:
+                problems.quiet(quiet_exc)
         if suffix:
             shutil.rmtree(dest, ignore_errors=True)  # the project folder is always ours
             if site_dir.is_symlink():
@@ -858,8 +860,8 @@ def _work(app: dict, o: dict, log) -> dict:
         if isinstance(created, dict) and created.get("folder_site"):
             try:
                 sites.remove_folder_site(created["folder_site"])
-            except Exception:
-                pass
+            except Exception as quiet_exc:
+                problems.quiet(quiet_exc)
         raise
     web = url
     entry.update(url=web, version=src.get("version") or "", admin_user=o.get("admin_user") if o["setup"] else None,

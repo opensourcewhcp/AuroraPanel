@@ -13,6 +13,7 @@ import re
 import threading
 import time
 from pathlib import Path
+from . import problems
 
 LOG = Path(os.environ.get("AURORA_AUDIT_LOG", "/var/lib/aurora/audit.jsonl"))
 MAX_BYTES = 5 * 1024 * 1024
@@ -175,7 +176,8 @@ def _to_recycle_bin(lines: list[str]) -> dict | None:
                 "is_dir": False, "deleted_at": time.time()}
         (tdir / f"{tid}.json").write_text(json.dumps(meta), encoding="utf-8")
         return {"id": tid, "name": name, "lines": len(lines)}
-    except Exception:
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
         return None
 
 

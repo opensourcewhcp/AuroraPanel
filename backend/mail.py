@@ -32,6 +32,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from . import jobs
+from . import problems
 
 IS_LINUX = platform.system() == "Linux"
 PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
@@ -237,14 +238,14 @@ def candidate_domains() -> list[str]:
                 n = (n or "").lower()
                 if _DOMAIN.match(n) and not n.startswith("www.") and "." in n and not is_ip_name(n):
                     out.add(n)
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     try:
         from . import dnszones
         for z in dnszones.list_zones([]).get("zones", []):
             out.add(z["domain"])
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return sorted(out)
 
 
@@ -1384,8 +1385,8 @@ def _follow_dns() -> None:
             apply(s)
         _routing_seen.clear()
         _routing_seen.update(now)
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
 
 
 def status() -> dict:
@@ -1501,8 +1502,8 @@ def setup(log, host: str | None = None) -> dict:
         if fail2ban._client() and fail2ban.LOCAL.exists():
             fail2ban.save(None, None)
             log("• Fail2ban now also guards SMTP and IMAP/POP3 logins")
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     for d in s["domains"]:
         ensure_dkim(d)
     return {"hostname": host}
@@ -1967,7 +1968,8 @@ def _resolver():
 def _txt(name: str) -> list[str]:
     try:
         return ["".join(p.decode(errors="replace") for p in rr.strings) for rr in _resolver().resolve(name, "TXT")]
-    except Exception:
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
         return []
 
 
@@ -1987,7 +1989,8 @@ def _mx(d: str) -> list[tuple[int, str]]:
     def look():
         try:
             return sorted((rr.preference, str(rr.exchange).rstrip(".").lower()) for rr in _resolver().resolve(d, "MX"))
-        except Exception:
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
             return []
     return _cached(("mx", d), look)
 
@@ -1998,8 +2001,8 @@ def _a(name: str) -> list[str]:
         for t in ("A", "AAAA"):
             try:
                 out += [str(rr) for rr in _resolver().resolve(name, t)]
-            except Exception:
-                pass
+            except Exception as quiet_exc:
+                problems.quiet(quiet_exc)
         return out
     return _cached(("a", name), look, 120)
 
@@ -2009,7 +2012,8 @@ def _ptr(ip: str) -> str:
         try:
             import dns.reversename
             return [str(_resolver().resolve(dns.reversename.from_address(ip), "PTR")[0]).rstrip(".").lower()]
-        except Exception:
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
             return [""]
     return _cached(("ptr", ip), look, 600)[0] if ip else ""
 
@@ -2017,7 +2021,8 @@ def _ptr(ip: str) -> str:
 def _ns(d: str) -> list[str]:
     try:
         return sorted(str(rr).rstrip(".").lower() for rr in _resolver().resolve(d, "NS"))
-    except Exception:
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
         return []
 
 
@@ -2037,8 +2042,8 @@ def _public_ip() -> str:
         try:
             import urllib.request
             ip = urllib.request.urlopen("https://api.ipify.org", timeout=5).read().decode().strip() or ip
-        except Exception:
-            pass
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
     _ip_cache = (time.time(), ip)
     return ip
 
@@ -2136,8 +2141,8 @@ def deliverability(d: str) -> dict:
     try:
         import dns.reversename
         ptr = str(_resolver().resolve(dns.reversename.from_address(ip), "PTR")[0]).rstrip(".").lower() if ip else ""
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     fwd = ip in _a(ptr) if ptr else False
     checks["ptr"] = {"ok": bool(ptr) and fwd and ptr == host, "current": ptr, "hostname": host, "ip": ip,
                      "note": ("" if ptr == host and fwd else
@@ -2148,8 +2153,8 @@ def deliverability(d: str) -> dict:
     try:
         from . import dnszones
         zone = dnszones._path(d).exists()
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     authoritative = any(n in mine or ip in _a(n) for n in ns)
     return {"domain": d, "checks": checks, "nameservers": ns, "zone_here": zone, "authoritative": authoritative,
             "score": sum(1 for c in checks.values() if c["ok"]), "total": len(checks), "hostname": host, "ip": ip}
@@ -2845,8 +2850,8 @@ def remote_test(a: dict, password: str) -> None:
         finally:
             try:
                 c.logout()
-            except Exception:
-                pass
+            except Exception as quiet_exc:
+                problems.quiet(quiet_exc)
     except imaplib.IMAP4.error as exc:
         hint = REMOTE_PRESETS.get(a.get("preset", ""), {}).get("hint", "")
         raise MailError(f"The server refused the sign-in ({str(exc)[:120]}). {hint}".strip())
@@ -2905,8 +2910,8 @@ def _refresh_webmail_hosts() -> None:
     if RC_CONF.exists() and webmail_installed():
         try:
             setup_webmail()
-        except Exception:
-            pass
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
 
 
 def repair_webmail_hosts() -> bool:
@@ -2916,8 +2921,8 @@ def repair_webmail_hosts() -> bool:
         if RC_CONF.exists() and webmail_installed() and "'localhost:143' => 'tls://localhost:587'" in RC_CONF.read_text(errors="replace"):
             setup_webmail()
             return True
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return False
 
 
@@ -2943,7 +2948,8 @@ def _hdr(msg, name: str) -> str:
     raw = msg.get(name, "") or ""
     try:
         return str(make_header(decode_header(raw))).strip()
-    except Exception:
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
         return str(raw).strip()
 
 

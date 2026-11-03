@@ -17,6 +17,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from . import problems
 
 IS_LINUX = platform.system() == "Linux"
 _pending: dict = {}          # the one change awaiting confirmation
@@ -73,8 +74,8 @@ def _iface_for_ip(ip: str | None) -> str | None:
         for name, addrs in psutil.net_if_addrs().items():
             if any(a.address == ip for a in addrs):
                 return name
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return None
 
 
@@ -177,8 +178,8 @@ def _arm(label: str, undo, new_url: str | None) -> dict:
                 _pending.clear()
             try:
                 undo_fn()
-            except Exception:
-                pass
+            except Exception as quiet_exc:
+                problems.quiet(quiet_exc)
             return
     threading.Thread(target=watchdog, daemon=True).start()
     return pending_status()

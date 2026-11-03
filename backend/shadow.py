@@ -23,6 +23,7 @@ import shutil
 import threading
 import time
 from pathlib import Path
+from . import problems
 
 ROOT = Path("/var/lib/aurora/shadow")
 CONF = ROOT / "config.json"
@@ -81,8 +82,8 @@ def targets() -> list[dict]:
             if root and root not in seen and Path(root).is_dir():
                 seen.add(root)
                 out.append({"id": f"folder:{f['name']}", "kind": "folder", "name": f"/{f['name']}", "path": root, "enabled_site": True})
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return out
 
 
@@ -309,7 +310,8 @@ def before_change(path) -> None:
                 if n:
                     _save_manifest(store, m)
             return
-    except Exception:
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
         return
 
 
@@ -449,8 +451,8 @@ def restore(sid: str, rel: str, ts: int) -> dict:
     try:
         from . import files as F
         F._give_to_site(dst)
-    except Exception:
-        pass
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     st = dst.stat()
     with _lock:
         store = _store(sid)
