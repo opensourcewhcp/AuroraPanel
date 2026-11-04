@@ -242,6 +242,7 @@ const API = (() => {
     secreportFix: (action) => request("POST", "/api/secreport/fix", { action }),
     secreportRun: (targets, deep) => request("POST", "/api/secreport/run", { targets, deep: !!deep }),
     secreportAccept: (key, accepted, note) => request("POST", "/api/secreport/accept", { key, accepted, note: note || "" }),
+    dmarcDomains: () => request("GET", "/api/dmarc/domains"),
     dmarc: (domain) => request("GET", `/api/dmarc?domain=${encodeURIComponent(domain)}`),
     dmarcRecommend: (domain, answers) => request("POST", "/api/dmarc/recommend", { domain, answers }),
     dmarcPreview: (domain, settings) => request("POST", "/api/dmarc/preview", { domain, settings }),

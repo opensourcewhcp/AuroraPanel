@@ -1414,6 +1414,11 @@ def _dmarc(fn, *a):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.get("/api/dmarc/domains")
+def api_dmarc_domains(user: str = auth.CurrentUser):
+    return {"domains": dmarc.domains()}
+
+
 @app.get("/api/dmarc")
 def api_dmarc(domain: str, user: str = auth.CurrentUser):
     return _dmarc(dmarc.status, domain)

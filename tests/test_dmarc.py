@@ -176,3 +176,16 @@ def test_status(monkeypatch):
     z.zones.clear()
     st = dmarc.status("example.com")
     assert st["zone"] == "" and st["default_reports"] == "postmaster@example.com"
+
+
+def test_domains_lists_mail_and_site_main_domains(monkeypatch):
+    import backend.mail as mail
+    import backend.sites as sites
+    monkeypatch.setattr(mail, "load", lambda: {"domains": {"shop.com": {}, "ns0.local": {}}})
+    monkeypatch.setattr(sites, "list_sites", lambda: {"sites": [{"server_name": "www.blog.example.org"}, {"server_name": "shop.com"},
+                                                                {"server_name": "192.168.0.5", "system": True}, {"server_name": "x.test"}]})
+    assert dmarc.domains() == [{"domain": "shop.com", "mail": True, "sites": ["shop.com"]},
+                               {"domain": "example.org", "mail": False, "sites": ["www.blog.example.org"]}]
+    monkeypatch.setattr(mail, "load", lambda: (_ for _ in ()).throw(OSError("x")))
+    monkeypatch.setattr(sites, "list_sites", lambda: (_ for _ in ()).throw(OSError("x")))
+    assert dmarc.domains() == []

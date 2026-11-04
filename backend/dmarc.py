@@ -410,6 +410,30 @@ def _zone_record(zone: str, domain: str) -> tuple[str, list[int]]:
     return text, idx
 
 
+def domains() -> list[dict]:
+    """The domains DMARC is about here: every mail domain, and the main domain of every website (DMARC protects
+    the From: domain, so www.shop.example.com is covered by example.com)."""
+    out: dict[str, dict] = {}
+    try:
+        from . import mail
+        for d in sorted(mail.load().get("domains") or {}):
+            if is_public(d):
+                out[d] = {"domain": d, "mail": True, "sites": []}
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
+    try:
+        from . import sites as S
+        for s in S.list_sites()["sites"]:
+            name = (s.get("server_name") or "").lower()
+            org = org_domain(name)
+            if s.get("system") or not is_public(org):
+                continue
+            out.setdefault(org, {"domain": org, "mail": False, "sites": []})["sites"].append(name)
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
+    return sorted(out.values(), key=lambda x: (not x["mail"], x["domain"]))
+
+
 def status(domain: str) -> dict:
     domain = clean_domain(domain)
     if not is_public(domain):

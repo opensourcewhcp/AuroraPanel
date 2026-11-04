@@ -1795,52 +1795,54 @@ window.AuroraOps = (ui) => {
   // ======================================================================
   //  Security → Security Report (scores what this server owns)
   // ======================================================================
-  const SEV_TONE = { critical: "bad", high: "bad", medium: "warn", low: "dim", info: "dim" };
   const SEV_ORDER = ["critical", "high", "medium", "low", "info"];
+  const SEV_NAME = { critical: "Critical", high: "High", medium: "Medium", low: "Low", info: "Note" };
   const KIND_TXT = { panel: "Panel", site: "Website", ip: "By address", mail: "Mail server", network: "Network", dmarc: "Email authentication", server: "Server" };
   const KIND_ICON = { panel: "dashboard", site: "globe", ip: "globe", mail: "mail", network: "network", dmarc: "at", server: "shield" };
-  // The scan types an outside vulnerability scanner reports, and what covers each here.
   const SR_CATS = {
-    web: { name: "Web application", icon: "globe", what: "Security headers, Content-Security-Policy, cookies, forms, version banners, redirects" },
-    tls: { name: "SSL / TLS", icon: "lock", what: "Certificates, protocols, cipher suites, anonymous suites, known TLS attacks" },
-    network: { name: "Network", icon: "network", what: "Open TCP / UDP ports, exposed services, SSH algorithms, FTP, DNS, timestamps" },
-    email: { name: "Email authentication", icon: "at", what: "DMARC, SPF and DKIM for every domain" },
-    server: { name: "Server protections", icon: "shield", what: "2FA, Panel HTTPS, firewall, Fail2ban, WAF, trusted certificate authorities" },
+    web: { name: "Web", icon: "globe", what: "Security headers, Content-Security-Policy, cookies, forms, version banners, redirects" },
+    tls: { name: "SSL / TLS", icon: "lock", what: "Certificates, protocols, cipher suites, known TLS attacks" },
+    network: { name: "Network", icon: "network", what: "Open ports, exposed services, SSH, FTP, DNS, timestamps" },
+    email: { name: "Email", icon: "at", what: "DMARC, SPF and DKIM for every domain" },
+    server: { name: "Server", icon: "shield", what: "2FA, Panel HTTPS, firewall, Fail2ban, WAF, trusted certificate authorities" },
   };
   const SR_TOOLS = ["nmap", "testssl", "sshaudit"];
   const scoreTone = (n) => (n >= 90 ? "good" : n >= 65 ? "warn" : "bad");
   const shortDate = (ts) => new Date(ts * 1000).toLocaleDateString([], { month: "short", day: "numeric" });
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + "s"}`;
+  const tName = (t) => t.label.replace(/^[^·]+· /, "");
   function scoreRing(score, grade, size = 120) {
-    const r = size * 0.4, c = 2 * Math.PI * r, tone = scoreTone(score);
+    const r = size * 0.42, c = 2 * Math.PI * r, tone = scoreTone(score);
     const ring = el("div", { class: `sr-ring ${tone}`, style: `width:${size}px;height:${size}px` });
     ring.innerHTML = `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><circle cx="${size / 2}" cy="${size / 2}" r="${r}" class="sr-track"/>` +
       `<circle cx="${size / 2}" cy="${size / 2}" r="${r}" class="sr-bar" stroke-dasharray="${(c * score / 100).toFixed(1)} ${c.toFixed(1)}"/></svg>`;
     ring.append(el("b", {}, [document.createTextNode(grade), el("small", { text: `${score} / 100` })]));
     return ring;
   }
-  // The score over the last runs, as a small line with a dot on the newest.
+  // A line of the score over the last runs, only once there's something to compare.
   function srTrend(runs) {
-    const pts = (runs || []).slice(-20);
-    if (pts.length < 2) return null;
-    const w = 180, h = 44, step = w / (pts.length - 1);
-    const y = (s) => h - 4 - (Math.max(0, Math.min(100, s)) / 100) * (h - 8);
+    const pts = (runs || []).slice(-12);
+    if (pts.length < 3) return null;
+    const w = 120, h = 32, step = w / (pts.length - 1);
+    const y = (s) => h - 3 - (Math.max(0, Math.min(100, s)) / 100) * (h - 6);
     const path = pts.map((p, i) => `${i ? "L" : "M"}${(i * step).toFixed(1)} ${y(p.score).toFixed(1)}`).join(" ");
-    const lastP = pts[pts.length - 1], prev = pts[pts.length - 2], delta = lastP.score - prev.score;
-    const box = el("div", { class: "sr-trend", title: pts.map((p) => `${shortDate(p.ts)}: ${p.score}`).join("\n") });
-    box.innerHTML = `<svg width="${w}" height="${h}" viewBox="-4 0 ${w + 8} ${h}"><path d="${path} L${w} ${h} L0 ${h} Z" class="sr-trend-fill"/><path d="${path}" class="sr-trend-line"/>` +
-      `<circle cx="${w}" cy="${y(lastP.score).toFixed(1)}" r="3.5" class="sr-trend-dot"/></svg>`;
-    box.append(el("span", { class: `sr-delta ${delta > 0 ? "up" : delta < 0 ? "down" : ""}`, text: delta > 0 ? `+${delta} since last run` : delta < 0 ? `${delta} since last run` : "same as last run" }));
+    const box = el("span", { class: "sr-trend", title: pts.map((p) => `${shortDate(p.ts)}: ${p.score}`).join("\n") });
+    box.innerHTML = `<svg width="${w}" height="${h}" viewBox="-3 0 ${w + 6} ${h}"><path d="${path}"/><circle cx="${w}" cy="${y(pts[pts.length - 1].score).toFixed(1)}" r="3"/></svg>`;
     return box;
   }
+  const sevDot = (s) => el("span", { class: `sr-dot sev-${s}`, title: SEV_NAME[s] || s });
+  const sevTag = (s) => el("span", { class: `sr-sev sev-${s}`, text: SEV_NAME[s] || s });
 
   async function viewSecReport(root) {
     const runBtn = btn("Run report", () => run(), "btn-primary");
-    root.append(pageHead("Security Report", "Everything an outside vulnerability scanner checks, run from the inside and only for what you own here: web application headers, SSL/TLS, open ports and network services, email authentication (DMARC, SPF, DKIM) and the server's own protections. Every finding says how to fix it, most in one click.", [runBtn]));
+    root.append(pageHead("Security Report", "What an outside vulnerability scanner would find on this server, checked from the inside: websites, SSL/TLS, open ports, email authentication and the server's own protections. Each issue says what it means and how to fix it.", [runBtn]));
     const top = el("div", { class: "sr-top" });
     const body = el("div", { class: "sr-page" }, el("div", { class: "loading", text: "Loading…" }));
     root.append(top, body);
-    let d, picks = null, deepBox = null, filter = LS.get("sr.cat", "all"), tools = null, following = null;
+    let d, picks = null, deepBox = null, tools = null, following = null;
+    let filter = LS.get("sr.cat", "all"), view = LS.get("sr.view", "issues");
     const chosen = () => (picks ? [...picks.querySelectorAll("input[name=srt]:checked")].map((c) => c.value) : []);
+    const lastIds = () => (d.last ? d.last.targets.map((t) => t.id) : chosen());
 
     async function load() {
       try { [d, tools] = await Promise.all([API.secreport(), API.requires(SR_TOOLS).catch(() => null)]); }
@@ -1853,35 +1855,34 @@ window.AuroraOps = (ui) => {
       ids = ids || chosen();
       if (!ids.length) return toast("Pick at least one target", "bad");
       runBtn.disabled = true; runBtn.textContent = "Checking…";
-      try { const r = await API.secreportRun(ids, !!(deepBox && deepBox.checked && !deepBox.disabled)); follow(r.job); }
+      try { const r = await API.secreportRun(ids, !!(deepBox && deepBox.checked && !deepBox.disabled)); follow(r.job, ids.length); }
       catch (e) { toast(e.message, "bad"); runBtn.disabled = false; runBtn.textContent = "Run report"; }
     }
 
-    // Live progress while the job runs: stage, bar, each target as it's done.
-    async function follow(jobId) {
+    // While it runs: one calm card with the percentage and how many targets are done.
+    async function follow(jobId, total) {
       following = jobId;
+      total = total || (d.last ? d.last.targets.length : d.targets.length);
       runBtn.disabled = true; runBtn.textContent = "Checking…";
-      const bar = el("div", { class: "ax-bar" }, el("span"));
-      const stage = el("b", { text: "Starting…" });
-      const clock = el("span", { class: "muted mx-small" });
-      const lines = el("ul", { class: "sr-run-log" });
+      const bar = el("div", { class: "sr-run-bar" }, el("span"));
+      const pctEl = el("b", { class: "sr-run-pct", text: "0%" });
+      const what = el("span", { class: "sr-run-what", text: "Starting…" });
+      const count = el("span", { class: "sr-run-count" });
+      const steps = Object.values(SR_CATS).map((c) => el("span", { class: "sr-run-step" }, [icon(c.icon, 13), c.name]));
       const t0 = Date.now();
-      const steps = Object.values(SR_CATS).map((c) => el("span", { class: "sr-run-step" }, [icon(c.icon, 14), c.name]));
       top.innerHTML = "";
       top.append(el("div", { class: "card sr-run" }, [
-        el("div", { class: "sr-run-h" }, [el("span", { class: "sr-radar" }, icon("radar", 26)), el("div", { class: "grow" }, [stage, clock]), el("span", { class: "sr-run-pct" })]),
-        bar, el("div", { class: "sr-run-steps" }, steps), lines]));
-      const pctEl = top.querySelector(".sr-run-pct");
+        el("div", { class: "sr-run-h" }, [el("span", { class: "sr-radar" }, icon("radar", 24)),
+          el("div", { class: "grow" }, [el("b", { text: "Checking your server" }), what]), pctEl]),
+        bar, el("div", { class: "sr-run-foot" }, [el("div", { class: "sr-run-steps" }, steps), count])]));
       const j = await waitJob(jobId, (j) => {
         const pct = j.status === "done" ? 100 : (j.progress || 2);
         bar.firstChild.style.width = `${Math.max(2, pct)}%`;
         pctEl.textContent = `${Math.floor(pct)}%`;
-        stage.textContent = j.stage || "Checking…";
+        what.textContent = (j.stage || "Checking…").replace(/^Checked /, "Checked ").replace(/ · /, ": ");
+        const done = (j.output || "").split("\n").filter((l) => /: \d+ findings?$/.test(l)).length;
         const s = Math.floor((Date.now() - t0) / 1000);
-        clock.textContent = ` · ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-        const out = (j.output || "").split("\n").filter(Boolean).slice(-6);
-        lines.innerHTML = "";
-        out.forEach((l) => lines.append(el("li", {}, [icon(/: 0 findings$/.test(l) ? "check" : "dot", 12), l])));
+        count.textContent = `${Math.min(done, total)} of ${total} checked · ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
         steps.forEach((st, i) => st.classList.toggle("on", pct > 8 + i * 17));
       });
       following = null;
@@ -1889,14 +1890,13 @@ window.AuroraOps = (ui) => {
       top.innerHTML = "";
       if (!j || j.status !== "done" || !j.result) { toast(j && j.output ? j.output.split("\n").filter(Boolean).pop() : "The report failed", "bad"); return; }
       d = await API.secreport().catch(() => ({ ...d, last: j.result }));
+      // No pop-ups: the results appear in place, and the fix button glows once to say fixes are ready.
       draw();
-      const rep = d.last, c = rep.counts || {}, serious = (c.critical || 0) + (c.high || 0);
-      popNotice({ title: `Report done: ${rep.grade}, ${rep.score} / 100`, text: `${rep.targets.length} targets checked in ${rep.took} s. ${serious ? `${serious} serious finding${serious === 1 ? "" : "s"} to look at.` : "Nothing serious found."}`,
-        kind: serious ? "warn" : "good", icon: "shield", ms: 9000 });
-      if ((rep.fix_plan || []).some((p) => !p.interactive)) offerFixes(true);
+      const fx = body.querySelector(".sr-hero-act .btn-primary");
+      if (fx) fx.classList.add("sr-glow");
     }
 
-    // ---- one-click fixes, offered as a list right after a report ----
+    // ---- one-click fixes, offered as a checklist right after a report ----
     function offerFixes(auto) {
       const plan = (d.last && d.last.fix_plan) || [];
       if (!plan.length) return toast("Nothing left that can be fixed automatically", "good");
@@ -1904,22 +1904,22 @@ window.AuroraOps = (ui) => {
         const cb = el("input", { type: "checkbox" });
         cb.checked = !p.caution && !p.interactive;
         const mark = el("span", { class: "sr-fx-mark" });
-        const resolves = p.resolves.length > 3 ? `${p.resolves.slice(0, 3).join(" · ")} and ${p.resolves.length - 3} more` : p.resolves.join(" · ");
-        const li = el("li", { class: `sr-fx sev-${p.worst}` }, [
-          p.interactive ? el("span", { class: "sr-fx-open" }, icon("wand", 16)) : el("label", { class: "sr-fx-cb" }, cb),
+        const resolves = p.resolves.length > 2 ? `${p.resolves.slice(0, 2).join(" · ")} and ${p.resolves.length - 2} more` : p.resolves.join(" · ");
+        const li = el(p.interactive ? "div" : "label", { class: `sr-fx${p.interactive ? " open" : ""}` }, [
+          p.interactive ? el("span", { class: "sr-fx-ico" }, icon("wand", 16)) : cb,
           el("div", { class: "grow" }, [
-            el("div", { class: "sr-fx-t" }, [el("b", { text: p.label }), p.arg ? el("code", { text: p.arg }) : null, pill(p.worst, SEV_TONE[p.worst] || "dim")].filter(Boolean)),
-            el("p", { class: "muted", text: p.what }),
-            el("p", { class: "sr-fx-res" }, [el("span", { text: "Fixes: " }), resolves]),
+            el("div", { class: "sr-fx-t" }, [sevDot(p.worst), el("b", { text: p.label }), p.arg ? el("span", { class: "sr-fx-arg", text: p.arg }) : null].filter(Boolean)),
+            el("p", { text: p.what }),
+            el("p", { class: "sr-fx-res", text: `Clears: ${resolves}` }),
             p.caution ? el("p", { class: "sr-fx-warn" }, [icon("warning", 13), p.caution]) : null,
           ].filter(Boolean)),
           p.interactive ? btn("Open", () => { closeModal(); runFix(p.action, () => run(lastIds())); }, "btn-ghost btn-sm") : mark,
         ]);
         return { p, cb, li, mark };
       });
-      const auto_ = rows.filter((r) => !r.p.interactive);
+      const auto_ = rows.filter((r) => !r.p.interactive), manual = rows.filter((r) => r.p.interactive);
       const go = el("button", { class: "btn btn-primary" });
-      const count = () => { const n = auto_.filter((r) => r.cb.checked).length; go.textContent = n ? `Apply ${n} fix${n === 1 ? "" : "es"}` : "Pick the fixes to apply"; go.disabled = !n; };
+      const count = () => { const n = auto_.filter((r) => r.cb.checked).length; go.textContent = n ? `Apply ${plural(n, "fix", "fixes")}` : "Pick the fixes to apply"; go.disabled = !n; };
       auto_.forEach((r) => r.cb.addEventListener("change", count));
       count();
       go.onclick = async () => {
@@ -1930,145 +1930,225 @@ window.AuroraOps = (ui) => {
           r.mark.className = "sr-fx-mark busy"; r.mark.innerHTML = ""; r.mark.append(el("span", { class: "bk-spin" }));
           try {
             if (r.p.action === "panel_harden") { await API.panelHttpsHarden(); reload = true; }
-            else { const res = await API.secreportFix(r.p.action); r.li.title = res.message || ""; }
+            else await API.secreportFix(r.p.action);
             r.mark.className = "sr-fx-mark ok"; r.mark.innerHTML = ""; r.mark.append(icon("check", 16)); ok++;
           } catch (e) {
             r.mark.className = "sr-fx-mark bad"; r.mark.innerHTML = ""; r.mark.append(icon("error", 16));
-            r.li.append(el("p", { class: "sr-fx-err", text: e.message }));
+            r.li.querySelector(".grow").append(el("p", { class: "sr-fx-err", text: e.message }));
           }
         }
-        toast(`${ok} of ${todo.length} fix${todo.length === 1 ? "" : "es"} applied`, ok === todo.length ? "good" : "bad");
+        toast(`${ok} of ${plural(todo.length, "fix", "fixes")} applied`, ok === todo.length ? "good" : "bad");
         if (reload) { toast("The panel restarts with hardened TLS, reloading…", "good"); setTimeout(() => location.reload(), 4500); return; }
         go.textContent = "Checking again…";
         setTimeout(() => { closeModal(); run(lastIds()); }, 900);
       };
       openModal(auto ? "Fix what the report found" : "Apply fixes", el("div", { class: "sr-fx-wrap" }, [
-        el("p", { class: "muted", text: "Each fix changes only what it says, keeps a backup where it edits a file, and checks the result before it's kept. Fixes that change how people or programs connect start unticked. Afterwards the report runs again to confirm." }),
-        el("ul", { class: "sr-fx-list" }, rows.map((r) => r.li)),
-      ]), [go]);
+        el("p", { class: "muted", text: "Each fix changes only what it says and checks the result before keeping it. Fixes that change how people or programs connect start unticked. The report runs again afterwards." }),
+        auto_.length ? el("div", { class: "sr-fx-list" }, auto_.map((r) => r.li)) : null,
+        manual.length ? el("h4", { class: "sr-fx-h", text: "Needs a few answers from you" }) : null,
+        manual.length ? el("div", { class: "sr-fx-list" }, manual.map((r) => r.li)) : null,
+      ].filter(Boolean)), [go]);
       modalWide();
     }
-    const lastIds = () => (d.last ? d.last.targets.map((t) => t.id) : chosen());
 
-    function acceptDialog(f) {
+    function acceptDialog(fs, title) {
       const note = el("textarea", { rows: 3, placeholder: "Why it's fine as it is (optional)" });
       const chips = el("div", { class: "sr-reasons" }, ["False positive", "Intentional, part of how this server works", "Only reachable on my network", "Will fix later"].map((r) =>
         el("button", { type: "button", class: "cw-chip", text: r, onclick: () => { note.value = r; } })));
-      const ok = el("button", { class: "btn btn-primary", text: "Accept finding", onclick: async () => {
+      const ok = el("button", { class: "btn btn-primary", text: fs.length > 1 ? `Accept on ${plural(fs.length, "target")}` : "Accept" , onclick: async () => {
         ok.disabled = true;
-        try { const r = await API.secreportAccept(f.key, true, note.value); d.last = r.report; closeModal(); draw(); toast("Accepted, it no longer counts in the score", "good"); }
+        try { let r; for (const f of fs) r = await API.secreportAccept(f.key, true, note.value); d.last = r.report; closeModal(); draw(); toast("Accepted, it no longer counts in the score", "good"); }
         catch (e) { toast(e.message, "bad"); ok.disabled = false; }
       } });
-      openModal(`Accept “${f.title}”?`, el("div", { class: "em-form" }, [
-        el("p", { class: "muted", text: "An accepted finding was reviewed and is left as it is: a false positive, or part of how this server is meant to work. It stays listed, greyed out, and stops counting in the score. You can undo it any time." }),
+      openModal(`Accept “${title}”?`, el("div", { class: "em-form" }, [
+        el("p", { class: "muted", text: "Accept an issue you reviewed and want to keep as it is, like a false positive or something on purpose. It stays listed, greyed out, and stops counting in the score. You can undo it any time." }),
         chips, note]), [ok]);
     }
-    async function unaccept(f) {
-      try { const r = await API.secreportAccept(f.key, false, ""); d.last = r.report; draw(); toast("Counting again", "good"); }
+    async function unaccept(fs) {
+      try { let r; for (const f of fs) r = await API.secreportAccept(f.key, false, ""); d.last = r.report; draw(); toast("Counting again", "good"); }
       catch (e) { toast(e.message, "bad"); }
     }
-
-    function findingRow(f) {
-      const acc = f.accepted;
-      const meta = [f.first_seen ? `First seen ${shortDate(f.first_seen)}` : null, SR_CATS[f.cat] ? SR_CATS[f.cat].name : null,
-        acc ? `Accepted ${shortDate(acc.ts)}${acc.note ? `: ${acc.note}` : ""}` : null].filter(Boolean).join(" · ");
-      return el("div", { class: `sr-f sev-${f.severity}${acc ? " acc" : ""}` }, [
-        pill(acc ? "accepted" : f.severity, acc ? "dim" : SEV_TONE[f.severity] || "dim"),
-        el("div", { class: "grow" }, [
-          el("div", { class: "sr-f-t" }, [el("b", { text: f.title }), f.new && !acc ? el("span", { class: "sr-new", text: "new" }) : null].filter(Boolean)),
-          el("p", { class: "muted", text: f.detail }),
-          f.fix && !acc ? el("p", { class: "sr-fix" }, [el("b", { text: "Fix: " }), f.fix]) : null,
-          meta ? el("p", { class: "sr-f-meta", text: meta }) : null,
-        ].filter(Boolean)),
-        el("div", { class: "sr-f-act" }, [
-          f.action && !acc ? btn(fixLabel(f.action), () => runFix(f.action, () => run(lastIds())), "btn-primary btn-sm") : null,
-          f.view && !acc ? btn("Open", () => navigate(f.view), "btn-ghost btn-sm") : null,
-          f.key && f.severity !== "info" ? (acc ? btn("Count again", () => unaccept(f), "btn-ghost btn-sm") : btn("Accept", () => acceptDialog(f), "btn-ghost btn-sm")) : null,
-        ].filter(Boolean)),
-      ]);
+    // Every target's own fix, one after the other, then a fresh report.
+    async function fixAll(actions, b) {
+      const inter = actions.find((a) => a.startsWith("dmarc_wizard:") || a === "panel_regen" || a === "panel_harden");
+      if (inter || actions.length === 1) return runFix(actions[0], () => run(lastIds()));
+      b.disabled = true;
+      let ok = 0;
+      for (const a of actions) {
+        b.textContent = `Fixing ${ok + 1} of ${actions.length}…`;
+        try { await API.secreportFix(a); ok++; } catch (e) { toast(e.message, "bad"); }
+      }
+      toast(`${ok} of ${actions.length} fixed, checking again`, ok === actions.length ? "good" : "bad");
+      run(lastIds());
     }
 
-    function portsTable(ports, nmap) {
-      const FW = { open: ["open to all", "warn"], lan: ["limited", "good"], blocked: ["blocked", "good"], none: ["no firewall", "bad"] };
-      return el("div", { class: "sr-ports" }, [
-        el("div", { class: "sr-ports-h" }, [el("b", { text: `Open ports · ${ports.length}` }), el("span", { class: "muted mx-small", text: nmap ? "Versions as Nmap sees them" : "Install Nmap to see the version each port announces" })]),
+    // ---- the report ----
+    function issueGroups(rep) {
+      const m = new Map();
+      rep.targets.forEach((t) => t.findings.forEach((f) => {
+        if (filter !== "all" && f.cat !== filter) return;
+        const k = `${f.severity}|${f.title}`;
+        if (!m.has(k)) m.set(k, { sev: f.severity, title: f.title, f, items: [] });
+        m.get(k).items.push({ t, f });
+      }));
+      return [...m.values()].sort((a, b) => SEV_ORDER.indexOf(a.sev) - SEV_ORDER.indexOf(b.sev) || b.items.length - a.items.length || a.title.localeCompare(b.title));
+    }
+
+    function issueRow(g) {
+      const live = g.items.filter((x) => !x.f.accepted), acc = g.items.filter((x) => x.f.accepted);
+      const allAcc = !live.length;
+      const actions = [...new Set(live.map((x) => x.f.action).filter(Boolean))];
+      const f = g.f;
+      const kinds = new Set(g.items.map((x) => x.t.kind === "ip" ? "site" : x.t.kind));
+      const KIND_PL = { panel: ["panel address", "panel addresses"], site: ["website", "websites"], mail: ["mail server", "mail servers"], dmarc: ["domain", "domains"] };
+      const kp = kinds.size === 1 ? KIND_PL[[...kinds][0]] : null;
+      const who = g.items.length === 1 ? tName(g.items[0].t) : plural(g.items.length, kp ? kp[0] : "target", kp ? kp[1] : "targets");
+      const firstSeen = Math.min(...g.items.map((x) => x.f.first_seen || Infinity));
+      const isNew = live.some((x) => x.f.new);
+      const fixBtn = actions.length ? btn(actions.length > 1 ? `Fix all ${actions.length}` : fixLabel(actions[0]), (e) => { e.preventDefault(); e.stopPropagation(); fixAll(actions, e.currentTarget); }, "btn-primary btn-sm") : null;
+      const sum = el("summary", { class: "sr-is-h" }, [
+        sevTag(allAcc ? "accepted" : g.sev),
+        el("div", { class: "sr-is-t" }, [el("b", { text: g.title }), el("span", {}, [who, isNew ? el("span", { class: "sr-new", text: "new" }) : null].filter(Boolean))]),
+        allAcc ? el("span", { class: "sr-is-acc", text: "Accepted" }) : fixBtn,
+        el("span", { class: "sr-chev" }, icon("chevron", 16)),
+      ].filter(Boolean));
+      const targets = el("div", { class: "sr-is-ts" }, g.items.map(({ t, f: x }) => el("div", { class: `sr-is-trow${x.accepted ? " acc" : ""}` }, [
+        icon(KIND_ICON[t.kind] || "dot", 14),
+        el("span", { class: "grow", text: tName(t) }),
+        x.accepted ? el("span", { class: "muted mx-small", text: `Accepted${x.accepted.note ? `: ${x.accepted.note}` : ""}` }) : null,
+        x.action && !x.accepted && g.items.length > 1 ? btn(fixLabel(x.action), () => runFix(x.action, () => run(lastIds())), "btn-ghost btn-sm") : null,
+      ].filter(Boolean))));
+      const det = el("details", { class: `sr-is sev-${allAcc ? "accepted" : g.sev}` }, [sum, el("div", { class: "sr-is-b" }, [
+        el("p", { class: "sr-is-what", text: f.detail }),
+        f.fix ? el("div", { class: "sr-is-fix" }, [el("span", { text: "How to fix" }), el("p", { text: f.fix })]) : null,
+        g.items.length > 1 || g.items[0].t.kind !== "server" ? el("div", { class: "sr-is-on" }, [el("span", { class: "sr-is-lbl", text: `Found on ${g.items.length === 1 ? "1 target" : who}` }), targets]) : null,
+        el("div", { class: "sr-is-foot" }, [
+          el("span", { class: "muted mx-small", text: [isFinite(firstSeen) ? `First seen ${shortDate(firstSeen)}` : null, SR_CATS[f.cat] ? SR_CATS[f.cat].name : null].filter(Boolean).join(" · ") }),
+          el("span", { class: "grow" }),
+          f.view ? btn("Open the setting", () => navigate(f.view), "btn-ghost btn-sm") : null,
+          f.severity !== "info" ? (live.length ? btn(live.length > 1 ? "Accept all" : "Accept", () => acceptDialog(live.map((x) => x.f), g.title), "btn-ghost btn-sm")
+            : btn("Count again", () => unaccept(acc.map((x) => x.f)), "btn-ghost btn-sm")) : null,
+        ].filter(Boolean)),
+      ].filter(Boolean))]);
+      return det;
+    }
+
+    function issuesView(rep) {
+      const gs = issueGroups(rep);
+      const main = gs.filter((g) => g.sev !== "info" && g.items.some((x) => !x.f.accepted));
+      const notes = gs.filter((g) => g.sev === "info");
+      const accepted = gs.filter((g) => g.sev !== "info" && !g.items.some((x) => !x.f.accepted));
+      const box = el("div", { class: "sr-issues" });
+      if (!main.length) box.append(el("div", { class: "sr-clear" }, [icon("check", 22), el("div", {}, [el("b", { text: filter === "all" ? "No open issues" : `No open ${SR_CATS[filter].name} issues` }), el("span", { class: "muted", text: "Every check in this group passed, or what's left was accepted." })])]));
+      else box.append(el("div", { class: "sr-list-card" }, main.map(issueRow)));
+      if (accepted.length) box.append(el("details", { class: "sr-more-grp" }, [el("summary", { text: `Accepted · ${accepted.length}` }), el("div", { class: "sr-list-card" }, accepted.map(issueRow))]));
+      if (notes.length) box.append(el("details", { class: "sr-more-grp" }, [el("summary", { text: `Notes · ${notes.length}` }), el("div", { class: "sr-list-card" }, notes.map(issueRow))]));
+      return box;
+    }
+
+    function targetsView(rep) {
+      const ts = rep.targets.filter((t) => filter === "all" || t.findings.some((f) => f.cat === filter));
+      const order = (t) => t.score;
+      return el("div", { class: "sr-list-card" }, ts.sort((a, b) => order(a) - order(b)).map((t) => {
+        const live = t.findings.filter((f) => !f.accepted && f.severity !== "info" && (filter === "all" || f.cat === filter));
+        const worst = SEV_ORDER.find((s) => live.some((f) => f.severity === s));
+        const facts = t.facts || {}, cert = facts.cert || {};
+        const meta = [KIND_TXT[t.kind], facts.version, cert.days != null ? `certificate ${cert.days} days left` : null, facts.record ? `DMARC ${facts.level}` : null].filter(Boolean).join(" · ");
+        return el("details", { class: "sr-tg" }, [
+          el("summary", { class: "sr-tg-h" }, [
+            el("span", { class: "sr-tg-ico" }, icon(KIND_ICON[t.kind] || "dot", 16)),
+            el("div", { class: "sr-is-t" }, [el("b", { text: tName(t) }), el("span", { text: meta })]),
+            live.length ? el("span", { class: "sr-tg-n" }, [sevDot(worst), plural(live.length, "issue")]) : el("span", { class: "sr-tg-n ok" }, [icon("check", 13), "All clear"]),
+            el("span", { class: `sr-grade ${scoreTone(t.score)}`, text: t.grade }),
+            el("span", { class: "sr-chev" }, icon("chevron", 16)),
+          ]),
+          el("div", { class: "sr-tg-b" }, [
+            t.kind === "dmarc" ? el("div", { class: "sr-tg-dmarc" }, [facts.record ? el("code", { text: facts.record }) : el("span", { class: "muted", text: "No DMARC record published" }),
+              btn("DMARC settings", () => runFix(`dmarc_wizard:${t.name}`, () => run(lastIds())), "btn-ghost btn-sm")]) : null,
+            ...(t.findings.length ? t.findings.map((f) => el("div", { class: `sr-tg-f${f.accepted ? " acc" : ""}` }, [sevDot(f.accepted ? "accepted" : f.severity),
+              el("div", { class: "grow" }, [el("b", { text: f.title }), el("p", { class: "muted", text: f.detail })]),
+              f.action && !f.accepted ? btn(fixLabel(f.action), () => runFix(f.action, () => run(lastIds())), "btn-ghost btn-sm") : null].filter(Boolean)))
+              : [el("p", { class: "sr-ok" }, [icon("check", 15), " No issues on this target."])]),
+          ].filter(Boolean)),
+        ]);
+      }));
+    }
+
+    function portsView(rep) {
+      const net = rep.targets.find((t) => t.kind === "network");
+      const ports = net && net.facts && net.facts.ports;
+      if (!ports) return el("div", { class: "sr-clear" }, [icon("network", 22), el("div", {}, [el("b", { text: "No port scan in this report" }), el("span", { class: "muted", text: "Tick “Network services” under What to check and run the report." })])]);
+      const FW = { open: ["Open to all", "warn"], lan: ["Limited", "good"], blocked: ["Blocked", "good"], none: ["No firewall", "bad"] };
+      const publicN = ports.filter((p) => p.reachable).length;
+      return el("div", { class: "sr-list-card sr-ports" }, [
+        el("div", { class: "sr-ports-h" }, [el("b", { text: `${plural(ports.length, "listening port")}, ${publicN} reachable from outside` }),
+          el("span", { class: "muted mx-small", text: net.facts.nmap ? "Versions as Nmap sees them" : "Install Nmap to see the version each port announces" })]),
         el("div", { class: "table-wrap" }, el("table", { class: "sr-ports-t" }, [
-          el("thead", {}, el("tr", {}, ["Port", "Service", "Program", "Announces", "Bound to", "Firewall"].map((h) => el("th", { text: h })))),
+          el("thead", {}, el("tr", {}, ["Port", "Service", "Announces", "Firewall"].map((h) => el("th", { text: h })))),
           el("tbody", {}, ports.map((p) => el("tr", {}, [
-            el("td", {}, el("code", { text: `${p.port}/${p.proto}` })), el("td", { text: p.service || "unknown" }), el("td", { class: "muted", text: p.process || "" }),
-            el("td", { class: "muted", text: p.product || "" }), el("td", { class: "muted", text: (p.addrs || []).join(", ") }),
+            el("td", {}, el("code", { text: `${p.port}/${p.proto}` })),
+            el("td", {}, [el("b", { text: p.service || "Unknown" }), el("span", { class: "muted mx-small", text: p.process ? ` ${p.process}` : "" })]),
+            el("td", { class: "muted", title: (p.addrs || []).join(", "), text: p.product || "" }),
             el("td", {}, pill(...(FW[p.firewall] || ["?", "dim"]))),
           ]))),
         ])),
       ]);
     }
 
-    function targetCard(t) {
-      const facts = t.facts || {}, cert = facts.cert || {};
-      const show = t.findings.filter((f) => filter === "all" || f.cat === filter);
-      const live = show.filter((f) => !f.accepted), acc = show.filter((f) => f.accepted);
-      const meta = [facts.version ? `${facts.version} · ${facts.cipher || ""}` : null, cert.days != null ? `certificate expires in ${cert.days} days` : null,
-        facts.testssl ? "deep TLS scan" : null].filter(Boolean).join(" · ");
-      const kids = [
-        el("div", { class: "sr-t-h" }, [
-          el("span", { class: "sr-t-ico" }, icon(KIND_ICON[t.kind] || "dot", 18)),
-          el("div", { class: "grow" }, [el("span", { class: "sr-kind", text: KIND_TXT[t.kind] || t.kind }), el("h3", { text: t.label.replace(/^[^·]+· /, "") }), meta ? el("p", { class: "muted mx-small", text: meta }) : null].filter(Boolean)),
-          el("div", { class: `sr-grade ${scoreTone(t.score)}` }, [el("b", { text: String(t.score) }), el("span", { text: t.grade })]),
-        ]),
-      ];
-      if (t.kind === "dmarc") {
-        const LV = { enforced: ["Protected", "good"], partial: ["Partly protected", "warn"], monitor: ["Monitoring only", "warn"], inherited: ["Uses the parent's policy", "dim"], missing: ["Not protected", "bad"] };
-        kids.push(el("div", { class: "sr-dmarc" }, [pill(...(LV[facts.level] || ["?", "dim"])), facts.record ? el("code", { text: facts.record }) : el("span", { class: "muted", text: "No DMARC record published" }),
-          btn("DMARC settings", () => runFix(`dmarc_wizard:${t.name}`, () => run(lastIds())), "btn-ghost btn-sm")]));
-      }
-      if (t.kind === "network" && facts.ports && (filter === "all" || filter === "network")) kids.push(portsTable(facts.ports, facts.nmap));
-      kids.push(live.length ? el("div", { class: "sr-list" }, live.map(findingRow)) : el("p", { class: "sr-ok" }, [icon("check", 16), filter === "all" ? " No findings, nicely done." : " Nothing in this category."]));
-      if (acc.length) kids.push(el("details", { class: "sr-acc" }, [el("summary", { text: `Accepted · ${acc.length}` }), el("div", { class: "sr-list" }, acc.map(findingRow))]));
-      return el("div", { class: `card sr-t${live.length ? "" : " clean"}` }, kids);
-    }
-
     function hero(rep) {
       const c = rep.counts || {};
       const plan = (rep.fix_plan || []).filter((p) => !p.interactive);
+      const open = SEV_ORDER.slice(0, 4).reduce((a, k) => a + (c[k] || 0), 0);
+      const quick = new Set(rep.targets.flatMap((t) => t.findings.filter((f) => f.action && !f.accepted && f.severity !== "info").map((f) => f.key))).size;
+      const head = rep.score >= 90 ? "Looking solid" : rep.score >= 65 ? "A few things to tighten" : "Needs attention";
+      const sub = open ? `${plural(open, "issue")} found${quick ? `, ${quick} can be fixed in one click` : ""}.` : "No open issues.";
+      const bar = el("div", { class: "sr-sevbar" }, SEV_ORDER.slice(0, 4).filter((k) => c[k]).map((k) => el("span", { class: `sev-${k}`, style: `flex:${c[k]}`, title: `${c[k]} ${k}` })));
+      const legend = el("div", { class: "sr-legend" }, [...SEV_ORDER.slice(0, 4), "accepted"].map((k) => el("span", { class: (c[k] || 0) ? "" : "zero" }, [sevDot(k), el("b", { text: String(c[k] || 0) }), (SEV_NAME[k] || "Accepted").toLowerCase()])));
+      const prev = (d.history || []).slice(-2);
+      const delta = prev.length === 2 ? prev[1].score - prev[0].score : 0;
       return el("div", { class: `card sr-hero ${scoreTone(rep.score)}` }, [
-        scoreRing(rep.score, rep.grade, 140),
+        scoreRing(rep.score, rep.grade, 128),
         el("div", { class: "sr-hero-txt" }, [
-          el("h2", { text: rep.score >= 90 ? "Looking solid" : rep.score >= 65 ? "Some things to tighten" : "Needs attention" }),
-          el("p", { class: "muted", text: `${rep.targets.length} target${rep.targets.length === 1 ? "" : "s"} checked ${ago(rep.ts)} in ${rep.took} s on ${rep.hostname}${rep.deep ? ", with the deep TLS scan" : ""}.` }),
-          el("div", { class: "sr-counts" }, [...SEV_ORDER, "accepted"].map((k) => el("div", { class: `sr-cnt sev-${k}` }, [el("b", { text: String(c[k] || 0) }), el("span", { text: k })]))),
-        ]),
-        el("div", { class: "sr-hero-side" }, [
-          srTrend(d.history),
-          plan.length ? btn(`Apply fixes · ${plan.length}`, () => offerFixes(false), "btn-primary") : el("span", { class: "sr-allfixed" }, [icon("check", 15), " No one-click fixes left"]),
-          btn("Download HTML report", async () => {
-            // Fetched by the page and saved as a file from here: a browser refuses a plain download from a panel on a self-signed certificate.
+          el("h2", { text: head }),
+          el("p", { class: "sr-hero-sub", text: sub }),
+          open ? bar : null, legend,
+          el("p", { class: "sr-hero-meta" }, [`Checked ${ago(rep.ts)} · ${plural(rep.targets.length, "target")} · ${rep.took} s${rep.deep ? " · deep TLS scan" : ""}`,
+            delta ? el("span", { class: `sr-delta ${delta > 0 ? "up" : "down"}`, text: ` · ${delta > 0 ? "+" : ""}${delta} since last run` }) : null, srTrend(d.history)].filter(Boolean)),
+        ].filter(Boolean)),
+        el("div", { class: "sr-hero-act" }, [
+          plan.length ? btn(`Apply ${plural(plan.length, "fix", "fixes")}`, () => offerFixes(false), "btn-primary") : el("span", { class: "sr-allfixed" }, [icon("check", 15), " Nothing to fix in one click"]),
+          btn("Download report", async () => {
+            // Fetched by the page and saved from here: a browser refuses a plain download from a panel on a self-signed certificate.
             try { const r = await fetch("/api/secreport/html", { credentials: "same-origin" }); if (!r.ok) throw new Error("Couldn't fetch the report"); downloadText(`security-report-${rep.hostname}-${new Date(rep.ts * 1000).toISOString().slice(0, 10)}.html`, await r.text(), "text/html"); }
             catch (e) { toast(e.message, "bad"); }
           }, "btn-ghost btn-sm"),
-        ].filter(Boolean)),
-      ]);
+        ]),
+      ].filter(Boolean));
     }
 
-    function coverage(rep) {
+    function tabs(rep) {
       const cats = rep.cats || {};
       const total = Object.values(cats).reduce((a, b) => a + b, 0);
-      const tile_ = (key, name, ico, n, what) => el("button", { type: "button", class: `sr-cov${filter === key ? " on" : ""}${n ? "" : " clean"}`, title: what || "", onclick: () => { filter = filter === key && key !== "all" ? "all" : key; LS.set("sr.cat", filter); draw(); } }, [
-        el("span", { class: "sr-cov-ico" }, icon(ico, 18)), el("b", { text: String(n) }), el("span", { text: name })]);
-      return el("div", { class: "sr-cov-row" }, [tile_("all", "All findings", "listing", total, "Everything"), ...Object.entries(SR_CATS).map(([k, c]) => tile_(k, c.name, c.icon, cats[k] || 0, c.what))]);
+      const catBtn = (key, name, ico, n) => el("button", { type: "button", class: `sr-cat${filter === key ? " on" : ""}`, title: key === "all" ? "" : SR_CATS[key].what,
+        onclick: () => { filter = key; LS.set("sr.cat", filter); draw(); } }, [ico ? icon(ico, 14) : null, name, el("span", { class: `sr-cat-n${n ? "" : " zero"}`, text: String(n) })].filter(Boolean));
+      const viewBtn = (key, name) => el("button", { type: "button", class: view === key ? "active" : "", text: name, onclick: () => { view = key; LS.set("sr.view", view); draw(); } });
+      return el("div", { class: "sr-bar" }, [
+        el("div", { class: "sr-cats" }, [catBtn("all", "All", null, total), ...Object.entries(SR_CATS).map(([k, c]) => catBtn(k, c.name, c.icon, cats[k] || 0))]),
+        el("div", { class: "cw-seg cw-seg-sm sr-views" }, [viewBtn("issues", "Issues"), viewBtn("targets", "Targets"), viewBtn("ports", "Open ports")]),
+      ]);
     }
 
     function toolsCard() {
       if (!tools || !tools.supported) return null;
       const comps = SR_TOOLS.map((id) => tools.components[id]).filter((c) => c && !c.installed);
       if (!comps.length) return null;
-      const why = { nmap: "Shows the product and version every open port announces.", testssl: "Deep TLS scan: every protocol, cipher and known TLS attack.", sshaudit: "Rates every SSH algorithm and lists known OpenSSH weaknesses." };
+      const why = { nmap: "Shows the version every open port announces.", testssl: "Deep TLS scan: every protocol, cipher and known TLS attack.", sshaudit: "Rates every SSH algorithm and lists known OpenSSH weaknesses." };
       comps.forEach((c) => { c.desc = why[c.id] || c.desc; });
-      const box = el("div", { class: "sr-tools" }, [
-        el("div", { class: "sr-tools-h" }, [icon("radar", 18), el("div", {}, [el("b", { text: "Scan deeper with the scanner tools" }),
-          el("p", { class: "muted", text: "The report runs without them, using its built-in checks. With them it matches a full outside scan. One click installs them from your system's packages." })])]),
+      return el("details", { class: "card sr-tools" }, [
+        el("summary", {}, [icon("radar", 18), el("div", { class: "grow" }, [el("b", { text: `Scan deeper: ${comps.map((c) => c.name).join(", ")} ${comps.length === 1 ? "is" : "are"} not installed` }),
+          el("span", { class: "muted", text: "The report works without them. With them it matches a full outside scan." })]), el("span", { class: "sr-chev" }, icon("chevron", 16))]),
         requireCard(comps, "Security Report", true, () => load()),
       ]);
-      return box;
     }
 
     function picker() {
@@ -2078,7 +2158,7 @@ window.AuroraOps = (ui) => {
       d.targets.forEach((t) => { if (d.last && !d.last.targets.some((x) => x.kind === t.kind)) wasOn.add(t.id); });  // new kinds start ticked
       picks = el("div", { class: "sr-picks" }, Object.entries(groups).map(([k, ts]) => el("div", { class: "sr-pick-grp" }, [
         el("div", { class: "mx-sub" }, [icon(KIND_ICON[k] || "dot", 13), " ", KIND_TXT[k] || k]),
-        ...ts.map((t) => { const c = el("input", { type: "checkbox", name: "srt", value: t.id }); c.checked = wasOn.has(t.id); return el("label", { class: "dm-check" }, [c, el("span", { text: t.label.replace(/^[^·]+· /, "") })]); }),
+        ...ts.map((t) => { const c = el("input", { type: "checkbox", name: "srt", value: t.id }); c.checked = wasOn.has(t.id); return el("label", { class: "dm-check" }, [c, el("span", { text: tName(t) })]); }),
       ])));
       const hasTestssl = tools && tools.components && tools.components.testssl && tools.components.testssl.installed;
       deepBox = el("input", { type: "checkbox" });
@@ -2086,32 +2166,34 @@ window.AuroraOps = (ui) => {
       deepBox.disabled = !hasTestssl;
       deepBox.addEventListener("change", () => LS.set("sr.deep", deepBox.checked));
       const all = (on) => picks.querySelectorAll("input[name=srt]").forEach((c) => { c.checked = on; });
-      return card("What to check", [el("p", { class: "muted", text: "Only things that live on this server are listed, nothing else is ever scanned. Every probe connects to this machine itself with the name as SNI / Host, so proxies and CDNs in front don't colour the result." }),
-        picks,
-        el("label", { class: "dm-check sr-deep" }, [deepBox, el("span", {}, [el("b", { text: "Deep TLS scan with testssl.sh" }), el("span", { class: "muted", text: hasTestssl ? " adds a few minutes: every protocol, cipher and known TLS attack on the panel, each website and the mail server" : " install testssl.sh above to use it" })])]),
-        el("div", { class: "toolbar" }, [btn("All", () => all(true), "btn-ghost"), btn("None", () => all(false), "btn-ghost")])]);
+      const n = d.targets.length;
+      return el("details", { class: "card sr-pick", open: d.last ? null : "" }, [
+        el("summary", {}, [icon("listing", 18), el("div", { class: "grow" }, [el("b", { text: "What to check" }), el("span", { class: "muted", text: `${plural(n, "target")} on this server. Nothing else is ever scanned.` })]), el("span", { class: "sr-chev" }, icon("chevron", 16))]),
+        el("div", { class: "sr-pick-b" }, [picks,
+          el("label", { class: "dm-check sr-deep" }, [deepBox, el("span", {}, [el("b", { text: "Deep TLS scan with testssl.sh" }), el("span", { class: "muted", text: hasTestssl ? " adds a few minutes: every protocol, cipher and known TLS attack" : " install testssl.sh to use it" })])]),
+          el("div", { class: "toolbar" }, [btn("All", () => all(true), "btn-ghost btn-sm"), btn("None", () => all(false), "btn-ghost btn-sm")])]),
+      ]);
     }
 
     function draw() {
       body.innerHTML = "";
       const rep = d.last;
-      const tc = toolsCard();
       if (rep) {
         body.append(hero(rep));
-        if ((rep.resolved || []).length) body.append(el("div", { class: "card sr-resolved" }, [icon("check", 18), el("div", {}, [
-          el("b", { text: `${rep.resolved.length} finding${rep.resolved.length === 1 ? "" : "s"} fixed since the last report` }),
-          el("p", { class: "muted", text: rep.resolved.slice(0, 6).map((x) => x.title).join(" · ") + (rep.resolved.length > 6 ? ` and ${rep.resolved.length - 6} more` : "") })])]));
-        body.append(coverage(rep));
+        if ((rep.resolved || []).length) body.append(el("details", { class: "sr-resolved" }, [
+          el("summary", {}, [icon("check", 16), el("b", { text: `${plural(rep.resolved.length, "issue")} fixed since the last report` }), el("span", { class: "sr-chev" }, icon("chevron", 14))]),
+          el("ul", {}, rep.resolved.map((x) => el("li", {}, [el("span", { text: x.title }), el("span", { class: "muted", text: ` · ${x.target.replace(/^[^·]+· /, "")}` })])))]));
+        body.append(tabs(rep));
+        body.append(view === "targets" ? targetsView(rep) : view === "ports" ? portsView(rep) : issuesView(rep));
+        const tc = toolsCard();
         if (tc) body.append(tc);
-        const ts = rep.targets.filter((t) => filter === "all" || t.findings.some((f) => f.cat === filter) || (filter === "network" && t.kind === "network"));
-        const order = (t) => (t.findings.some((f) => !f.accepted && f.severity !== "info") ? 0 : 1);
-        body.append(el("div", { class: "sr-targets" }, ts.sort((a, b) => order(a) - order(b) || a.score - b.score).map(targetCard)));
       } else {
         body.append(el("div", { class: "card sr-intro" }, [
-          el("span", { class: "sr-radar big" }, icon("radar", 34)),
-          el("div", {}, [el("h2", { text: "No report yet" }), el("p", { class: "muted", text: "Pick what to check below and press Run report. It covers what a professional outside scan covers:" }),
+          el("span", { class: "sr-radar big" }, icon("radar", 32)),
+          el("div", {}, [el("h2", { text: "No report yet" }), el("p", { class: "muted", text: "Press Run report. In about twenty seconds you'll see what an outside scanner would find, sorted by how much it matters, with the fix for each." }),
             el("div", { class: "sr-intro-cats" }, Object.values(SR_CATS).map((c) => el("div", {}, [icon(c.icon, 16), el("b", { text: c.name }), el("span", { class: "muted", text: c.what })])))]),
         ]));
+        const tc = toolsCard();
         if (tc) body.append(tc);
       }
       body.append(picker());

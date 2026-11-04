@@ -271,7 +271,7 @@
     dashboard: "dashboard", terminal: "terminal", services: "services", processes: "processes",
     packages: "packages", network: "network", firewall: "firewall", users: "users",
     mysql: "database", mysqlwiz: "wizard", pgsql: "database", pgwiz: "wizard",
-    vhosts: "globe", redirects: "redirect", revproxy: "redirect", zones: "zone", dyndns: "refresh", ddnshosts: "refresh",
+    vhosts: "globe", redirects: "redirect", revproxy: "redirect", zones: "zone", dmarc: "at", dyndns: "refresh", ddnshosts: "refresh",
     activity: "t_activity", isolation: "t_isolate", dockerapps: "t_docker", servers: "t_servers", mysites: "globe", panelusers: "t_usergear", wptoolkit: "t_wptool", migrate: "t_migrate", alerts: "t_bell", schedbackups: "t_cloudup", updates: "t_update", autossl: "t_autossl",
     visitors: "visitors", errors: "errors", bandwidth: "gauge", rawaccess: "rawlog", analytics: "chart", resources: "dashboard",
     ssh: "key", ipblocker: "ban", ssl: "lock", panelhttps: "lock", tokens: "token", hotlink: "link", secreport: "listing",
@@ -445,8 +445,7 @@
     tabs.append(pill("Home", !g, () => navigate("dashboard")));
     if (!g) NAV_GROUPS.forEach((x) => tabs.append(pill(x.name, false, () => { state.group = x.name; navigate(x.items[0].view); })));
     else g.items.forEach((i) => tabs.append(pill(i.label, i.view === navView(view), () => navigate(i.view))));
-    const act = tabs.querySelector(".tab.active");
-    if (act && act.scrollIntoView) try { act.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch (e) {}
+    foldTabs();
     const user = $("#user-label").textContent;
     const h = new Date().getHours();
     const part = h < 5 ? "Good night" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : h < 22 ? "Good evening" : "Good night";
@@ -454,6 +453,53 @@
     $("#view-title").textContent = g ? (appName || tr(TITLES[view] || view)) : `${tr(part)}, ${user || tr("there")}!`;
     $("#view-crumb").textContent = g ? tr(g.name) : "";
   }
+  // When the section tabs need more than one row (narrow windows, long groups), show the first row and a "More"
+  // pill; it slides the rest open, the hidden tabs fading in one after another. A hidden active tab opens it.
+  let tabsOpen = false;
+  function foldTabs() {
+    const tabs = $("#tabs");
+    if (!tabs) return;
+    let more = $("#tabs-more");
+    if (!more) {
+      more = el("button", { id: "tabs-more", class: "tabs-more", type: "button", "aria-expanded": "false", "aria-controls": "tabs", onclick: () => { tabsOpen = !tabsOpen; applyFold(true); } });
+      tabs.after(more);
+    }
+    tabsOpen = false;
+    tabs.classList.remove("tabs-fold", "open");
+    tabs.style.maxHeight = "";
+    [...tabs.children].forEach((t) => { t.classList.remove("tab-extra"); t.style.removeProperty("--i"); });
+    const first = tabs.firstElementChild;
+    if (!first) { more.hidden = true; return; }
+    // Measure with room kept for the pill, then fold if anything sits below the first row.
+    tabs.classList.add("tabs-measure");
+    const top0 = first.offsetTop;
+    const extra = [...tabs.children].filter((t) => t.offsetTop > top0 + 4);
+    tabs.classList.remove("tabs-measure");
+    if (!extra.length) { more.hidden = true; return; }
+    extra.forEach((t, i) => { t.classList.add("tab-extra"); t.style.setProperty("--i", i); });
+    tabs.classList.add("tabs-fold");
+    more.hidden = false;
+    more.innerHTML = "";
+    more.append(el("span", { class: "tabs-more-n", text: `+${extra.length}` }), el("span", { class: "tabs-more-l", text: tr("More") }), icon("chevron", 15));
+    tabs._row = first.offsetHeight + 4;
+    if (extra.some((t) => t.classList.contains("active"))) tabsOpen = true;
+    applyFold(false);
+  }
+  function applyFold(animate) {
+    const tabs = $("#tabs"), more = $("#tabs-more");
+    if (!tabs || !more || !tabs.classList.contains("tabs-fold")) return;
+    if (!animate) tabs.style.transition = "none";
+    tabs.style.maxHeight = `${tabsOpen ? tabs.scrollHeight + 4 : tabs._row}px`;
+    tabs.classList.toggle("open", tabsOpen);
+    more.classList.toggle("open", tabsOpen);
+    more.setAttribute("aria-expanded", String(tabsOpen));
+    more.querySelector(".tabs-more-l").textContent = tr(tabsOpen ? "Less" : "More");
+    [...tabs.querySelectorAll(".tab-extra")].forEach((t) => { t.tabIndex = tabsOpen ? 0 : -1; });
+    if (!animate) { void tabs.offsetHeight; tabs.style.transition = ""; }
+  }
+  let foldTimer = null;
+  window.addEventListener("resize", () => { clearTimeout(foldTimer); foldTimer = setTimeout(foldTabs, 150); });
+
   function isoWeek(d) {
     const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
     const day = t.getUTCDay() || 7; t.setUTCDate(t.getUTCDate() + 4 - day);
@@ -818,7 +864,7 @@
     virus: "Virus Scanner", dns: "Track DNS",
     ssh: "SSH Access", ipblocker: "IP Blocker & Trust", ssl: "SSL/TLS Certificates", tokens: "Manage API Tokens",
     hotlink: "Hotlink Protection", redirects: "Redirects", modsec: "WAF Firewall", instaban: "InstaBan", globalsec: "Global Security", secreport: "Security Report", activity: "Activity Log", isolation: "Site Isolation", dockerapps: "Docker", servers: "Servers", mysites: "My Websites", panelusers: "Panel Users", wptoolkit: "WordPress Toolkit", migrate: "Move from cPanel", alerts: "Alerts", schedbackups: "Scheduled Backups", updates: "Updates", autossl: "AutoSSL", ddnshosts: "Dynamic DNS", visitors: "Visitors", errors: "Errors", bandwidth: "Bandwidth", rawaccess: "Raw Access", analytics: "Analytics", resources: "Resource Usage", leech: "Fail2ban",
-    fixperms: "Fix Home Permissions", vhosts: "Domains", revproxy: "Reverse Proxy", dyndns: "Dynamic DNS Updater", zones: "Zone Editor",
+    fixperms: "Fix Home Permissions", vhosts: "Domains", revproxy: "Reverse Proxy", dyndns: "Dynamic DNS Updater", zones: "Zone Editor", dmarc: "DMARC",
     mysql: "Manage Databases", mysqlwiz: "MariaDB Wizard", pgsql: "PostgreSQL Databases",
     pgwiz: "PostgreSQL Wizard",
     sysapps: "System Applications", appmgr: "Application Manager", phpver: "PHP Settings",
@@ -919,6 +965,7 @@
       revproxy: viewRevProxy,
       dyndns: viewDynDNS,
       zones: viewZoneEditor,
+      dmarc: viewDmarc,
       mysql: viewMySQL,
       mysqlwiz: viewMySQLWizard,
       pgsql: viewPgSQL,
@@ -1110,6 +1157,7 @@
       { label: "Redirects", icon: "redirect", view: "redirects" },
       { label: "Reverse Proxy", icon: "redirect", view: "revproxy" },
       { label: "Zone Editor", icon: "zone", view: "zones" },
+      { label: "DMARC", icon: "at", view: "dmarc" },
       { label: "Dynamic DNS", icon: "refresh", view: "ddnshosts" },
     ]},
     { name: "Email", icon: "mail", tiles: [
@@ -1123,6 +1171,7 @@
       { label: "Global Email Filters", icon: "filter", view: "globalfilters" },
       { label: "Email Filters", icon: "filter", view: "emailfilters" },
       { label: "Email Deliverability", icon: "send", view: "deliverability" },
+      { label: "DMARC", icon: "at", view: "dmarc" },
       { label: "Address Importer", icon: "upload", view: "addressimporter" },
       { label: "Spam Filters", icon: "spam", view: "spamfilters" },
       { label: "Encryption", icon: "lock", view: "mailtls" },
@@ -6196,7 +6245,7 @@
       back.disabled = i === 0;
       if (i >= list.length) return review();
       const s = list[i];
-      box.append(el("h3", { class: "dmw-q", text: s.q }), s.help ? el("p", { class: "muted dmw-help", text: s.help }) : null);
+      box.append(...[el("h3", { class: "dmw-q", text: s.q }), s.help ? el("p", { class: "muted dmw-help", text: s.help }) : null].filter(Boolean));
       if (s.input === "email") {
         const inp = el("input", { type: "email", value: ans.reports || "", placeholder: `dmarc@${domain}`, oninput: (e) => { ans.reports = e.target.value.trim(); } });
         const none = el("input", { type: "checkbox", onchange: (e) => { inp.disabled = e.target.checked; ans.reports = e.target.checked ? "" : inp.value.trim(); } });
@@ -6251,7 +6300,7 @@
       if (!st.public) { bodyBox.append(el("p", { class: "dm-hint", text: st.note })); return; }
       const lv = DM_LEVEL[st.assess.level] || DM_LEVEL.missing;
       const chk = (ok, label) => el("span", { class: `dmc-chk ${ok ? "ok" : "no"}` }, [icon(ok ? "check" : "error", 13), label]);
-      bodyBox.append(
+      bodyBox.append(...[  // optional rows are null: append() would print "null"
         el("div", { class: `dmc-status ${lv[1]}` }, [
           el("span", { class: "dmc-shield" }, icon(lv[1] === "good" ? "shield" : lv[1] === "bad" ? "warning" : "eye", 22)),
           el("div", { class: "grow" }, [el("b", { text: lv[0] }), el("span", { class: "muted", text: lv[2] })]),
@@ -6261,7 +6310,7 @@
         st.record || st.parent_record ? el("div", { class: "dmc-rec" }, [el("span", { class: "muted mx-small", text: st.record ? `TXT _dmarc.${domain}` : `Inherited from _dmarc.${st.org}` }), el("code", { text: st.record || st.parent_record })]) : null,
         st.pending ? el("p", { class: "dm-hint", text: "A newer record is published in this server's zone and is on its way through DNS (up to an hour)." }) : null,
         el("ul", { class: "dmc-notes" }, st.assess.notes.map((n) => el("li", { class: n.tone }, [icon(n.tone === "good" ? "check" : n.tone === "bad" ? "error" : "warning", 13), el("span", { text: n.text })]))),
-      );
+      ].filter(Boolean));
       // Quick controls: the policy as three big choices, the rest under "More settings".
       const s = { ...st.settings, rua: [...(st.settings.rua || [])], ruf: [...(st.settings.ruf || [])] };
       if (!st.settings.enabled && !s.rua.length) s.rua = [st.default_reports];
@@ -6314,6 +6363,44 @@
     }
     load();
     return host;
+  }
+
+  // Domains → DMARC: every domain on this server in one place, the chosen one's card below.
+  async function viewDmarc(root) {
+    root.append(el("div", { class: "em-head" }, [
+      el("div", { class: "em-head-txt" }, [el("h2", { text: "DMARC" }), el("p", { class: "muted", text: "Stop others from sending email that pretends to come from your domains. Pick a domain to see how well it's protected, then set its policy with the wizard or directly." })]),
+      el("div", { class: "em-head-act" }, [el("button", { class: "btn btn-sm btn-ghost", onclick: dmarcHelp }, [icon("info", 13), " How DMARC works"])]),
+    ]));
+    root.append(el("div", { class: "dmc-steps" }, [
+      ["eye", "1. Monitor", "p=none: nothing is blocked. Daily reports show every server sending as you."],
+      ["spam", "2. Quarantine", "p=quarantine: forged mail goes to the spam folder."],
+      ["ban", "3. Reject", "p=reject: forged mail is refused. Full protection."],
+    ].map(([ic, t, s]) => el("div", { class: "dmc-step" }, [icon(ic, 18), el("div", {}, [el("b", { text: t }), el("span", { text: s })])]))));
+    const box = el("div", { class: "dmc-page" }, el("div", { class: "loading", text: "Loading domains…" }));
+    root.append(box);
+    let list;
+    try { list = (await API.dmarcDomains()).domains; } catch (e) { box.innerHTML = ""; box.append(el("p", { class: "empty", text: e.message })); return; }
+    box.innerHTML = "";
+    if (!list.length) {
+      box.append(el("div", { class: "card" }, empty("at", "No domains yet", "Add a website with a real domain name (Domains) or a mail domain (Email), then set its DMARC policy here.")));
+      return;
+    }
+    let cur = "";
+    try { cur = localStorage.getItem("aurora.dmarc.domain") || ""; } catch (e) { /* private window: start with the first domain */ }
+    if (!list.some((x) => x.domain === cur)) cur = list[0].domain;
+    const side = el("div", { class: "dmc-doms" });
+    const main = el("div", { class: "dmc-main" });
+    const draw = () => {
+      side.innerHTML = "";
+      list.forEach((x) => side.append(el("button", { type: "button", class: `dmc-dom${x.domain === cur ? " on" : ""}`, onclick: () => { cur = x.domain; try { localStorage.setItem("aurora.dmarc.domain", cur); } catch (e) { /* not kept, fine */ } draw(); } }, [
+        icon(x.mail ? "mail" : "globe", 15),
+        el("span", { class: "grow" }, [el("b", { text: x.domain }), el("span", { text: x.mail ? "Mail domain" + (x.sites.length ? ` · ${x.sites.length} site${x.sites.length > 1 ? "s" : ""}` : "") : `${x.sites.length} site${x.sites.length > 1 ? "s" : ""}` })]),
+      ])));
+      main.innerHTML = "";
+      main.append(dmarcCard(cur));
+    };
+    box.append(side, main);
+    draw();
   }
 
   function viewDomainManage(root, name) {
