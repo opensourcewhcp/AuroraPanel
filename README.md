@@ -12,6 +12,10 @@ Free, open source, MIT licensed.</p>
   <a href="https://forums.raspberrypi.com/viewtopic.php?p=2388892"><img alt="Raspberry Pi Forums thread" src="https://img.shields.io/badge/community-Raspberry%20Pi%20Forums-555"></a>
 </p>
 
+<p align="center">
+  <a href="https://aurora51.com"><img alt="The AuroraPanel dashboard: CPU, memory, temperature, disks and services of a Raspberry Pi 5 at a glance" src="docs/screenshots/dashboard.jpg" width="900"></a>
+</p>
+
 AuroraPanel is a lightweight web hosting control panel for **Raspberry Pi** (and any
 Debian or Ubuntu box), laid out like cPanel: system monitoring, your own VPN server,
 websites, databases, a full mail server, fail2ban, FTP, backups, Git and more, all
