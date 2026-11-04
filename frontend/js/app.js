@@ -6102,6 +6102,220 @@
     setKind(mode === "folder" ? "local" : "domain");
   }
 
+  // ======================================================================
+  //  Domains → Email authentication (DMARC): status, quick controls, wizard, explainer
+  // ======================================================================
+  const DM_LEVEL = {
+    enforced: ["Protected", "good", "Forged mail using this domain is refused."],
+    partial: ["Partly protected", "warn", "Forged mail goes to spam, or only part of it is handled."],
+    monitor: ["Monitoring only", "warn", "Receivers report forged mail but still deliver it."],
+    inherited: ["Uses the parent's policy", "dim", "No record of its own; receivers use the parent domain's."],
+    missing: ["Not protected", "bad", "Anyone can send mail that claims to be from this domain."],
+  };
+  const DM_POLICY = [
+    ["none", "Monitor", "eye", "Deliver everything, send me reports. The safe first step: nothing is blocked."],
+    ["quarantine", "Quarantine", "spam", "Failing mail goes to the spam folder."],
+    ["reject", "Reject", "ban", "Failing mail is refused and never delivered. Full protection."],
+  ];
+
+  // How DMARC works: a diagram drawn here (no outside images) plus the tags in plain words.
+  function dmarcHelp() {
+    const fig = el("div", { class: "dmc-fig" });
+    fig.innerHTML = `<svg viewBox="0 0 720 300" role="img" aria-label="How a receiving server applies DMARC">
+      <defs><marker id="dmcA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="dmc-ah"/></marker></defs>
+      <g class="dmc-node"><rect x="10" y="118" width="120" height="64" rx="14"/><text x="70" y="146">Mail arrives</text><text x="70" y="164" class="dmc-s">From: you@domain</text></g>
+      <g class="dmc-node"><rect x="170" y="108" width="150" height="84" rx="14"/><text x="245" y="136">Checks SPF + DKIM</text><text x="245" y="154" class="dmc-s">and that they belong</text><text x="245" y="170" class="dmc-s">to the From domain</text></g>
+      <g class="dmc-ok"><rect x="380" y="24" width="150" height="56" rx="14"/><text x="455" y="50">Passes</text><text x="455" y="67" class="dmc-s">delivered normally</text></g>
+      <g class="dmc-node"><rect x="380" y="198" width="150" height="56" rx="14"/><text x="455" y="222">Fails</text><text x="455" y="239" class="dmc-s">your policy decides</text></g>
+      <g class="dmc-none"><rect x="580" y="150" width="130" height="40" rx="12"/><text x="645" y="175">none: deliver</text></g>
+      <g class="dmc-q"><rect x="580" y="206" width="130" height="40" rx="12"/><text x="645" y="231">quarantine: spam</text></g>
+      <g class="dmc-r"><rect x="580" y="262" width="130" height="34" rx="12"/><text x="645" y="284">reject: refused</text></g>
+      <path d="M130 150H168" class="dmc-ln" marker-end="url(#dmcA)"/>
+      <path d="M320 135C350 135 350 52 378 52" class="dmc-ln" marker-end="url(#dmcA)"/>
+      <path d="M320 165C350 165 350 226 378 226" class="dmc-ln" marker-end="url(#dmcA)"/>
+      <path d="M530 226C555 226 555 170 578 170M530 226H578M530 226C555 226 555 279 578 279" class="dmc-ln" marker-end="url(#dmcA)"/>
+      <path d="M530 52H640V20" class="dmc-ln dmc-dash"/><text x="645" y="14" class="dmc-s dmc-left">daily report to you (rua)</text>
+    </svg>`;
+    const tag = (t, s) => el("div", { class: "dmc-tag" }, [el("code", { text: t }), el("span", { text: s })]);
+    openModal("How DMARC works", el("div", { class: "dmc-help" }, [
+      el("p", { text: "Email lets any server write any From: address. DMARC is how you, the domain owner, tell receiving mail servers (Gmail, Outlook, Yahoo …) what to do with mail that claims to be from your domain but can't prove it." }),
+      fig,
+      el("div", { class: "dmc-cols" }, [
+        el("div", {}, [el("h4", { text: "The proof: SPF and DKIM" }),
+          el("p", { class: "muted", text: "SPF lists the servers allowed to send for your domain. DKIM signs each message with a key published in your DNS. DMARC passes when at least one of them passes for the same domain as the From: address (that's “alignment”)." })]),
+        el("div", {}, [el("h4", { text: "The policy: none → quarantine → reject" }),
+          el("p", { class: "muted", text: "Start with none and read the reports for a few weeks: they list every server sending as you. Fix SPF/DKIM for your real senders, then move to quarantine, then reject. Only reject fully stops spoofing." })]),
+      ]),
+      el("h4", { text: "The record, tag by tag" }),
+      el("div", { class: "dmc-tags" }, [
+        tag("v=DMARC1", "Marks the TXT record at _dmarc.yourdomain as a DMARC policy."),
+        tag("p=", "What to do with failing mail: none, quarantine or reject."),
+        tag("sp=", "The same for subdomains, if different."),
+        tag("pct=", "Apply the policy to only this percentage of failing mail while you test (default 100)."),
+        tag("rua=", "Where receivers send daily aggregate reports (XML)."),
+        tag("ruf=", "Where to send per-message failure reports (few providers do)."),
+        tag("adkim= / aspf=", "r = relaxed, subdomains count as the domain (recommended); s = strict, exact match only."),
+      ]),
+      el("p", { class: "dm-hint", text: "Gmail and Yahoo require DMARC (at least p=none), SPF and DKIM from anyone sending more than 5,000 messages a day, and treat mail without it with suspicion. Domains that never send mail should publish p=reject so nobody can use them." }),
+    ]), [el("button", { class: "btn", text: "Close", onclick: closeModal })]);
+    const m = document.querySelector("#modal .modal"); if (m) m.classList.add("em-modal");
+  }
+
+  function dmarcPublished(r) {
+    if (r.published) { toast(r.message || "DMARC record published", "good"); }
+    else {
+      openModal("Add this record at your DNS provider", el("div", { class: "em-form" }, [
+        el("p", { class: "muted", text: r.message }),
+        el("div", { class: "dmc-copy" }, [el("span", { text: "Type" }), el("code", { text: "TXT" })]),
+        el("div", { class: "dmc-copy" }, [el("span", { text: "Name" }), el("code", { text: r.name }), btn("Copy", () => copyText(r.name), "btn-ghost")]),
+        el("div", { class: "dmc-copy" }, [el("span", { text: "Value" }), el("code", { text: r.value }), btn("Copy", () => copyText(r.value), "btn-ghost")]),
+        el("p", { class: "dm-hint", text: "Some providers add the domain to the name by themselves: then enter just _dmarc (or _dmarc.sub for a subdomain)." }),
+      ]), [el("button", { class: "btn btn-primary", text: "Done", onclick: closeModal })]);
+    }
+    (r.external || []).forEach((x) => toast(`Reports to ${x.address}: that domain must publish TXT ${x.name} = v=DMARC1`, "warn"));
+  }
+
+  // The wizard: a few plain questions → a recommended record with every tag explained → save.
+  async function dmarcWizard(domain, done) {
+    let st;
+    try { st = await API.dmarc(domain); } catch (e) { return toast(e.message, "bad"); }
+    if (!st.public) return toast(st.note, "warn");
+    const steps = st.wizard;
+    const ans = { sends: st.sends_here ? "here" : "", stage: "", reports: (st.settings.rua || [])[0] || st.default_reports, subdomains: "same", alignment: st.settings.adkim === "s" ? "strict" : "relaxed" };
+    if (st.settings.enabled) ans.stage = st.settings.p === "reject" ? "confident" : st.settings.p === "quarantine" ? "monitored" : "new";
+    let i = 0;
+    const box = el("div", { class: "dmw" });
+    const back = el("button", { class: "btn btn-ghost", text: "Back" });
+    const next = el("button", { class: "btn btn-primary", text: "Next" });
+    const active = () => steps.filter((s) => !(s.skip_if && Object.entries(s.skip_if).every(([k, v]) => ans[k] === v)));
+    async function paint() {
+      const list = active();
+      box.innerHTML = "";
+      const dots = el("div", { class: "dmw-dots" }, [...list, { id: "review" }].map((s, k) => el("span", { class: k < i ? "done" : k === i ? "on" : "" })));
+      box.append(dots);
+      back.disabled = i === 0;
+      if (i >= list.length) return review();
+      const s = list[i];
+      box.append(el("h3", { class: "dmw-q", text: s.q }), s.help ? el("p", { class: "muted dmw-help", text: s.help }) : null);
+      if (s.input === "email") {
+        const inp = el("input", { type: "email", value: ans.reports || "", placeholder: `dmarc@${domain}`, oninput: (e) => { ans.reports = e.target.value.trim(); } });
+        const none = el("input", { type: "checkbox", onchange: (e) => { inp.disabled = e.target.checked; ans.reports = e.target.checked ? "" : inp.value.trim(); } });
+        none.checked = !ans.reports; inp.disabled = none.checked;
+        box.append(el("label", { class: "cw-lbl" }, ["Report address", inp]), el("label", { class: "dm-check" }, [none, " No reports"]),
+          el("p", { class: "dm-hint", text: `Tip: create a mailbox like dmarc@${domain} under Email Accounts, so reports don't fill your inbox. An address on another domain needs that domain's permission.` }));
+        next.disabled = false;
+      } else {
+        const opts = el("div", { class: "dmw-opts" }, s.options.map(([v, l]) => el("button", { type: "button", class: `dmw-opt${ans[s.id] === v ? " on" : ""}`, onclick: () => { ans[s.id] = v; paint(); } }, [el("span", { class: "dmw-radio" }), el("span", { text: l })])));
+        box.append(opts);
+        next.disabled = !ans[s.id];
+      }
+      next.textContent = "Next";
+    }
+    async function review() {
+      next.disabled = true; next.textContent = "Save and publish";
+      let r;
+      try { r = await API.dmarcRecommend(domain, ans); } catch (e) { box.append(el("p", { class: "dm-hint bad", text: e.message })); return; }
+      box.append(el("h3", { class: "dmw-q", text: "Your DMARC record" }),
+        el("ul", { class: "dmw-why" }, r.why.map((w) => el("li", {}, [icon("check", 14), el("span", { text: w })]))),
+        el("div", { class: "dmc-rec" }, [el("span", { class: "muted mx-small", text: `TXT  _dmarc.${domain}` }), el("code", { text: r.record }), btn("Copy", () => copyText(r.record), "btn-ghost")]),
+        el("div", { class: "dmc-tags" }, r.explain.map((x) => el("div", { class: "dmc-tag" }, [el("code", { text: x.tag }), el("span", { text: x.text })]))),
+        ...(r.external || []).map((x) => el("p", { class: "dm-hint", text: `Reports go to another domain: ${x.name.split("._report")[0]} must be allowed by a TXT record ${x.name} with the value ${x.value}.` })),
+        st.zone ? el("p", { class: "dm-hint", text: `Saving publishes it in this server's DNS zone for ${st.zone}.` }) : el("p", { class: "dm-hint", text: "DNS for this domain is hosted elsewhere: saving shows the record to add at your DNS provider." }));
+      next.disabled = false;
+      next.onclick = async () => {
+        next.disabled = true;
+        try { const res = await API.dmarcSave(domain, r.settings); closeModal(); dmarcPublished(res); done && done(res); }
+        catch (e) { toast(e.message, "bad"); next.disabled = false; }
+      };
+    }
+    back.onclick = () => { if (i > 0) { i--; next.onclick = onNext; paint(); } };
+    const onNext = () => { const list = active(); if (i < list.length) { i++; paint(); } };
+    next.onclick = onNext;
+    openModal(`DMARC wizard · ${domain}`, box, [back, next]);
+    const m = document.querySelector("#modal .modal"); if (m) m.classList.add("em-modal");
+    paint();
+  }
+  window.AuroraDmarc = { wizard: dmarcWizard, help: dmarcHelp };
+
+  // The card on a domain's Manage page.
+  function dmarcCard(domain) {
+    const host = el("div", { class: "card dmm-card dmc" }, [
+      el("div", { class: "cw-card-h" }, [icon("at", 16), el("div", {}, [el("h3", { text: "Email authentication (DMARC)" }), el("p", { text: `Stop others from sending email as @${domain}.` })])]),
+      el("div", { class: "loading", text: "Checking DNS…" })]);
+    const bodyBox = el("div", { class: "dmc-body" });
+    async function load() {
+      let st;
+      try { st = await API.dmarc(domain); } catch (e) { host.lastChild.replaceWith(el("p", { class: "dm-hint", text: e.message })); return; }
+      host.lastChild.replaceWith(bodyBox);
+      bodyBox.innerHTML = "";
+      if (!st.public) { bodyBox.append(el("p", { class: "dm-hint", text: st.note })); return; }
+      const lv = DM_LEVEL[st.assess.level] || DM_LEVEL.missing;
+      const chk = (ok, label) => el("span", { class: `dmc-chk ${ok ? "ok" : "no"}` }, [icon(ok ? "check" : "error", 13), label]);
+      bodyBox.append(
+        el("div", { class: `dmc-status ${lv[1]}` }, [
+          el("span", { class: "dmc-shield" }, icon(lv[1] === "good" ? "shield" : lv[1] === "bad" ? "warning" : "eye", 22)),
+          el("div", { class: "grow" }, [el("b", { text: lv[0] }), el("span", { class: "muted", text: lv[2] })]),
+          el("span", { class: "dmc-grade", text: st.assess.grade }),
+        ]),
+        el("div", { class: "dmc-chks" }, [chk(!!st.record || !!st.parent_record, "DMARC"), chk(!!st.spf, "SPF"), chk(!!st.dkim, "DKIM")]),
+        st.record || st.parent_record ? el("div", { class: "dmc-rec" }, [el("span", { class: "muted mx-small", text: st.record ? `TXT _dmarc.${domain}` : `Inherited from _dmarc.${st.org}` }), el("code", { text: st.record || st.parent_record })]) : null,
+        st.pending ? el("p", { class: "dm-hint", text: "A newer record is published in this server's zone and is on its way through DNS (up to an hour)." }) : null,
+        el("ul", { class: "dmc-notes" }, st.assess.notes.map((n) => el("li", { class: n.tone }, [icon(n.tone === "good" ? "check" : n.tone === "bad" ? "error" : "warning", 13), el("span", { text: n.text })]))),
+      );
+      // Quick controls: the policy as three big choices, the rest under "More settings".
+      const s = { ...st.settings, rua: [...(st.settings.rua || [])], ruf: [...(st.settings.ruf || [])] };
+      if (!st.settings.enabled && !s.rua.length) s.rua = [st.default_reports];
+      const preview = el("code", { class: "dmc-preview" });
+      const saveBtn = el("button", { class: "btn btn-primary btn-sm", text: st.settings.enabled ? "Save DMARC" : "Publish DMARC" });
+      let tmr = null;
+      const refresh = () => {
+        clearTimeout(tmr);
+        tmr = setTimeout(async () => {
+          try { const r = await API.dmarcPreview(domain, s); preview.textContent = r.record; preview.classList.remove("bad"); saveBtn.disabled = false; }
+          catch (e) { preview.textContent = e.message; preview.classList.add("bad"); saveBtn.disabled = true; }
+        }, 250);
+      };
+      const pol = el("div", { class: "dmc-pol" }, DM_POLICY.map(([v, l, ic, desc]) => el("button", { type: "button", class: `dmc-p${s.p === v ? " on" : ""} p-${v}`, onclick: (e) => {
+        s.p = v; pol.querySelectorAll(".dmc-p").forEach((b) => b.classList.toggle("on", b === e.currentTarget)); refresh();
+      } }, [icon(ic, 18), el("b", { text: l }), el("span", { text: desc })])));
+      const addr = (key) => el("input", { type: "text", value: s[key].join(", "), placeholder: key === "rua" ? `dmarc@${domain}` : "optional", oninput: (e) => { s[key] = e.target.value.split(/[\s,;]+/).filter(Boolean); refresh(); } });
+      const sp = el("select", { onchange: (e) => { s.sp = e.target.value; refresh(); } }, [["", "Same as the domain"], ["none", "Monitor"], ["quarantine", "Quarantine"], ["reject", "Reject"]].map(([v, l]) => el("option", { value: v, text: l })));
+      sp.value = s.sp || "";
+      const pctOut = el("b", { text: `${s.pct}%` });
+      const pct = el("input", { type: "range", min: "1", max: "100", value: String(s.pct), oninput: (e) => { s.pct = +e.target.value; pctOut.textContent = `${s.pct}%`; refresh(); } });
+      const strict = (key, label, hint) => el("div", { class: "dm-trow" }, [el("div", {}, [el("b", { text: label }), el("span", { text: hint })]), sw(s[key] === "s", (v) => { s[key] = v ? "s" : "r"; refresh(); })]);
+      const more = el("details", { class: "dmc-more" }, [el("summary", { text: "More settings" }),
+        el("label", { class: "cw-lbl" }, ["Daily reports to (rua)", addr("rua"), el("span", { class: "dm-hint", text: "Comma-separated. Aggregate XML reports, a few per day." })]),
+        el("label", { class: "cw-lbl" }, ["Subdomain policy (sp)", sp]),
+        el("label", { class: "cw-lbl" }, [el("span", { class: "dmc-pct-l" }, ["Apply to ", pctOut, " of failing mail (pct)"]), pct, el("span", { class: "dm-hint", text: "Below 100% lets you ramp up quarantine or reject gradually." })]),
+        el("label", { class: "cw-lbl" }, ["Failure reports to (ruf)", addr("ruf"), el("span", { class: "dm-hint", text: "Per-message reports. Few providers send them and they can contain message content." })]),
+        strict("adkim", "Strict DKIM alignment", "Only a signature for exactly this domain counts."),
+        strict("aspf", "Strict SPF alignment", "Only SPF for exactly this domain counts."),
+      ]);
+      saveBtn.onclick = async () => {
+        saveBtn.disabled = true;
+        try { dmarcPublished(await API.dmarcSave(domain, s)); load(); } catch (e) { toast(e.message, "bad"); saveBtn.disabled = false; }
+      };
+      const removeBtn = st.zone_record ? el("button", { class: "btn btn-sm btn-ghost", text: "Remove record", onclick: async () => {
+        if (!confirmInline(`Remove the DMARC record of ${domain}? Receivers will no longer get any instruction about forged mail.`)) return;
+        try { await API.dmarcRemove(domain); toast("DMARC record removed", "good"); load(); } catch (e) { toast(e.message, "bad"); }
+      } }) : null;
+      bodyBox.append(
+        el("div", { class: "dmc-actions" }, [
+          el("button", { class: "btn btn-primary btn-sm", onclick: () => dmarcWizard(domain, () => load()) }, [icon("wand", 13), st.settings.enabled ? " Change with the wizard" : " Set up with the wizard"]),
+          el("button", { class: "btn btn-sm btn-ghost", onclick: dmarcHelp }, [icon("info", 13), " How DMARC works"]),
+        ]),
+        el("div", { class: "cw-lbl" }, ["Policy for mail that fails", pol]),
+        more,
+        el("div", { class: "dmc-rec" }, [el("span", { class: "muted mx-small", text: "Record to publish" }), preview]),
+        el("div", { class: "dmc-actions" }, [saveBtn, removeBtn].filter(Boolean)),
+      );
+      refresh();
+    }
+    load();
+    return host;
+  }
+
   function viewDomainManage(root, name) {
     root.append(el("div", { class: "loading", text: `Loading ${name}…` }));
     const jp = { t: null };
@@ -6366,6 +6580,7 @@
 
       // ---- right column ----
       const info = (k, v) => el("div", { class: "info-row" }, [el("span", { class: "k", text: k }), el("span", { class: "v" }, v)]);
+      if (!ro && !ipSite) right.append(dmarcCard(d.settings.server_name.replace(/^www\./, "")));
       right.append(el("div", { class: "card" }, [el("h3", { text: "Domain information" }), el("div", { class: "info-list" }, [
         info("Domain", d.settings.server_name),
         info("Aliases", d.settings.aliases.join(", ") || "n/a"),

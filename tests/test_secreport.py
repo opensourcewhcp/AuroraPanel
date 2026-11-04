@@ -27,7 +27,8 @@ def test_header_findings_match_the_scanner_wording():
     bare = {"status": 200, "headers": {"server": "Apache/2.4.69 (Debian)", "x-powered-by": "PHP/8.4"}, "cookies": ["PHPSESSID=abc; path=/"]}
     ids = {f["id"] for f in secreport._header_findings(bare, "site", "vhosts", "apache_harden", True)}
     assert {"server-header", "x-powered-by", "x-frame-options", "csp", "nosniff", "referrer-policy", "hsts", "cookie-PHPSESSID"} <= ids
-    hardened = {"status": 200, "headers": {"server": "Apache", "x-frame-options": "SAMEORIGIN", "content-security-policy": "frame-ancestors 'self'",
+    hardened = {"status": 200, "headers": {"server": "Apache", "x-frame-options": "SAMEORIGIN",
+                "content-security-policy": "default-src 'self'; form-action 'self'; frame-ancestors 'self'; object-src 'none'",
                 "x-content-type-options": "nosniff", "referrer-policy": "strict-origin-when-cross-origin", "strict-transport-security": "max-age=31536000"},
                 "cookies": ["sid=1; Secure; HttpOnly; SameSite=Lax"]}
     assert secreport._header_findings(hardened, "site", "vhosts", "apache_harden", True) == []

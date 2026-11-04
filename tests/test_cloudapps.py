@@ -482,3 +482,45 @@ def test_google_cloud_cli_installs_with_debians_python(monkeypatch):
     assert seen["pre"] == 1 and seen["result"] == {"installed": ["gcloud"]}
     assert ("install", {"CLOUDSDK_PYTHON": "/usr/bin/python3"}) in seen["apt"]
     assert cloudapps.env("gcp")["CLOUDSDK_PYTHON"] == "/usr/bin/python3"
+
+
+def test_current_rclone_comes_from_rclone_org_with_its_checksum_checked(tmp_path, monkeypatch):
+    """Debian's rclone 1.60 asks for the Google Photos scopes Google retired; "rclone-new" installs the
+    current release's .deb from rclone.org after checking it against the published SHA-256."""
+    import hashlib
+    from pathlib import Path
+    from backend import requires
+    deb = b"fake deb bytes"
+    good = hashlib.sha256(deb).hexdigest()
+    monkeypatch.setattr(requires, "RCLONE_DEB", tmp_path / "rclone.deb")
+    answers = {"version": "rclone v1.60.1-DEV\n- os/version: debian 13", "--print-architecture": "arm64\n",
+               "version.txt": "rclone v1.75.2\n", "SHA256SUMS": f"{good}  rclone-v1.75.2-linux-arm64.deb\n0000  rclone-v1.75.2-linux-amd64.deb\n"}
+    calls = []
+
+    def run(argv, timeout=120, env=None):
+        calls.append(argv)
+        if "-o" in argv:
+            Path(argv[argv.index("-o") + 1]).write_bytes(deb)
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        for k, v in answers.items():
+            if any(a.endswith(k) for a in argv):
+                return subprocess.CompletedProcess(argv, 0, v, "")
+        return subprocess.CompletedProcess(argv, 1, "", "no")
+    monkeypatch.setattr(requires, "_run", run)
+    monkeypatch.setattr(requires.shutil, "which", lambda n, path=None: "/usr/bin/" + n)
+    assert requires.rclone_version() == (1, 60, 1) and not requires.COMPONENTS["rclone-new"]["check"]()
+    assert "SHA-256 checked" in requires._rclone_download()[0]
+    assert calls[-1][-1] == "https://downloads.rclone.org/v1.75.2/rclone-v1.75.2-linux-arm64.deb"
+    deb = b"tampered"
+    with pytest.raises(requires.RequiresError, match="checksum"):
+        requires._rclone_download()
+    assert not (tmp_path / "rclone.deb").exists()
+    answers["--print-architecture"] = "s390x"
+    with pytest.raises(requires.RequiresError, match="no package"):
+        requires._rclone_download()
+    answers["--print-architecture"] = "arm64"
+    answers["version.txt"] = "<html>oops"
+    with pytest.raises(requires.RequiresError, match="current rclone version"):
+        requires._rclone_download()
+    monkeypatch.setattr(requires.shutil, "which", lambda n, path=None: None)
+    assert requires.rclone_version() == ()

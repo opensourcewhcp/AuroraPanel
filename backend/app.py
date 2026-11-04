@@ -27,7 +27,7 @@ from pydantic import BaseModel
 
 from . import (
     abuse, alerts, cloudapps, connectors, slackbot, antivirus, audit, authz, autossl, dockerapps, isolate, migrate, panelusers, servers, wptoolkit, schedules, tasks, updates, apache, apitokens, appmanager, auth, backups, config, cron,
-    apps, databases, diskusage, dnszones, domains, fail2ban, netmgr, sites, files, firewall, ipblocker, jobs,
+    apps, databases, diskusage, dmarc, dnszones, domains, fail2ban, netmgr, sites, files, firewall, ipblocker, jobs,
     metrics, modsecurity, netdiag, waf, packages, perms, phpmgr, services, sslcerts, sshaccess,
     proxysites, secreport, shadow, sysapps, system_info, terminal, twofa, users,
     appconfig, ddns, ddnshosts, ftp, gitvc, guard, images, ipsec, webaccess, netmon, openvpn, mail, panelhttps, phpsettings, portcheck, problems, requires, version, vpncommon, wireguard,
@@ -1369,6 +1369,7 @@ def api_shadow_download(id: str, path: str, ts: int, user: str = auth.CurrentUse
 # Security Report: scan what this server owns, score it (see secreport.py)
 class SecReportBody(BaseModel):
     targets: list[str] = []
+    deep: bool = False
 
 
 @app.get("/api/secreport")
@@ -1378,10 +1379,68 @@ def api_secreport(user: str = auth.CurrentUser):
 
 @app.post("/api/secreport/run")
 def api_secreport_run(body: SecReportBody, user: str = auth.CurrentUser):
+    """Starts the report as a background job: {job}. The page follows /api/jobs/<job>; its result is the report."""
     try:
-        return secreport.run(body.targets or None)
+        return secreport.start(body.targets or None, body.deep)
     except secreport.SecReportError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+class SecAcceptBody(BaseModel):
+    key: str
+    accepted: bool = True
+    note: str = ""
+
+
+@app.post("/api/secreport/accept")
+def api_secreport_accept(body: SecAcceptBody, user: str = auth.CurrentUser):
+    try:
+        return secreport.accept(body.key, body.accepted, body.note)
+    except secreport.SecReportError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# DMARC policy per domain (see dmarc.py): status, wizard recommendation, save, remove
+class DmarcBody(BaseModel):
+    domain: str
+    settings: dict = {}
+    answers: dict = {}
+
+
+def _dmarc(fn, *a):
+    try:
+        return fn(*a)
+    except (dmarc.DmarcError, dnszones.ZoneError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/dmarc")
+def api_dmarc(domain: str, user: str = auth.CurrentUser):
+    return _dmarc(dmarc.status, domain)
+
+
+@app.post("/api/dmarc/recommend")
+def api_dmarc_recommend(body: DmarcBody, user: str = auth.CurrentUser):
+    return _dmarc(dmarc.recommend, body.domain, body.answers)
+
+
+@app.post("/api/dmarc/preview")
+def api_dmarc_preview(body: DmarcBody, user: str = auth.CurrentUser):
+    def go():
+        d = dmarc.clean_domain(body.domain)
+        return {"record": dmarc.build(body.settings), "explain": dmarc.explain(body.settings, d),
+                "external": dmarc.external_auth(d, dmarc.validate(body.settings)["rua"])}
+    return _dmarc(go)
+
+
+@app.post("/api/dmarc/save")
+def api_dmarc_save(body: DmarcBody, user: str = auth.CurrentUser):
+    return _dmarc(dmarc.save, body.domain, body.settings)
+
+
+@app.post("/api/dmarc/remove")
+def api_dmarc_remove(body: DmarcBody, user: str = auth.CurrentUser):
+    return _dmarc(dmarc.remove, body.domain)
 
 
 class SecFixBody(BaseModel):

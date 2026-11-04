@@ -32,7 +32,7 @@ ERR = {
     "alerts": "AlertError", "slackbot": "SlackError", "schedules": "ScheduleError", "updates": "UpdateError",
     "wptoolkit": "WPError", "migrate": "MigrateError", "servers": "ServerError", "dockerapps": "DockerError",
     "isolate": "IsolateError", "autossl": "AutoSSLError", "metrics": "MetricsError", "ddnshosts": "DdnsError",
-    "panelusers": "PanelUserError",
+    "panelusers": "PanelUserError", "dmarc": "DmarcError",
 }
 
 
@@ -156,8 +156,13 @@ ROUTES = [
     R("POST", "/api/shadow/forget", "shadow", "forget", ("s1", "a/b", 5), body={"id": "s1", "path": "a/b", "ts": 5}),
     # ---- security report
     R("GET", "/api/secreport", "secreport", "overview", err=None),
-    R("POST", "/api/secreport/run", "secreport", "run", (None,), body={"targets": []}),
-    R("POST", "/api/secreport/run", "secreport", "run", (["a.com"],), body={"targets": ["a.com"]}),
+    R("POST", "/api/secreport/run", "secreport", "start", (None, False), body={"targets": []}),
+    R("POST", "/api/secreport/run", "secreport", "start", (["a.com"], True), body={"targets": ["a.com"], "deep": True}),
+    R("POST", "/api/secreport/accept", "secreport", "accept", ("site:a|csp", True, "lan"), body={"key": "site:a|csp", "note": "lan"}),
+    R("GET", "/api/dmarc", "dmarc", "status", ("x.com",), params={"domain": "x.com"}),
+    R("POST", "/api/dmarc/recommend", "dmarc", "recommend", ("x.com", {"sends": "none"}), body={"domain": "x.com", "answers": {"sends": "none"}}),
+    R("POST", "/api/dmarc/save", "dmarc", "save", ("x.com", {"p": "reject"}), body={"domain": "x.com", "settings": {"p": "reject"}}),
+    R("POST", "/api/dmarc/remove", "dmarc", "remove", ("x.com",), body={"domain": "x.com"}),
     R("POST", "/api/secreport/fix", "secreport", "fix", ("headers",), body={"action": "headers"}),
     # ---- apache .htaccess
     R("GET", "/api/apache/htaccess", "apache", "raw", ("d",), params={"dir": "d"}),
@@ -631,3 +636,13 @@ def test_route_turns_the_backend_error_into_the_http_status_with_its_message(adm
 def test_every_table_entry_names_a_real_backend_function():
     for r in ROUTES:
         assert callable(getattr(_mod(r["mod"]), r["fn"])), (r["mod"], r["fn"])
+
+
+def test_dmarc_preview_route(admin):
+    r = admin.post("/api/dmarc/preview", json={"domain": "www.x.com", "settings": {"p": "quarantine", "rua": ["d@reports.net"]}})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["record"] == "v=DMARC1; p=quarantine; rua=mailto:d@reports.net; adkim=r; aspf=r"
+    assert d["external"][0]["name"] == "x.com._report._dmarc.reports.net" and d["explain"][0]["tag"] == "v=DMARC1"
+    bad = admin.post("/api/dmarc/preview", json={"domain": "x.com", "settings": {"p": "maybe"}})
+    assert bad.status_code == 400 and "Policy" in bad.json()["detail"]

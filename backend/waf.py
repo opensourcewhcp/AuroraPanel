@@ -37,10 +37,18 @@ APPS = {"wordpress": "WordPress", "nextcloud": "Nextcloud", "drupal": "Drupal", 
 # the Core Rule Set reads its ordinary traffic as attacks (a mail host in the sign-in link, its pre-encoded
 # _url field, HTML mail being written). Under /webmail/ the engine only watches: attempts still show up
 # on the WAF page, nobody is refused. Switch the "Webmail (Roundcube)" exception off to block there too.
-ROUNDCUBE_RULE = 'SecRule REQUEST_URI "@beginsWith /webmail/" "id:1000103,phase:1,pass,nolog,t:none,ctl:ruleEngine=DetectionOnly"'
+# Webmail is watched, never blocked, and the WAF doesn't read what is posted there: a letter that quotes an abuse
+# report (".env", ".git", URL-encoded links) is text, not an attack, and scanning a long message body could
+# cost a send (a false alarm, or an Apache child lost on a huge regex match, which Roundcube shows as
+# "Connection Error (Failed to reach the server)"). The address, query and headers are still checked.
+ROUNDCUBE_RULE = ('SecRule REQUEST_URI "@beginsWith /webmail/" '
+                  '"id:1000103,phase:1,pass,nolog,t:none,ctl:ruleEngine=DetectionOnly,ctl:requestBodyAccess=Off"')
+# Without the Roundcube exception the WAF still checks webmail, but never the letters themselves.
+WEBMAIL_BODY_RULE = ('SecRule REQUEST_URI "@beginsWith /webmail/" '
+                     '"id:1000104,phase:1,pass,nolog,t:none,ctl:requestBodyAccess=Off"')
 # Bump when the rules the panel renders change: an install that still has older rules in Apache rewrites
 # them once (at start, and when the WAF page is opened), so a shipped exception never stays on paper.
-RULES_REV = 4
+RULES_REV = 6
 # CRS bookkeeping rules: the score summary, not an attack type of their own.
 _SUMMARY = {"949110", "959100", "980130", "980140", "980145", "959180"}
 # Noise, not attacks: someone opened a site by its IP address (920350), which on its own never blocks.
@@ -123,8 +131,7 @@ def render_pre(s: dict) -> str:
     apps = [a for a in s["apps"] if a in APPS and a != "roundcube"]
     if apps:
         out.append('SecAction "id:900130,phase:1,nolog,pass,t:none,' + ",".join(f"setvar:tx.crs_exclusions_{a}=1" for a in apps) + '"')
-    if "roundcube" in s["apps"]:
-        out.append(ROUNDCUBE_RULE)
+    out.append(ROUNDCUBE_RULE if "roundcube" in s["apps"] else WEBMAIL_BODY_RULE)
     # Single addresses go in bare: ModSecurity refuses "a.b.c.d/32" in an @ipMatch list.
     trusted = sorted(set(s["trusted"]) | set(_clean_ips(_panel_trusted())))
     if trusted:

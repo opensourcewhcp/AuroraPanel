@@ -12,8 +12,9 @@ address or to 127.0.0.1 on the computer with the browser, never to a home server
   3. finish(): the panel delivers the pasted address to the waiting listener here, rclone trades
      the one-time code for a token and prints it, and the panel saves it as an rclone remote.
 
-The owner can use rclone's built-in Google app or their own OAuth client (client ID + secret, type
-"Desktop app"), which avoids the shared app's rate limits.
+Google Drive works with rclone's built-in Google app or the owner's own OAuth client (client ID + secret,
+type "Desktop app"). Google Photos needs the owner's own client and rclone 1.70 or newer: Google retired
+the scopes older rclone asks for on 31 March 2025, and blocks the shared app for Photos.
 
 Google Photos: since 31 March 2025 Google lets apps see only the photos and albums they uploaded
 themselves. Pushing to Google Photos works for everything, pulling brings back what this panel
@@ -105,6 +106,14 @@ def rclone_ok() -> bool:
     return shutil.which("rclone", path=PATH) is not None
 
 
+PHOTOS_MIN = (1, 70)  # older rclone asks for the Photos scopes Google retired on 31 March 2025
+
+
+def rclone_version() -> tuple[int, ...]:
+    from . import requires
+    return requires.rclone_version()
+
+
 def _env() -> dict:
     return {"PATH": PATH, "HOME": str(BASE), "LANG": "C.UTF-8", "RCLONE_CONFIG": str(_conf())}
 
@@ -139,7 +148,8 @@ def listing() -> dict:
     d = load()
     with _LOCK:
         pending = {s["service"]: True for s in _SESSIONS.values()}
-    return {"rclone": rclone_ok(),
+    ver = rclone_version() if rclone_ok() else ()
+    return {"rclone": rclone_ok(), "rclone_version": ".".join(map(str, ver)), "photos_ok": ver >= PHOTOS_MIN,
             "services": [{"id": k, "name": v["name"], "icon": v["icon"], "about": v["about"], "roots": v["roots"],
                           "signing_in": pending.get(k, False)} for k, v in SERVICES.items()],
             "accounts": [_public(a) for a in d["accounts"]]}
@@ -234,6 +244,11 @@ def start(service: str, client_id: str = "", client_secret: str = "", label: str
     if not rclone_ok():
         raise ConnectError("Install rclone first (one click on this page)")
     client_id, client_secret = (client_id or "").strip(), (client_secret or "").strip()
+    if service == "photos":
+        if rclone_version() < PHOTOS_MIN:
+            raise ConnectError("Google Photos needs rclone 1.70 or newer. Update rclone on this page first")
+        if not client_id:
+            raise ConnectError("Google Photos needs your own Google app: Google no longer lets the shared one in. Fill in the client ID and secret")
     if client_id or client_secret:
         if not _CLIENT_ID.fullmatch(client_id):
             raise ConnectError("The client ID ends in .apps.googleusercontent.com")

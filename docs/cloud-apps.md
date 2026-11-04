@@ -70,9 +70,21 @@ browser, never to a home server's LAN address. So the sign-in takes one paste:
 2. Sign in and allow access. Google then opens a page on `127.0.0.1` that can't load. That is expected.
 3. Copy that page's whole address from the address bar, paste it into the panel and press **Finish**.
 
-By default the sign-in uses rclone's shared Google app. For better speed, use your own: in the
-Google Cloud console enable the Google Drive API or the Photos Library API, create an OAuth client
-ID of type **Desktop app**, and paste its ID and secret under **Use my own Google app**.
+Google Drive works with rclone's shared Google app. For better speed, use your own: in the
+Google Cloud console enable the Google Drive API, create an OAuth client of type **Desktop app**,
+and paste its ID and secret under **Use my own Google app**.
+
+Google Photos needs two things, because Google retired the old Photos access on 31 March 2025 and
+answers the shared app with "This app is blocked":
+
+- **rclone 1.70 or newer.** Debian's package is older. The Photos page offers the current release
+  from rclone.org in one click, checked against its published SHA-256.
+- **Your own Google app.** In the Google Cloud console create a project and enable the Photos
+  Library API. Under Google Auth Platform choose External and add your own Google address as a
+  test user, or publish the app so the access doesn't expire after 7 days. Under Data access add the
+  scopes `photoslibrary.appendonly`, `photoslibrary.readonly.appcreateddata` and
+  `photoslibrary.edit.appcreateddata`. Then create a client of type **Desktop app** and paste its ID
+  and secret into the sign-in window.
 
 Tokens are kept in `/var/lib/aurora/connectors/`, readable by root only. **Disconnect** removes
 them from the server. To withdraw the access at Google as well, open

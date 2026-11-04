@@ -328,9 +328,21 @@ window.AuroraCloud = (ui) => {
     const label = input({ placeholder: svc.name, maxlength: 60 });
     const cid = input({ placeholder: "…apps.googleusercontent.com" });
     const csec = input({ type: "password", placeholder: "Client secret" });
-    const own = el("details", { class: "cl-own" }, [el("summary", { text: "Use my own Google app (optional)" }),
-      el("p", { class: "dm-hint", text: "Without one, the sign-in uses rclone's shared Google app, which works but is slower when many people use it. To make your own: Google Cloud console, APIs & Services, enable the Google Drive API or Photos Library API, then Credentials, Create credentials, OAuth client ID, type Desktop app." }),
-      field("Client ID", cid), field("Client secret", csec)]);
+    const needOwn = svc.id === "photos";
+    const own = needOwn
+      ? el("div", { class: "cl-own" }, [el("b", { text: "Your own Google app (required for Google Photos)" }),
+        el("p", { class: "dm-hint", text: "Google blocks the shared app for Photos, so it takes five minutes in the Google Cloud console, once:" }),
+        el("ol", { class: "cl-steps" }, [
+          el("li", {}, ["Open ", el("a", { href: "https://console.cloud.google.com/projectcreate", target: "_blank", rel: "noopener noreferrer", text: "console.cloud.google.com" }), " and create a project (any name)."]),
+          el("li", {}, ["APIs & Services, Library: enable the ", el("a", { href: "https://console.cloud.google.com/apis/library/photoslibrary.googleapis.com", target: "_blank", rel: "noopener noreferrer", text: "Photos Library API" }), "."]),
+          el("li", { text: "Google Auth Platform: Get started, choose External, give the app a name and your email. Under Audience add your own Google address as a test user, or press Publish app so the access doesn't expire after 7 days." }),
+          el("li", { text: "Data access, Add or remove scopes: add photoslibrary.appendonly, photoslibrary.readonly.appcreateddata and photoslibrary.edit.appcreateddata." }),
+          el("li", { text: "Clients, Create client, type Desktop app. Copy its client ID and secret into the two fields below." }),
+        ]),
+        field("Client ID", cid), field("Client secret", csec)])
+      : el("details", { class: "cl-own" }, [el("summary", { text: "Use my own Google app (optional)" }),
+        el("p", { class: "dm-hint", text: "Without one, the sign-in uses rclone's shared Google app, which works but is slower when many people use it. To make your own: Google Cloud console, APIs & Services, enable the Google Drive API, then Google Auth Platform, Clients, Create client, type Desktop app." }),
+        field("Client ID", cid), field("Client secret", csec)]);
     const paste = el("textarea", { class: "cl-input", rows: 3, spellcheck: "false", placeholder: "http://127.0.0.1:53682/?state=…&code=…" });
     const step1 = el("div", { class: "cl-step" }, [field("Name", label, "Shown on these pages, for example Family photos or Work drive"), own]);
     const step2 = el("div", { class: "cl-step", hidden: "" }, [
@@ -345,6 +357,7 @@ window.AuroraCloud = (ui) => {
     const go = el("button", { class: "btn btn-primary", text: "Sign in with Google" });
     go.onclick = async () => {
       if (!session) {
+        if (needOwn && !(cid.value.trim() && csec.value.trim())) { toast("Fill in your Google app's client ID and secret first", "bad"); cid.focus(); return; }
         const tab = window.open("about:blank", "_blank");
         go.disabled = true; go.textContent = "Starting…";
         try {
@@ -383,12 +396,18 @@ window.AuroraCloud = (ui) => {
         const mine = d.accounts.filter((a) => a.service === sid);
         const acct = mine.find((a) => a.id === pick) || mine[0];
         head.innerHTML = "";
-        head.append(pageHead(svc.name, svc.about, [d.rclone ? btn(mine.length ? "Connect another" : "Connect", () => signInModal(svc, (a) => { pick = a.id; LS.set(`cl.${sid}.acct`, a.id); load(); }), mine.length ? "btn-ghost" : "btn-primary") : null]));
+        head.append(pageHead(svc.name, svc.about, [d.rclone && (sid !== "photos" || d.photos_ok) ? btn(mine.length ? "Connect another" : "Connect", () => signInModal(svc, (a) => { pick = a.id; LS.set(`cl.${sid}.acct`, a.id); load(); }), mine.length ? "btn-ghost" : "btn-primary") : null]));
         body.innerHTML = "";
         if (!d.rclone) {
           const host = el("div");
           body.append(host);
           try { const st = await API.requires(["rclone"]); host.append(requireCard([st.components.rclone], svc.name, false, load)); } catch (e) { fail(host, e); }
+          return;
+        }
+        if (sid === "photos" && !d.photos_ok) {
+          const host = el("div");
+          body.append(el("div", { class: "dm-note warn" }, [icon("info", 16), el("span", { text: `This server has rclone ${d.rclone_version || "(unknown version)"}. Google retired the access it asks for in March 2025 and blocks the sign-in ("This app is blocked"). Update rclone to the current release first.` })]), host);
+          try { const st = await API.requires(["rclone-new"]); host.append(requireCard([st.components["rclone-new"]], svc.name, false, load)); } catch (e) { fail(host, e); }
           return;
         }
         if (sid === "photos") {

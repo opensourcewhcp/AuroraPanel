@@ -16,6 +16,7 @@ import pytest
 from backend import connectors, jobs
 
 GOOGLE = "https://accounts.google.com/o/oauth2/auth?client_id=x&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2F&state=ST"
+CID, SEC = "123-abc.apps.googleusercontent.com", "GOCSPX-abcdefghij"
 TOKEN = {"access_token": "ya29.secret", "token_type": "Bearer", "refresh_token": "1//refresh", "expiry": "2026-11-03T12:00:00Z"}
 
 
@@ -72,6 +73,7 @@ class Resp:
 def conn(tmp_path, monkeypatch):
     monkeypatch.setattr(connectors, "BASE", tmp_path / "connectors")
     monkeypatch.setattr(connectors.shutil, "which", lambda name, path=None: "/usr/bin/rclone" if name == "rclone" else None)
+    monkeypatch.setattr(connectors, "rclone_version", lambda: (1, 75, 2))
     real_sleep = connectors.time.sleep
     monkeypatch.setattr(connectors.time, "sleep", lambda s: real_sleep(0.005))
     state = {"procs": [], "gets": [], "rules": [], "calls": []}
@@ -112,6 +114,9 @@ def conn(tmp_path, monkeypatch):
 
 
 def _sign_in(conn, service="drive", token_line=None, **kw):
+    if service == "photos":
+        kw.setdefault("client_id", CID)
+        kw.setdefault("client_secret", SEC)
     r = connectors.start(service, **kw)
     proc = conn["procs"][-1]
     conn["on_code"] = lambda: proc.feed("Paste the following into your remote machine --->", token_line or json.dumps(TOKEN), "<---End paste")
@@ -141,12 +146,24 @@ def test_remotes_are_kept_in_a_private_rclone_conf(conn):
 
 # ------------------------------------------------------------------ sign-in
 def test_start_runs_rclone_authorize_and_returns_the_google_page(conn):
-    r = connectors.start("photos", label="Family")
+    r = connectors.start("photos", label="Family", client_id=CID, client_secret=SEC)
     assert r["url"] == GOOGLE and r["session"] and r["expires"] == connectors.AUTH_TIMEOUT
     argv = conn["procs"][-1].argv
     assert argv[argv.index("authorize") + 1] == "google photos" and argv[-1] == "--auth-no-open-browser"
     assert conn["gets"][-1] == "http://127.0.0.1:53682/auth?state=ST"
-    assert connectors.listing()["services"][1]["signing_in"] is True
+    d = connectors.listing()
+    assert d["services"][1]["signing_in"] is True and d["photos_ok"] and d["rclone_version"] == "1.75.2"
+
+
+def test_photos_needs_a_current_rclone_and_an_own_google_app(conn, monkeypatch):
+    with pytest.raises(connectors.ConnectError, match="your own Google app"):
+        connectors.start("photos")
+    monkeypatch.setattr(connectors, "rclone_version", lambda: (1, 60, 1))
+    with pytest.raises(connectors.ConnectError, match="1.70 or newer"):
+        connectors.start("photos", client_id=CID, client_secret=SEC)
+    d = connectors.listing()
+    assert not d["photos_ok"] and d["rclone_version"] == "1.60.1"
+    assert connectors.start("drive")["url"] == GOOGLE  # Drive still works with the shared app
 
 
 def test_a_new_sign_in_replaces_the_old_one(conn):

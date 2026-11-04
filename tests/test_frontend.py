@@ -173,7 +173,7 @@ def test_small_fixes_everywhere():
     assert 'popNotice({ title: "Panel HTTPS is on"' in app_js
     assert 'tbl.classList.add("fm-trash")' in app_js and 'm.classList.add("em-modal")' in app_js
     assert ".filter((j) => j.live).length + (S.f2b.other_jails || []).length)} jails" in ops_js   # only running jails are counted
-    assert 'popNotice({ title: `Report done: ${d.last.grade}' in ops_js and 'fetch("/api/secreport/html"' in ops_js
+    assert 'popNotice({ title: `Report done: ${rep.grade}' in ops_js and 'fetch("/api/secreport/html"' in ops_js
     assert 'a.state === "missing"' in ops_js and 'API.dockerCtl(a.name, "start")' in ops_js and "Forget" in ops_js
     assert "onRange" in extras and 'class: "mx-sel"' in extras and "Selected: ${f(from)} to ${f(to)}" in extras
     assert "remoteAccounts(remoteBox)" in mail_js and "API.mailRemoteAdd(data)" in mail_js and "password never stored here" in mail_js

@@ -42,3 +42,27 @@ Send. An IP that was already reported is marked as such.
 ## fail2ban, SSH keys, two-factor login, API tokens
 
 See the matching pages under Security; each explains its settings.
+
+## Security Report
+
+Security → Security Report checks everything an outside vulnerability scanner checks, from the inside and only for what lives on this server. Run report starts it in the background; a bar shows each target as it finishes (about 20 seconds, a few minutes with the deep TLS scan).
+
+What it covers:
+
+- Web application: security headers, an incomplete Content-Security-Policy (no form-action, wildcard or undefined sources, unsafe-inline), cookies without Secure, HttpOnly or SameSite, POST forms without an anti-CSRF token, version banners on error pages, redirects that carry a page of content.
+- SSL / TLS: certificate trust, name and expiry, TLS 1.0/1.1, weak cipher suites, anonymous cipher suites on the mail ports (STARTTLS included).
+- Network: every open TCP and UDP port and whether the firewall lets the world reach it, services that belong on your own network only (databases, Samba, rpcbind, NFS, printing), FTP logins in clear text, weak SSH algorithms, TCP and ICMP timestamps, an open DNS resolver.
+- Email authentication: DMARC, SPF and DKIM for every mail domain, and for the main domain of every website.
+- Server protections: 2FA, Panel HTTPS, firewall, Fail2ban, WAF, the trusted certificate authorities.
+
+Three optional tools make it match a full outside scan: Nmap (the version every port announces), testssl.sh (every protocol, cipher and known TLS attack) and ssh-audit (every SSH algorithm rated). The report offers to install whichever is missing; without them it runs its built-in checks.
+
+After a report, Apply fixes lists every one-click fix with what it changes and which findings it resolves. Fixes that change how people or programs connect (FTPS, local-network-only ports, SSH algorithms) start unticked. The report runs again afterwards to confirm. A finding that is fine as it is (a false positive, or on purpose) can be Accepted with a note: it stays listed but no longer counts in the score. Each finding shows when it was first seen, and the report lists what was fixed since the last run.
+
+## DMARC
+
+DMARC tells receiving mail servers what to do with mail that claims to be from your domain but fails SPF and DKIM: deliver it (p=none, monitoring only), send it to spam (p=quarantine) or refuse it (p=reject). Domains → Manage → Email authentication shows the domain's status, SPF and DKIM, and the current record.
+
+The wizard asks whether the domain sends email, how sure you are that your own mail passes, where daily reports should go, and how subdomains and alignment should be treated, then shows the record with every tag explained. Saving publishes it in this server's DNS zone when the domain's DNS is served here; otherwise it shows the record to add at your DNS provider. The policy, subdomain policy, percentage, report addresses and alignment can also be set directly under the wizard. How DMARC works explains the whole flow.
+
+Start with p=none and a report address, move to quarantine when the reports show only your own servers, then to reject. A domain that never sends mail can go straight to p=reject.

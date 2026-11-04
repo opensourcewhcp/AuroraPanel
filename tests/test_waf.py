@@ -9,8 +9,11 @@ def test_roundcube_exception_is_rendered_only_for_webmail(tmp_path, monkeypatch)
     pre = waf.render_pre(s)
     assert waf.ROUNDCUBE_RULE in pre and "crs_exclusions_roundcube" not in pre and "crs_exclusions_wordpress" in pre
     assert '@beginsWith /webmail/' in waf.ROUNDCUBE_RULE and "ctl:ruleEngine=DetectionOnly" in waf.ROUNDCUBE_RULE   # watched, never blocked
+    assert "ctl:requestBodyAccess=Off" in waf.ROUNDCUBE_RULE and "phase:1" in waf.ROUNDCUBE_RULE   # letters are never scanned
     s["apps"] = [a for a in s["apps"] if a != "roundcube"]
-    assert "1000103" not in waf.render_pre(s)
+    off = waf.render_pre(s)
+    assert "1000103" not in off and waf.WEBMAIL_BODY_RULE in off   # exception off: webmail checked, letters still never scanned
+    assert "ctl:ruleEngine" not in waf.WEBMAIL_BODY_RULE and "ctl:requestBodyAccess=Off" in waf.WEBMAIL_BODY_RULE
 
 
 def test_panel_trusted_addresses_are_exempt_from_the_waf_too(tmp_path, monkeypatch):
