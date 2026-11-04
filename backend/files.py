@@ -441,6 +441,46 @@ def make_dir(rel_path: str, name: str) -> dict:
     return {"created": _rel(new_dir)}
 
 
+def _check_name(name: str, what: str) -> str:
+    name = (name or "").strip()
+    if not name or "/" in name or "\\" in name or name in (".", "..") or chr(0) in name or len(name) > 255:
+        raise FileError(f"Invalid {what} name")
+    return name
+
+
+def make_file(rel_path: str, name: str) -> dict:
+    """An empty new file; refuses to touch one that already exists."""
+    parent = _resolve(rel_path)
+    if not parent.is_dir():
+        raise FileError("Parent is not a directory")
+    name = _check_name(name, "file")
+    target = _resolve(str(Path(_rel(parent)) / name))
+    if target.exists() or target.is_symlink():
+        raise FileError(f"{name} already exists here")
+    with open(target, "x", encoding="utf-8"):
+        pass
+    _give_to_site(target)
+    return {"created": _rel(target)}
+
+
+def rename(rel_path: str, new_name: str) -> dict:
+    """Rename a file or folder in place (same folder, new name)."""
+    src = Path(_resolve(rel_path))
+    if not src.exists() and not src.is_symlink():
+        raise FileError("No such path")
+    new_name = _check_name(new_name, "new")
+    if new_name == src.name:
+        return {"renamed": _rel(src)}
+    if _protected(src) or src == TRASH_DIR:
+        raise FileError(f"Refusing to rename {_rel(src)}: it's a system, home or website folder")
+    dest = _resolve(str(Path(_rel(src.parent)) / new_name))
+    # A case-only rename on the same file is fine; any other existing name is a clash.
+    if (dest.exists() or dest.is_symlink()) and not (dest.exists() and src.exists() and os.path.samefile(src, dest)):
+        raise FileError(f"{new_name} already exists here")
+    os.rename(src, dest)
+    return {"renamed": _rel(dest)}
+
+
 def _within(child: Path, parent: Path) -> bool:
     """True if child is parent or lives inside it (blocks moving a folder into itself)."""
     try:

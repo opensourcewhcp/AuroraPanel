@@ -2093,9 +2093,14 @@
     const bar = el("div", { class: "fm-toolbar" }, [
       el("button", { class: "btn btn-sm", text: "↑ Up", id: "fm-up" }),
       el("button", { class: "btn btn-sm", text: "＋ New folder", onclick: fmNewFolder }),
+      el("button", { class: "btn btn-sm", text: "＋ New file", onclick: fmNewFile }),
       el("label", { class: "btn btn-sm", style: "position:relative;overflow:hidden" }, [
         "⬆ Upload",
         el("input", { type: "file", id: "fm-upload", multiple: "multiple", style: "position:absolute;inset:0;opacity:0;cursor:pointer", onchange: fmUpload }),
+      ]),
+      el("label", { class: "btn btn-sm", style: "position:relative;overflow:hidden", title: "Upload a whole folder with everything in it" }, [
+        "⬆ Upload folder",
+        el("input", { type: "file", webkitdirectory: "", multiple: "multiple", style: "position:absolute;inset:0;opacity:0;cursor:pointer", onchange: fmUploadDir }),
       ]),
       el("button", { class: "btn btn-sm", id: "fm-zip-btn", text: "🗜 Zip selected", onclick: fmZipSelected }),
       el("button", { class: "btn btn-sm btn-ghost", text: "🗑 Recycle Bin", onclick: fmRecycleBin }),
@@ -2112,6 +2117,7 @@
     const bulkBar = el("div", { class: "fm-bulkbar", id: "fm-bulk", hidden: "" }, [
       el("span", { class: "fm-bulk-count", id: "fm-bulk-count", text: "0 selected" }),
       el("span", { class: "fm-bulk-actions" }, [
+        el("button", { class: "btn btn-sm", id: "fm-bulk-rename", text: "✎ Rename", onclick: () => { const n = [...fmState.selected][0]; if (n) fmRenameByName(n); } }),
         el("button", { class: "btn btn-sm", text: "➜ Move", onclick: () => fmMoveCopy("move") }),
         el("button", { class: "btn btn-sm", text: "⧉ Copy", onclick: () => fmMoveCopy("copy") }),
         el("button", { class: "btn btn-sm", text: "🗜 Zip", onclick: fmZipSelected }),
@@ -2119,17 +2125,29 @@
         el("button", { class: "btn btn-sm btn-ghost", text: "✕ Clear", onclick: fmClearSel }),
       ]),
     ]);
-    root.append(pathBar, bar, bulkBar, crumb, zone);
+    root.append(pathBar, bar, bulkBar, crumb, el("p", { class: "fm-tip muted", text: "Ctrl or Shift + click selects more · double-click a name or press F2 to rename · drag items onto a folder (or Up) to move them · drop files or folders from your computer to upload." }), zone);
 
     // Drag-and-drop upload.
     let dragDepth = 0;
     zone.addEventListener("dragenter", (e) => { e.preventDefault(); if (e.dataTransfer && [...e.dataTransfer.types].includes("Files")) { dragDepth++; zone.classList.add("dragging"); } });
     zone.addEventListener("dragover", (e) => { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = "copy"; });
     zone.addEventListener("dragleave", (e) => { e.preventDefault(); if (--dragDepth <= 0) { dragDepth = 0; zone.classList.remove("dragging"); } });
-    zone.addEventListener("drop", (e) => {
+    zone.addEventListener("drop", async (e) => {
       e.preventDefault(); dragDepth = 0; zone.classList.remove("dragging");
-      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) fmUploadFiles(e.dataTransfer.files);
+      const dt = e.dataTransfer;
+      if (!dt) return;
+      // Folders dropped from the computer: walk them so their files keep their place inside.
+      const entries = [...(dt.items || [])].map((it) => it.webkitGetAsEntry && it.webkitGetAsEntry()).filter(Boolean);
+      if (entries.some((x) => x.isDirectory)) return fmUploadFiles(await fmWalkEntries(entries));
+      if (dt.files && dt.files.length) fmUploadFiles(dt.files);
     });
+    // F2 renames the one selected item.
+    const onKey = (e) => {
+      if (e.key !== "F2" || fmState.selected.size !== 1 || /^(INPUT|TEXTAREA|SELECT)$/.test((e.target || {}).tagName || "")) return;
+      e.preventDefault(); fmRenameByName([...fmState.selected][0]);
+    };
+    document.addEventListener("keydown", onKey);
+    (state.cleanups = state.cleanups || []).push(() => document.removeEventListener("keydown", onKey));
 
     fmState.cwd = fmState.cwd || "";
     $("#fm-up").addEventListener("click", () => { if (fmState.parent != null) fmLoad(fmState.parent); });
@@ -2170,22 +2188,41 @@
       const roots = $("#fm-roots"); roots.innerHTML = "";
       (data.roots || []).forEach((r) => roots.append(el("button", { class: `btn btn-sm btn-ghost${data.cwd === r ? " active" : ""}`, text: r, title: `Open ${r}`, onclick: () => fmLoad(r) })));
       $("#fm-up").disabled = data.parent == null;
+      fmDropTarget($("#fm-up"), null, "the parent folder");
       const body = $("#fm-body");
       body.innerHTML = "";
       let entries = data.entries;
       if (!fmState.showHidden) entries = entries.filter((e) => !e.is_hidden);
       if (!entries.length) { body.append(el("p", { class: "empty", text: fmState.showHidden ? "Empty folder" : "Empty (or only hidden files, tick “Show hidden”)" })); return; }
+      fmState.order = entries.map((e) => e.name);
+      fmState.entries = Object.fromEntries(entries.map((e) => [e.name, e]));
       const rows = entries.map((e) => {
         const cb = el("input", { type: "checkbox", class: "fm-row-cb", style: "width:auto",
-          onchange: (ev) => { ev.target.checked ? fmState.selected.add(e.name) : fmState.selected.delete(e.name); fmSelChanged(); } });
+          onchange: (ev) => { ev.target.checked ? fmState.selected.add(e.name) : fmState.selected.delete(e.name); fmState.anchor = e.name; fmSyncSel(); } });
         cb.dataset.name = e.name;
         if (fmState.selected.has(e.name)) cb.checked = true;
-        const nameCell = el("td", {}, el("span", { class: `fm-name ${e.is_dir ? "dir" : ""}`,
-          onclick: () => e.is_dir ? fmLoad(e.path) : fmOpenFile(e) }, [
+        // One click on the name opens it; a double click renames it instead.
+        let openT = null;
+        const label = el("span", { class: "fm-label", text: e.name + (e.is_symlink ? " ↳" : "") });
+        const nameEl = el("span", { class: `fm-name ${e.is_dir ? "dir" : ""}`, title: "Click to open, double-click to rename",
+          onclick: (ev) => { if (ev.ctrlKey || ev.metaKey || ev.shiftKey || label.querySelector("input")) return; ev.stopPropagation(); clearTimeout(openT); openT = setTimeout(() => e.is_dir ? fmLoad(e.path) : fmOpenFile(e), 260); },
+          ondblclick: (ev) => { ev.stopPropagation(); clearTimeout(openT); fmRenameInline(e, label); } }, [
           el("span", { class: "fm-ico" }, icon(e.is_dir ? "folder" : (/\.zip$/i.test(e.name) ? "backup" : "mime"), 15)),
-          e.name + (e.is_symlink ? " ↳" : "") + (e.is_hidden ? "" : ""),
-        ]));
-        return el("tr", {}, [
+          label,
+        ]);
+        const nameCell = el("td", {}, nameEl);
+        const tr = el("tr", { class: `fm-row${fmState.selected.has(e.name) ? " sel" : ""}`, draggable: "true", "data-name": e.name,
+          onclick: (ev) => { if (ev.target.closest("button, a, input")) return; fmRowClick(e.name, ev); },
+          ondragstart: (ev) => {
+            if (ev.target.closest && ev.target.closest("input")) { ev.preventDefault(); return; }
+            if (!fmState.selected.has(e.name)) { fmState.selected = new Set([e.name]); fmState.anchor = e.name; fmSyncSel(); }
+            ev.dataTransfer.setData("application/x-aurora-files", JSON.stringify([...fmState.selected]));
+            ev.dataTransfer.effectAllowed = "move";
+            tr.classList.add("dragging");
+          },
+          ondragend: () => tr.classList.remove("dragging") });
+        if (e.is_dir) fmDropTarget(tr, e.path, e.name);
+        tr.append(
           el("td", { style: "width:34px" }, cb),
           nameCell,
           el("td", { class: "muted", text: e.is_dir ? "n/a" : fmtBytes(e.size) }),
@@ -2193,10 +2230,12 @@
           el("td", { class: "muted", text: new Date(e.modified * 1000).toLocaleString() }),
           el("td", { class: "actions" }, [
             /\.zip$/i.test(e.name) ? el("button", { class: "btn btn-sm btn-ghost", text: "Extract", onclick: () => fmUnzip(e) }) : null,
-            e.is_dir ? null : el("a", { class: "btn btn-sm btn-ghost", href: API.downloadUrl(e.path), text: "↓" }),
-            el("button", { class: "btn btn-sm btn-danger", text: "✕", onclick: () => fmDelete(e) }),
-          ]),
-        ]);
+            el("button", { class: "btn btn-sm btn-ghost", text: "✎", title: "Rename (F2)", onclick: () => fmRenameInline(e, label) }),
+            e.is_dir ? null : el("a", { class: "btn btn-sm btn-ghost", href: API.downloadUrl(e.path), text: "↓", title: "Download" }),
+            el("button", { class: "btn btn-sm btn-danger", text: "✕", title: "Move to the Recycle Bin", onclick: () => fmDelete(e) }),
+          ].filter(Boolean)),
+        );
+        return tr;
       });
       const selAll = el("input", { type: "checkbox", id: "fm-selall", title: "Select all", style: "width:auto",
         onchange: (ev) => fmToggleAll(ev.target.checked) });
@@ -2224,13 +2263,133 @@
     }
   }
 
+  // Row click: select just this one; Ctrl/Cmd toggles; Shift selects the range from the last click.
+  function fmRowClick(name, ev) {
+    if (ev.shiftKey && fmState.anchor && fmState.order) {
+      const a = fmState.order.indexOf(fmState.anchor), b = fmState.order.indexOf(name);
+      const [lo, hi] = a < b ? [a, b] : [b, a];
+      if (!(ev.ctrlKey || ev.metaKey)) fmState.selected = new Set();
+      fmState.order.slice(lo, hi + 1).forEach((n) => fmState.selected.add(n));
+    } else if (ev.ctrlKey || ev.metaKey) {
+      fmState.selected.has(name) ? fmState.selected.delete(name) : fmState.selected.add(name);
+      fmState.anchor = name;
+    } else {
+      fmState.selected = new Set(fmState.selected.size === 1 && fmState.selected.has(name) ? [] : [name]);
+      fmState.anchor = name;
+    }
+    fmSyncSel();
+  }
+  function fmSyncSel() {
+    document.querySelectorAll(".fm-row").forEach((tr) => {
+      const on = fmState.selected.has(tr.dataset.name);
+      tr.classList.toggle("sel", on);
+      const cb = tr.querySelector(".fm-row-cb"); if (cb) cb.checked = on;
+    });
+    fmSelChanged();
+  }
+  // A folder row (or the Up button) takes items dragged from the list: they move into it.
+  function fmDropTarget(node, dest, label) {
+    if (!node || node.dataset.fmDrop) return;
+    node.dataset.fmDrop = "1";
+    const ours = (ev) => [...((ev.dataTransfer && ev.dataTransfer.types) || [])].includes("application/x-aurora-files");
+    node.addEventListener("dragover", (ev) => { if (!ours(ev) || node.disabled) return; ev.preventDefault(); ev.stopPropagation(); ev.dataTransfer.dropEffect = "move"; node.classList.add("fm-drop-on"); });
+    node.addEventListener("dragleave", () => node.classList.remove("fm-drop-on"));
+    node.addEventListener("drop", async (ev) => {
+      if (!ours(ev)) return;
+      ev.preventDefault(); ev.stopPropagation(); node.classList.remove("fm-drop-on");
+      const target = node.id === "fm-up" ? fmState.parent : dest;
+      if (target == null) return;
+      let names = [];
+      try { names = JSON.parse(ev.dataTransfer.getData("application/x-aurora-files") || "[]"); } catch (e) { return; }
+      names = names.filter((n) => fmJoin(fmState.cwd, n) !== target);
+      if (!names.length) return;
+      try {
+        let r = await API.filesMove(fmState.cwd, names, target, false);
+        let did = (r.moved || []).length;
+        if (r.clashed && r.clashed.length && confirmInline(`${r.clashed.length} item${r.clashed.length > 1 ? "s" : ""} already exist there. Overwrite?`)) {
+          r = await API.filesMove(fmState.cwd, r.clashed, target, true); did += (r.moved || []).length;
+        }
+        if (did) toast(`Moved ${did} item${did > 1 ? "s" : ""} into ${label}`, "good");
+      } catch (e) { toast(e.message, "bad"); }
+      fmState.selected = new Set();
+      fmLoad(fmState.cwd);
+    });
+  }
+  function fmRenameByName(name) {
+    const tr = [...document.querySelectorAll(".fm-row")].find((x) => x.dataset.name === name);
+    const e = fmState.entries && fmState.entries[name];
+    if (tr && e) fmRenameInline(e, tr.querySelector(".fm-label"));
+  }
+  // Rename in place: the name turns into a text box; Enter or clicking away saves, Esc cancels.
+  function fmRenameInline(e, label) {
+    if (!label || label.querySelector("input")) return;
+    const inp = el("input", { type: "text", class: "fm-rename", value: e.name, spellcheck: "false" });
+    const old = label.textContent;
+    const tr = label.closest("tr");
+    if (tr) tr.draggable = false;
+    label.textContent = ""; label.append(inp);
+    ["click", "dblclick", "mousedown"].forEach((k) => inp.addEventListener(k, (ev) => ev.stopPropagation()));
+    let done = false;
+    const restore = () => { label.textContent = old; if (tr) tr.draggable = true; };
+    const finish = async (save) => {
+      if (done) return; done = true;
+      const v = inp.value.trim();
+      if (!save || !v || v === e.name) return restore();
+      try { await API.filesRename(e.path, v); toast(`Renamed to ${v}`, "good"); fmState.selected = new Set([v]); fmLoad(fmState.cwd); }
+      catch (err) { toast(err.message, "bad"); restore(); }
+    };
+    inp.addEventListener("keydown", (ev) => { ev.stopPropagation(); if (ev.key === "Enter") { ev.preventDefault(); finish(true); } else if (ev.key === "Escape") { ev.preventDefault(); finish(false); } });
+    inp.addEventListener("blur", () => finish(true));
+    inp.focus();
+    const dot = e.is_dir ? -1 : e.name.lastIndexOf(".");
+    inp.setSelectionRange(0, dot > 0 ? dot : e.name.length);
+  }
+  async function fmNewFile() {
+    const name = (promptInline("New file name:", "index.html") || "").trim();
+    if (!name) return;
+    try {
+      await API.filesNewFile(fmState.cwd, name);
+      toast("File created", "good");
+      await fmLoad(fmState.cwd);
+      const e = fmState.entries && fmState.entries[name];
+      if (e) fmOpenFile(e);
+    } catch (err) { toast(err.message, "bad"); }
+  }
+  // Dropped folders become [{file, dir}] (dir relative to the current folder) plus {dir, mkdir} for each folder.
+  async function fmWalkEntries(entries) {
+    const out = [];
+    const readAll = (reader) => new Promise((res) => {
+      const all = [];
+      const next = () => reader.readEntries((b) => { if (!b.length) return res(all); all.push(...b); next(); }, () => res(all));
+      next();
+    });
+    const walk = async (entry, dir) => {
+      if (entry.isFile) { const f = await new Promise((res) => entry.file(res, () => res(null))); if (f) out.push({ file: f, dir }); return; }
+      const sub = dir ? `${dir}/${entry.name}` : entry.name;
+      out.push({ dir: sub, mkdir: true });
+      for (const c of await readAll(entry.createReader())) await walk(c, sub);
+    };
+    for (const e of entries) await walk(e, "");
+    return out;
+  }
+  function fmUploadDir(ev) {
+    const list = [...(ev.target.files || [])].map((f) => ({ file: f, dir: (f.webkitRelativePath || f.name).split("/").slice(0, -1).join("/") }));
+    const dirs = new Set();
+    list.forEach((x) => { const p = x.dir.split("/"); p.forEach((_, i) => dirs.add(p.slice(0, i + 1).join("/"))); });
+    ev.target.value = "";
+    fmUploadFiles([...[...dirs].filter(Boolean).sort().map((d) => ({ dir: d, mkdir: true })), ...list]);
+  }
+
   // ---- multi-select + bulk actions ----
   function fmSelChanged() {
     const n = fmState.selected.size;
     const bar = document.getElementById("fm-bulk");
-    if (bar) bar.hidden = n === 0;
+    // The bar keeps its place (no jump of the list); empty, it only says what selecting does.
+    if (bar) { bar.hidden = false; bar.classList.toggle("empty", n === 0); }
     const count = document.getElementById("fm-bulk-count");
-    if (count) count.textContent = `${n} selected`;
+    if (count) count.textContent = n ? `${n} selected` : "Nothing selected · click a row to select it";
+    const rn = document.getElementById("fm-bulk-rename");
+    if (rn) rn.hidden = n !== 1;
     const all = document.getElementById("fm-selall");
     if (all) {
       const rows = [...document.querySelectorAll(".fm-row-cb")];
@@ -2487,8 +2646,16 @@
     ev.target.value = "";
   }
   async function fmUploadFiles(files) {
-    const list = [...(files || [])];
-    if (!list.length) return;
+    // Plain File objects go into the current folder; {file, dir} items into a subfolder; {dir, mkdir} create one.
+    const items = [...(files || [])].map((x) => (x instanceof File ? { file: x, dir: "" } : x));
+    const base = fmState.cwd;
+    for (const d of items.filter((x) => x.mkdir)) {
+      const parts = d.dir.split("/"), name = parts.pop();
+      try { await API.filesMkdir(parts.length ? fmJoin(base, parts.join("/")) : base, name); }
+      catch (err) { if (!/exist/i.test(err.message)) toast(`${d.dir}: ${err.message}`, "bad"); }
+    }
+    const list = items.filter((x) => x.file);
+    if (!list.length) return fmLoad(base);
     // Orange progress bar while files upload.
     const fill = el("span");
     const label = el("div", { class: "fm-up-label", text: "Preparing upload…" });
@@ -2496,12 +2663,12 @@
     (document.getElementById("fm-zone") || document.body).prepend(panel);
     let ok = 0;
     for (let i = 0; i < list.length; i++) {
-      const file = list[i];
+      const file = list[i].file, into = list[i].dir ? fmJoin(base, list[i].dir) : base;
       fill.style.width = "0%";
       let lastSent = 0, lastT = Date.now(), rate = 0;
       const nth = list.length > 1 ? `  ·  file ${i + 1} of ${list.length}` : "";
       try {
-        await API.fileUpload(fmState.cwd, file, (sent, total) => {
+        await API.fileUpload(into, file, (sent, total) => {
           const pct = total ? (sent / total) * 100 : 0;
           fill.style.width = pct.toFixed(1) + "%";
           const now = Date.now();
@@ -2513,7 +2680,7 @@
     }
     panel.remove();
     if (ok) toast(`Uploaded ${ok} file${ok > 1 ? "s" : ""}`, "good");
-    fmLoad(fmState.cwd);
+    fmLoad(base);
   }
 
   // ======================================================================
@@ -5833,6 +6000,32 @@
     ]));
   }
 
+  const dmSlot = (show, make) => {
+    const b = make();
+    if (!show) { b.classList.add("dm-slot"); b.disabled = true; b.setAttribute("aria-hidden", "true"); b.tabIndex = -1; }
+    return b;
+  };
+
+  // Remove a domain or subdomain: optionally back up its files (they show under Backups) and delete them.
+  function removeDomainModal(s, done) {
+    const bk = el("input", { type: "checkbox" }); bk.checked = true;
+    const delFiles = el("input", { type: "checkbox" });
+    const root = s.docroot || "";
+    const go = el("button", { class: "btn btn-danger", onclick: async () => {
+      go.disabled = true;
+      try { const r = await API.siteRemove(s.server_name, root && delFiles.checked, bk.checked); closeModal(); done(r); }
+      catch (e) { toast(e.message, "bad"); go.disabled = false; }
+    } }, [icon("trash", 14), el("span", { text: " Delete domain" })]);
+    const paint = () => { go.lastChild.textContent = delFiles.checked ? " Delete domain and files" : " Delete domain"; };
+    delFiles.onchange = paint;
+    openModal(`Delete ${s.server_name}`, el("div", { class: "em-form" }, [
+      el("p", { class: "muted", text: `Apache stops serving ${s.server_name}${(s.aliases || []).length ? " and " + s.aliases.join(", ") : ""}. Its self-signed certificate and shadow copies are removed too.` }),
+      el("label", { class: "dm-check" }, [bk, el("span", {}, ["Back up first: the site's files go to ", el("b", { text: "Backups" }), " (restore any time), its Apache config to /var/lib/aurora/site-backups"])]),
+      root ? el("label", { class: "dm-check" }, [delFiles, el("span", {}, ["Also delete its files in ", el("code", { text: root })])]) : null,
+      el("p", { class: "dm-hint", text: "DNS records and zones are not touched: remove them in the Zone Editor if the name is gone for good." }),
+    ].filter(Boolean)), [go]);
+  }
+
   function viewDomains(root) {
     if (domState.manage) { const n = domState.manage; domState.manage = null; return viewDomainManage(root, n); }
     const bar = el("div", { class: "dm-bar" });
@@ -5877,6 +6070,8 @@
               !s.managed && !s.system ? el("span", { class: "pill dim", title: "Hand-written config, saving it once lets AuroraPanel manage it (original is backed up)", text: "manual" }) : null,
               !s.enabled ? el("span", { class: "pill warn", text: "disabled" }) : null,
               s.maintenance ? el("span", { class: "pill warn", text: "maintenance" }) : null,
+              // No index page + no file list = Apache answers 403 Forbidden.
+              !s.system && !s.redirect_url && s.has_index === false && !s.indexes ? el("span", { class: "pill warn", title: "Visitors get 403 Forbidden here: add an index.html, or turn on the file list", text: "no index page" }) : null,
             ]),
           ])),
           el("td", {}, el("span", { class: s.docroot ? "dm-root" : "dm-root muted" }, [icon("home", 13), " ", s.docroot || "no document root"])),
@@ -5887,18 +6082,25 @@
             catch (e) { inp.checked = !v; toast(e.message, "bad"); }
           }, { title: "Redirect all HTTP traffic to HTTPS" })),
           el("td", {}, sslPill(s.https_via ? { ...s, ...s.https_via } : s)),  // http built-in site: https comes from default-ssl
-          el("td", { class: "actions" }, [
+          s.system || s.redirect_url ? el("td", { class: "muted", title: s.system ? "Apache's built-in site: change its options in Manage" : "This domain redirects, so it shows no files", text: "-" })
+            : el("td", {}, sw(!!s.indexes, async (v, inp) => {
+              try { await API.siteToggle(s.server_name, "indexes", v); toast(`File list ${v ? "on" : "off"} · ${s.server_name}`, "good"); load(); }
+              catch (e) { inp.checked = !v; toast(e.message, "bad"); }
+            }, { title: "Show a list of the files when the folder has no index page" })),
+          el("td", { class: "actions" }, el("div", { class: "dm-acts" }, [
             el("button", { class: "btn btn-sm", onclick: () => openDomain(s.system ? s.conf : s.server_name) }, [icon("services", 13), " Manage"]),
-            isIp(s.server_name) ? null : el("button", { class: "btn btn-sm btn-ghost", title: "DNS zone", onclick: () => openZone(s.server_name.replace(/^www\./, "")) }, [icon("zone", 13), " Zone"]),
-            isIp(s.server_name) ? null : el("button", { class: "btn btn-sm btn-ghost", title: "DNS & WHOIS check", onclick: () => showDomainInfo(s.server_name) }, icon("search", 13)),
-            s.docroot ? shadowBtn(`site:${s.server_name}`) : null,
-          ].filter(Boolean)),
+            dmSlot(s.docroot, () => el("button", { class: "btn btn-sm btn-ghost dm-ico", title: `Files: open ${s.docroot} in the File Manager`, onclick: () => { fmState.cwd = s.docroot; navigate("files"); } }, icon("folder", 14))),
+            dmSlot(!isIp(s.server_name), () => el("button", { class: "btn btn-sm btn-ghost dm-ico", title: "DNS zone", onclick: () => openZone(s.server_name.replace(/^www\./, "")) }, icon("zone", 14))),
+            dmSlot(!isIp(s.server_name), () => el("button", { class: "btn btn-sm btn-ghost dm-ico", title: "DNS & WHOIS check", onclick: () => showDomainInfo(s.server_name) }, icon("search", 13))),
+            dmSlot(s.docroot, () => shadowBtn(`site:${s.server_name}`)),
+            dmSlot(!s.system, () => el("button", { class: "btn btn-sm btn-ghost dm-ico dm-del", title: `Delete ${s.server_name}`, onclick: () => removeDomainModal(s, (r) => removed(r, s.server_name)) }, icon("trash", 13))),
+          ])),
         ]);
       });
       body.append(el("div", { class: "dm-count muted", text: `Displaying ${list.length} of ${data.sites.length} domain${data.sites.length === 1 ? "" : "s"}` }));
       if (!list.length) body.append(el("div", { class: "cw-empty" }, [icon("globe", 28), el("b", { text: q ? "No matches" : "No domains yet" }), el("span", { class: "muted", text: "Create one to get a site running on this Pi." })]));
       else body.append(el("div", { class: "table-wrap" }, el("table", { class: "dm-table" }, [
-        el("thead", {}, el("tr", {}, [el("th", {}, all), ...["Domain", "Document Root", "Redirects To", "Force HTTPS", "SSL", "Actions"].map((h) => el("th", { text: h }))])),
+        el("thead", {}, el("tr", {}, [el("th", {}, all), ...["Domain", "Document Root", "Redirects To", "Force HTTPS", "SSL", "File list", ""].map((h) => el("th", { text: h }))])),
         el("tbody", {}, rows),
       ])));
       body.append(folderSection(q));
@@ -5934,11 +6136,11 @@
             try { await API.folderSiteIndexes(f.name, v); toast(`File list ${v ? "on" : "off"} · /${f.name}`, "good"); load(); }
             catch (e) { inp.checked = !v; toast(e.message, "bad"); }
           }, { title: "Show a list of the files when the folder has no index page" })),
-          el("td", { class: "actions" }, [
-            el("button", { class: "btn btn-sm", onclick: () => { fmState.cwd = f.path; navigate("files"); } }, [icon("folder", 13), " Files"]),
+          el("td", { class: "actions" }, el("div", { class: "dm-acts" }, [
+            el("button", { class: "btn btn-sm btn-ghost dm-ico", title: `Files: open ${f.path} in the File Manager`, onclick: () => { fmState.cwd = f.path; navigate("files"); } }, icon("folder", 14)),
             shadowBtn(`folder:${f.name}`),
-            el("button", { class: "btn btn-sm btn-ghost", title: "Remove this folder site (optionally its files, with a backup first)", onclick: () => removeFolderSite(f) }, icon("error", 13)),
-          ]),
+            el("button", { class: "btn btn-sm btn-ghost dm-ico dm-del", title: "Remove this folder site (optionally its files, with a backup first)", onclick: () => removeFolderSite(f) }, icon("trash", 13)),
+          ])),
         ])),
         // Folders already in the web root that nobody set up here: Apache serves them anyway, so show them and offer to adopt them.
         ...found.map((f) => el("tr", { class: "dm-found" }, [
@@ -5952,8 +6154,8 @@
           ])),
           el("td", {}, el("span", { class: "dm-root" }, [icon("home", 13), " ", f.path])),
           el("td", {}, el("span", { class: "muted", title: "Set it up to manage the file list here", text: "-" })),
-          el("td", { class: "actions" }, [
-            el("button", { class: "btn btn-sm", onclick: () => { fmState.cwd = f.path; navigate("files"); } }, [icon("folder", 13), " Files"]),
+          el("td", { class: "actions" }, el("div", { class: "dm-acts" }, [
+            el("button", { class: "btn btn-sm btn-ghost dm-ico", title: `Files: open ${f.path} in the File Manager`, onclick: () => { fmState.cwd = f.path; navigate("files"); } }, icon("folder", 14)),
             el("button", { class: "btn btn-sm btn-primary", disabled: f.addable ? null : "",
               title: f.addable ? "Manage it here: file list, shadow copies, backup and removal. Nothing in the folder changes." : "Rename the folder first: lowercase letters, numbers, dots, dashes or underscores",
               onclick: async (ev) => {
@@ -5961,7 +6163,7 @@
                 try { await API.folderSiteCreate(f.name, f.path); toast(`/${f.name} is a folder site now`, "good"); load(); }
                 catch (e) { toast(e.message, "bad"); b.disabled = false; }
               } }, [icon("plus", 13), " Set up"]),
-          ]),
+          ])),
         ]))]),
       ])));
       return box;
@@ -5977,6 +6179,14 @@
     const otherBox = el("div");
     root.append(otherBox);
     const jpFolder = jobPanel(root);
+    // A removal started here or on the Manage page: follow its job, then reload the list.
+    function removed(r, name) {
+      if (!r.job) { toast("Domain removed", "good"); return load(); }
+      jpFolder.run(r.job, `Delete ${name || "domain"}`);
+      const t = setInterval(async () => { try { const j = await API.job(r.job); if (j.status !== "running") { clearInterval(t); load(); } } catch (e) { clearInterval(t); } }, 1500);
+      load();
+    }
+    if (domState.removing) { const x = domState.removing; domState.removing = null; setTimeout(() => removed(x.r, x.name), 0); }
     // Remove a folder site: stop serving it, and optionally delete its folder, after a backup that shows under Backups.
     function removeFolderSite(f) {
       const host = location.hostname;
@@ -6313,17 +6523,14 @@
         el("div", { class: "dmx-chks" }, [chk(!!live, "DMARC", "The policy record at _dmarc"), chk(!!st.spf, "SPF", st.spf || "Which servers may send"), chk(!!st.dkim, "DKIM", "A signing key in DNS")]),
       ]);
       const recBox = el("div", { class: "dmx-live" }, [
-        el("div", { class: "dmx-live-h" }, [el("span", { text: st.record ? `Live record · TXT _dmarc.${domain}` : st.parent_record ? `Inherited from _dmarc.${st.org}` : "No record published" }),
+        el("div", { class: "dmx-live-h" }, [el("span", { text: st.record ? `Published at _dmarc.${domain}` : st.parent_record ? `Inherited from _dmarc.${st.org}` : "Nothing published yet" }),
           live ? btn("Copy", () => copyText(live), "btn-ghost btn-sm") : null].filter(Boolean)),
-        live ? dmarcTokens(live) : el("p", { class: "muted", text: "Receivers get no instruction about mail that fakes this domain." }),
+        live ? el("code", { class: "dmx-live-rec", text: live }) : null,
         st.pending ? el("p", { class: "dmx-pend" }, [icon("clock", 13), " Saved here; resolvers that asked before still hold the old answer for up to an hour."]) : null,
         flash ? el("p", { class: `dmx-flash ${flash.ok ? "ok" : "bad"}` }, [icon(flash.ok ? "check" : "warning", 13), " ", flash.text]) : null,
       ].filter(Boolean));
-      const notes = el("ul", { class: "dmx-notes" }, st.assess.notes.map((n) => el("li", { class: n.tone }, [icon(n.tone === "good" ? "check" : n.tone === "bad" ? "error" : "warning", 14), el("span", { text: n.text })])));
-      const side = el("div", { class: "card dmx-side" }, [recBox, el("h4", { text: "What receivers see" }), notes,
-        el("div", { class: "dmx-side-act" }, [
-          el("button", { class: "btn btn-primary btn-sm", onclick: () => dmarcWizard(domain, () => load()) }, [icon("wand", 13), st.settings.enabled ? " Change with the wizard" : " Set up with the wizard"]),
-          el("button", { class: "btn btn-sm btn-ghost", onclick: dmarcHelp }, [icon("info", 13), " How DMARC works"])])]);
+      const notes = st.assess.notes.length ? el("ul", { class: "dmx-notes" }, st.assess.notes.map((n) => el("li", { class: n.tone }, [icon(n.tone === "good" ? "check" : n.tone === "bad" ? "error" : "warning", 14), el("span", { text: n.text })]))) : null;
+      const findings = el("div", { class: "card dmx-find" }, [notes, live || st.pending || flash ? recBox : null].filter(Boolean));
 
       // ---- the settings, one row per tag
       const s = { ...st.settings, rua: [...(st.settings.rua || [])], ruf: [...(st.settings.ruf || [])] };
@@ -6353,7 +6560,7 @@
       const row = (tag, title, hint, ctl, opt) => {
         // opt: {on, set(on)} gives the row a switch; its control shows only while it's on
         const r = el("div", { class: `dmx-row${opt && !opt.on ? " off" : ""}${opt ? "" : " fixed"}` }, [
-          el("code", { class: "dmx-tag", text: tag }),
+          el("code", { class: "dmx-tag", text: tag.replace(/=.*$/, "=") }),
           el("div", { class: "dmx-row-t" }, [el("b", { text: title }), el("span", { text: hint })]),
           opt ? sw(opt.on, (v) => { opt.set(v); r.classList.toggle("off", !v); refresh(); }) : el("span", { class: "dmx-sw-gap" }),
           ctl ? el("div", { class: "dmx-row-ctl" }, ctl) : null].filter(Boolean));
@@ -6404,14 +6611,16 @@
         try { await API.dmarcRemove(domain); toast("DMARC record removed", "good"); load(); } catch (e) { toast(e.message, "bad"); }
       }, "btn-ghost") : null;
       const editor = el("div", { class: "card dmx-edit" }, [
-        el("div", { class: "dmx-edit-h" }, [el("h3", { text: "Record settings" }), el("p", { class: "muted", text: "Every part of the record, switched on or off. Changed parts are highlighted in the preview." })]),
+        el("div", { class: "dmx-edit-h" }, [
+          el("div", {}, [el("h3", { text: "Record settings" }), el("p", { class: "muted", text: "Switch each part of the record on or off. Changes are highlighted in the preview below." })]),
+          el("button", { class: "btn btn-ghost dmx-wiz", onclick: () => dmarcWizard(domain, () => load()) }, [icon("wand", 14), el("span", { text: "Use the wizard" })])]),
         rows,
         el("div", { class: "dmx-foot" }, [
-          el("div", { class: "dmx-foot-rec" }, [el("span", { class: "muted mx-small", text: `TXT _dmarc.${domain}` }), preview]),
+          el("div", { class: "dmx-foot-rec" }, [el("span", { class: "dmx-foot-l", text: `New record · TXT _dmarc.${domain}` }), preview]),
           el("div", { class: "dmx-foot-act" }, [stateTxt, removeBtn, saveBtn].filter(Boolean)),
         ]),
       ]);
-      host.append(head, el("div", { class: "dmx-grid" }, [editor, side]));
+      host.append(head, findings, editor);
       refresh();
     }
     load();
@@ -6434,7 +6643,7 @@
   async function viewDmarc(root) {
     root.append(el("div", { class: "em-head" }, [
       el("div", { class: "em-head-txt" }, [el("h2", { text: "DMARC" }), el("p", { class: "muted", text: "Stop others from sending email that pretends to come from your domains. Pick a domain or host, see how well it's protected, and switch each part of its record on or off." })]),
-      el("div", { class: "em-head-act" }, [el("button", { class: "btn btn-sm btn-ghost", onclick: dmarcHelp }, [icon("info", 13), " How DMARC works"])]),
+      el("div", { class: "em-head-act" }, [el("button", { class: "btn btn-ghost dmx-wiz", onclick: dmarcHelp }, [icon("info", 14), el("span", { text: "How DMARC works" })])]),
     ]));
     const box = el("div", { class: "dmx-page" }, el("div", { class: "loading", text: "Loading domains…" }));
     root.append(box);
@@ -6764,12 +6973,9 @@
         res("redirect", "Path redirects (.htaccess)", () => navigate("redirects")),
         res("lock", "SSL/TLS certificates", () => navigate("ssl")),
       ].filter(Boolean)));
-      if (!ro) right.append(el("div", { class: "card dm-danger" }, [el("h3", { text: "Remove the domain" }),
-        el("p", { class: "muted", html: `Removes the Apache site for <b>${esc(d.settings.server_name)}</b>. Files in <code>${esc(d.settings.docroot)}</code> are kept.` }),
-        el("button", { class: "btn btn-danger btn-sm", onclick: async () => {
-          if (!confirmInline(`Remove ${d.settings.server_name}? The document root is kept.`)) return;
-          try { await API.siteRemove(d.settings.server_name); toast("Domain removed", "good"); navigate("vhosts"); } catch (e) { toast(e.message, "bad"); }
-        } }, [icon("error", 13), " Remove domain"])]));
+      if (!ro) right.append(el("div", { class: "card dm-danger" }, [el("h3", { text: "Delete the domain" }),
+        el("p", { class: "muted", html: `Stops serving <b>${esc(d.settings.server_name)}</b>. You choose whether to back up and delete the files in <code>${esc(d.settings.docroot)}</code>.` }),
+        el("button", { class: "btn btn-danger btn-sm", onclick: () => removeDomainModal(d.settings, (r) => { domState.removing = { r, name: d.settings.server_name }; navigate("vhosts"); }) }, [icon("trash", 13), " Delete domain"])]));
 
       // ---- save bar ----
       const saveBtn = el("button", { class: "btn btn-primary", onclick: async () => {

@@ -100,3 +100,32 @@ def test_protected_folders():
             continue
         assert files._protected(Path(p)), p
     assert not files._protected(Path("/opt/some/app/file.txt"))
+
+
+def test_new_file_and_rename(files_root):
+    files.make_file("", "index.html")
+    assert (files_root / "index.html").read_text() == ""
+    with pytest.raises(files.FileError):
+        files.make_file("", "index.html")  # never overwrites
+    files.make_dir("", "docs")
+    files.rename("index.html", "home.html")
+    files.rename("docs", "guides")
+    assert (files_root / "home.html").is_file() and (files_root / "guides").is_dir()
+    assert not (files_root / "index.html").exists()
+
+
+@pytest.mark.parametrize("bad", ["", ".", "..", "a/b", "a" + chr(92) + "b", "x" * 300])
+def test_rename_and_new_file_refuse_bad_names(files_root, bad):
+    (files_root / "f.txt").write_text("x")
+    with pytest.raises(files.FileError):
+        files.rename("f.txt", bad)
+    with pytest.raises(files.FileError):
+        files.make_file("", bad)
+
+
+def test_rename_refuses_existing_name(files_root):
+    (files_root / "a.txt").write_text("a")
+    (files_root / "b.txt").write_text("b")
+    with pytest.raises(files.FileError):
+        files.rename("a.txt", "b.txt")
+    assert (files_root / "b.txt").read_text() == "b"

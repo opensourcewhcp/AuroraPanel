@@ -236,6 +236,17 @@ def _has_http(conf: Path) -> bool:
         return False
 
 
+def _dir_has_index(docroot: str) -> bool | None:
+    """Whether the document root has an index page (None: no folder to look in)."""
+    try:
+        d = Path(docroot or "")
+        if not docroot or not d.is_dir():
+            return None
+        return any((d / f).is_file() for f in _INDEX_FILES)
+    except OSError:
+        return None
+
+
 def list_sites() -> dict:
     if not (IS_LINUX and AVAIL.exists()):
         return {"supported": False, "sites": []}
@@ -255,6 +266,7 @@ def list_sites() -> dict:
             "system": system, "ssl": s["ssl"], "force_https": s["force_https"],
             "has_http": _has_http(f) if system else True, "hand_copy": system and _hand_copy(f),
             "redirect_url": s["redirect_url"], "maintenance": s["maintenance"],
+            "indexes": s["indexes"], "has_index": _dir_has_index(s["docroot"]),
             "cert_expires": cert.get("expires") if cert else None,
             "cert_self_signed": cert.get("self_signed") if cert else None,
         })
@@ -636,8 +648,8 @@ def save_site(original_name: str, settings: dict) -> dict:
 
 
 def quick_toggle(name: str, key: str, value: bool) -> dict:
-    """List-page switches (Force HTTPS, enabled, maintenance)."""
-    if key not in ("force_https", "enabled", "maintenance", "hsts"):
+    """List-page switches (Force HTTPS, enabled, maintenance, file list)."""
+    if key not in ("force_https", "enabled", "maintenance", "hsts", "indexes"):
         raise SiteError("Unsupported toggle")
     cur = get_site(name)
     if cur["system"]:
@@ -933,13 +945,80 @@ def set_system_custom(conf_name: str, custom: str) -> dict:
     return {"ok": True}
 
 
-def remove_site(name: str) -> dict:
+def _docroot_deletable(name: str, docroot: str) -> Path:
+    """A site's document root may be deleted only when it belongs to that site alone: not a system or
+    top-level folder, not the web root, not a home folder, and not shared with (or holding) another site."""
+    if not docroot or not Path(docroot).is_absolute():
+        raise SiteError("This site has no document root to delete")
+    p = Path(docroot).resolve()
+    if len(p.parts) <= 3 or p in (Path("/var/www/html"), Path("/var/www")):
+        raise SiteError(f"{p} is a system folder, not deleting it")
+    for s in list_sites().get("sites", []):
+        if (s["server_name"] or "").lower() == name.lower() or not s.get("docroot"):
+            continue
+        o = Path(s["docroot"]).resolve()
+        if o == p or p in o.parents or o in p.parents:
+            raise SiteError(f"{p} is also used by {s['server_name']}, not deleting it")
+    try:
+        import pwd
+        if any(p == Path(u.pw_dir) or p in Path(u.pw_dir).parents for u in pwd.getpwall() if u.pw_dir.startswith("/home/")):
+            raise SiteError(f"{p} is a home folder, not deleting it")
+    except ImportError:
+        pass
+    return p
+
+
+def remove_site(name: str, delete_files: bool = False, backup: bool = False) -> dict:
+    """Removes the Apache site. With backup, the document root is archived under Backups (and the conf kept in
+    the site backups) before anything changes; with delete_files the document root goes too. Either option
+    runs as a job with a progress log and returns {"job": id}."""
     _require()
     conf = _conf_for(name)
     if not conf:
         raise SiteError("No site found with that name")
     if conf.name in SYSTEM_CONFS:
         raise SiteError("Refusing to remove a system default site")
+    if not (delete_files or backup):
+        return _remove_site_conf(conf, name)
+    docroot = _settings_from_conf(conf)["docroot"]
+    root = _docroot_deletable(name, docroot) if delete_files else (Path(docroot) if docroot else None)
+
+    def fn(log):
+        if backup:
+            SITE_BAK.mkdir(parents=True, exist_ok=True)
+            kept = SITE_BAK / f"{conf.name}.removed.{int(time.time())}"
+            shutil.copy2(conf, kept)
+            log(f"✓ Apache config saved as {kept}")
+            if root and root.is_dir():
+                from . import backups
+                label = "site-" + re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-")
+                log(f"• Backing up {root} (it will show under Backups as {label}-<date>.tar.gz)…")
+                log.progress(None, "Backing up")
+                j = backups.create_backup(str(root), label)
+                while j.status == "running":
+                    time.sleep(0.5)
+                if j.status != "done":
+                    tail = next((l for l in reversed(list(j.lines)) if l.strip()), "")
+                    raise SiteError(f"The backup failed, so nothing was removed: {tail[-200:]}")
+                log("✓ Backup saved under Backups")
+            else:
+                log("• No document root folder to back up")
+        log(f"• Removing the Apache site for {name}…")
+        _remove_site_conf(conf, name)
+        log(f"✓ {name} is no longer served")
+        if delete_files:
+            if root.exists():
+                log(f"• Deleting {root}…")
+                log.progress(None, "Deleting")
+                shutil.rmtree(root)
+                log(f"✓ Deleted {root}")
+            else:
+                log(f"• {root} is already gone")
+        return {"ok": True, "deleted": bool(delete_files)}
+    return {"job": jobs.launch_fn(f"Remove domain {name}", fn, meta={"site": name}).id}
+
+
+def _remove_site_conf(conf: Path, name: str) -> dict:
     _run(["a2dissite", "-q", conf.name])
     conf.unlink(missing_ok=True)
     # the panel's own self-signed certificate for it, and a2dissite's marker

@@ -771,6 +771,31 @@ def api_files_mkdir(body: MkdirBody, user: str = auth.CurrentUser):
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@app.post("/api/files/newfile")
+def api_files_newfile(body: MkdirBody, user: str = auth.CurrentUser):
+    try:
+        return files.make_file(body.path, body.name)
+    except files.FileError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+class RenameBody(BaseModel):
+    path: str
+    name: str
+
+
+@app.post("/api/files/rename")
+def api_files_rename(body: RenameBody, user: str = auth.CurrentUser):
+    try:
+        return files.rename(body.path, body.name)
+    except files.FileError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @app.post("/api/files/upload")
 async def api_files_upload(
     path: str = Form(""), file: UploadFile = File(...), user: str = auth.CurrentUser
@@ -2158,9 +2183,15 @@ def api_site_system_custom(body: SystemCustomBody, user: str = auth.CurrentUser)
     return _site_call(sites.set_system_custom, body.conf, body.custom)
 
 
+class SiteRemoveBody(BaseModel):
+    server_name: str
+    delete_files: bool = False  # also delete the document root
+    backup: bool = False        # archive the document root under Backups first
+
+
 @app.post("/api/sites/remove")
-def api_site_remove(body: DomainNameBody, user: str = auth.CurrentUser):
-    return _site_call(sites.remove_site, body.server_name)
+def api_site_remove(body: SiteRemoveBody, user: str = auth.CurrentUser):
+    return _site_call(sites.remove_site, body.server_name, body.delete_files, body.backup)
 
 
 class FolderSiteBody(BaseModel):
