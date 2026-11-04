@@ -97,7 +97,7 @@ def _bot_name(u: str) -> str:
     """A readable name for a crawler/tool: the product token that isn't the generic Mozilla/5.0."""
     if not u:
         return "(empty user agent)"
-    m = re.search(r"([A-Za-z][\w.-]*(?:bot|Bot|BOT|crawler|Crawler|spider|Spider|scan|Scan|Scanner))", u)
+    m = re.search(r"([A-Za-z][\w.-]*(?:bot|Bot|BOT|crawler|Crawler|spider|Spider|scan|Scan|Scanner))\b", u)
     if m:
         return m.group(1)
     m = re.search(r"compatible;\s*([^;/)]+)", u) or re.search(r"\(([A-Za-z][\w.-]+)/", u)
@@ -106,7 +106,7 @@ def _bot_name(u: str) -> str:
     toks = [x.split("/")[0] for x in re.findall(r"[A-Za-z][\w.-]*/[\w.-]+", u) if not x.startswith("Mozilla/")]
     if toks:
         return toks[0]
-    m = re.search(r"(zgrab|masscan|nmap|curl|wget)", u, re.I)
+    m = re.search(r"\b(zgrab|masscan|nmap|curl|wget)\b", u, re.I)
     return m.group(1) if m else u.split("/")[0][:40]
 
 
@@ -351,7 +351,7 @@ def _err_category(mod: str, level: str, msg: str) -> str:
         return "php_warn"
     if "not found or unable to stat" in lo or "file does not exist" in lo or "ah01264" in lo or "ah00128" in lo or "ah01071" in lo and "primary script unknown" in lo:
         return "missing"
-    if m.startswith("proxy") or "ah01114" in lo or "ah00957" in lo:
+    if (m.startswith("proxy") and not m.startswith("proxy_fcgi")) or "ah01114" in lo or "ah00957" in lo:
         return "proxy"
     if m == "ssl" or "ssl" in lo and "handshake" in lo:
         return "ssl"

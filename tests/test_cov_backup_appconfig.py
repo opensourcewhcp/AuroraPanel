@@ -379,7 +379,8 @@ def test_nginx_save_replaces_in_place_uncomments_and_inserts(tmp_path, etc, run)
     text = appconfig.NGINX_CONF.read_text()
     assert "    worker_connections 1024;\n" in text        # indentation kept
     assert "    server_tokens off;\n" in text and "# server_tokens" not in text
-    assert "http {\n\tclient_max_body_size 64m;\n" in text  # inserted at the top of http
+    # inserted at the top of http (before its first directive), not into the nested server block
+    assert text.index("http {") < text.index("\tclient_max_body_size 64m;\n") < text.index("    sendfile on;")
     assert "\tgzip on;" in text
     assert text.startswith("user www-data;\nworker_processes 4;")
     assert "client_max_body_size 10m;" in text              # the server-level one is untouched
@@ -643,7 +644,8 @@ def test_registry_lookup_and_info(tmp_path, etc, run):
         appconfig.info("exim")
     conf = _write(etc("/etc/caddy/Caddyfile"), "localhost\n")
     i = appconfig.info("caddy")
-    assert i == {"id": "caddy", "has_settings": False, "has_modules": False, "files": [str(conf)], "logs": [],
+    assert conf.exists()
+    assert i == {"id": "caddy", "has_settings": False, "has_modules": False, "files": ["/etc/caddy/Caddyfile"], "logs": [],
                  "unit": "caddy", "ftp_accounts": False}
     with pytest.raises(appconfig.AppConfigError, match="Files tab"):
         appconfig.settings("caddy")

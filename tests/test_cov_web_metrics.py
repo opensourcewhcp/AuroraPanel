@@ -297,7 +297,12 @@ def test_errors_groups_repeats_and_counts_per_hour(web, monkeypatch):
     now = int(time.time())
     journal = json.dumps({"MESSAGE": "mariadbd: Aborted connection", "PRIORITY": 4, "_SYSTEMD_UNIT": "mariadb.service",
                           "__REALTIME_TIMESTAMP": str(now * 1000000)})
-    calls = no_journal(monkeypatch, journal + "\n")
+    calls = []
+
+    def fake_run(argv, **kw):  # only the database units have something in the journal
+        calls.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, journal + "\n" if "mariadb.service" in argv else "", "")
+    monkeypatch.setattr(metrics.subprocess, "run", fake_run)
     r = metrics.errors(hours=2)
     assert r["total"] == 5 and r["counts"] == {"missing": 3, "php_warn": 1, "database": 1}
     assert r["levels"] == {"error": 3, "warn": 2}
@@ -337,7 +342,7 @@ def test_add_puts_bytes_into_the_right_bins(web):
     metrics._add(bw, now - 500 * 86400, "ftp", 9, now)      # too old
     metrics._add(bw, now, "pop3", 0, now)                   # nothing to add
     assert list(bw["m5"].values()) == [{"http": 750}]
-    assert sorted(v for v in bw["h"].values()) == [{"http": 750}, {"imap": 10}] or len(bw["h"]) == 2
+    assert sorted(bw["h"].values(), key=lambda v: sorted(v.items())) == [{"http": 750}, {"imap": 10}]
     assert sum(v.get("smtp", 0) for v in bw["d"].values()) == 7 and not any("ftp" in v for v in bw["d"].values())
 
 
@@ -584,7 +589,7 @@ def test_faults_scan_keeps_oom_and_power_events(web, monkeypatch):
     metrics._faults_scan()
     r = metrics._res_state()
     assert [f["kind"] for f in r["faults"]] == ["oom", "power"] and r["faults"][0]["ts"] == 1761300000.123
-    assert r["faults"][0]["msg"].startswith("kernel: Out of memory") and r["faults_scanned"] > 0
+    assert r["faults"][0]["msg"].startswith("Out of memory") and r["faults_scanned"] > 0  # the "kernel:" prefix is dropped
     assert calls[0][0] == "journalctl" and "-k" in calls[0]
 
 
@@ -627,7 +632,7 @@ def test_bandwidth_report_has_series_per_period_and_monthly_site_totals(web, mon
     assert r["series"]["year"] == [("2026-01-01", {"http": 5, "imap": 1}), ("2026-01-02", {"http": 6})]
     assert r["months"]["2026-01"]["example.com"] == {"bytes": 20, "hits": 4, "pages": 2, "visitors": 2}
     assert r["month_totals"] == {"2026-01": {"http": 11, "imap": 1}}
-    assert r["labels"] == {"example.com": "example.com", "vh:other.test": "other.test"}
+    assert {k: v for k, v in r["labels"].items() if k != "access"} == {"example.com": "example.com", "vh:other.test": "other.test"}
     assert r["updated"] == now and r["protos"][0] == "http"
 
 
@@ -781,26 +786,27 @@ def test_analytics_on_a_shared_log_counts_the_named_vhost_history(web):
 # One IP
 # --------------------------------------------------------------------------- #
 def test_ip_info_combines_logs_bans_waf_and_abuse(web, monkeypatch):
+    # Public addresses: newer Pythons count the 203.0.113.0/24 documentation range as private (never looked up).
     now = time.time()
     (web.sites / "ex.conf").write_text(vhost_conf("example.com"))
-    (web.log / "example.com-access.log").write_text("\n".join([clf(now - 100, ip="203.0.113.5", url="/a"), clf(now - 50, ip="203.0.113.5", url="/b.css", size=10),
+    (web.log / "example.com-access.log").write_text("\n".join([clf(now - 100, ip="1.2.3.5", url="/a"), clf(now - 50, ip="1.2.3.5", url="/b.css", size=10),
                                                                clf(now - 10, ip="8.8.8.8", url="/")]) + "\n")
     from backend import abuse, guard, waf, servers
     monkeypatch.setattr(metrics, "_ptr", lambda ip: "host.example.net")
     monkeypatch.setattr(abuse, "lookup", lambda ip: {"isp": "Example ISP"})
     monkeypatch.setattr(abuse, "evidence", lambda ip, days: [{"kind": "ssh"}, {"kind": "attack"}])
-    monkeypatch.setattr(abuse, "reported", lambda: {"203.0.113.5": {"at": 1}})
+    monkeypatch.setattr(abuse, "reported", lambda: {"1.2.3.5": {"at": 1}})
     monkeypatch.setattr(guard, "status_of", lambda ips: {ips[0]: "banned"})
-    monkeypatch.setattr(guard, "listing", lambda: {"enabled": True, "bans": [{"cidr": "203.0.113.0/24", "reason": "scan", "expires": None, "created": 1, "source": "manual"}],
-                                                   "fail2ban": [{"ip": "203.0.113.5", "jails": ["sshd"], "expires_in": 60}],
+    monkeypatch.setattr(guard, "listing", lambda: {"enabled": True, "bans": [{"cidr": "1.2.3.0/24", "reason": "scan", "expires": None, "created": 1, "source": "manual"}],
+                                                   "fail2ban": [{"ip": "1.2.3.5", "jails": ["sshd"], "expires_in": 60}],
                                                    "trusted": [{"cidr": "10.0.0.0/8", "note": "lan"}]})
     monkeypatch.setattr(waf, "events", lambda hours, limit, ip: [{"blocked": True, "rules": ["r"]}, {"blocked": False, "rules": ["r"]}])
     monkeypatch.setattr(waf, "_primary", lambda rules: {"category": "sqli"})
     monkeypatch.setattr(servers, "count", lambda: 2)
-    out = metrics.ip_info(" 203.0.113.5 ", days=1)
-    assert out["ip"] == "203.0.113.5" and out["ptr"] == "host.example.net" and out["private"] is False
+    out = metrics.ip_info(" 1.2.3.5 ", days=1)
+    assert out["ip"] == "1.2.3.5" and out["ptr"] == "host.example.net" and out["private"] is False
     assert out["owner"] == {"isp": "Example ISP"}
-    assert out["state"]["kind"] == "fail2ban" and out["state"]["cidr"] == "203.0.113.0/24" and out["state"]["enabled"] is True
+    assert out["state"]["kind"] == "fail2ban" and out["state"]["cidr"] == "1.2.3.0/24" and out["state"]["enabled"] is True
     w = out["web"]
     assert w["hits"] == 2 and w["pages"] == 1 and w["bytes"] == 1244 and w["sites"] == [("example.com", 2)]
     assert [r["url"] for r in w["recent"]] == ["/b.css", "/a"] and w["agents"][0]["browser"] == "Chrome" and w["status"] == [(200, 2)]
@@ -815,7 +821,7 @@ def test_ip_info_combines_logs_bans_waf_and_abuse(web, monkeypatch):
     assert priv["private"] is True and priv["owner"] == {} and "error" in priv["state"]
     assert priv["waf"]["events"] == 0 and priv["logins_failed"] == 0 and priv["servers"] == 0
     monkeypatch.setattr(abuse, "lookup", lambda ip: 1 / 0)
-    assert "error" in metrics.ip_info("203.0.113.9")["owner"]
+    assert "error" in metrics.ip_info("1.2.3.9")["owner"]
     with pytest.raises(metrics.MetricsError, match="IP address"):
         metrics.ip_info("not-an-ip")
 
@@ -836,5 +842,5 @@ def test_state_files_are_written_atomically(web):
     assert json.loads(metrics.RES_FILE.read_text()) == {"a": 1}
     assert [p.name for p in metrics.STATE_DIR.iterdir()] == ["resources.json"]
     assert metrics._load_json(metrics.STATE_DIR / "missing.json", {"d": 1}) == {"d": 1}
-    r = metrics._res_state()
-    assert r == {"m1": [], "m10": [], "h": [], "faults": []}
+    r = metrics._res_state()  # what's on disk, with the missing series filled in
+    assert {k: r[k] for k in ("m1", "m10", "h", "faults")} == {"m1": [], "m10": [], "h": [], "faults": []}

@@ -957,7 +957,7 @@ def _check_file(app_id: str, path: str) -> Path:
 
 def read_file(app_id: str, path: str) -> dict:
     p = _check_file(app_id, path)
-    return {"path": str(p), "content": _read(p)}
+    return {"path": path, "content": _read(p)}
 
 
 def write_file(app_id: str, path: str, content: str) -> dict:

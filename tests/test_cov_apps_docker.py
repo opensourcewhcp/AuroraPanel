@@ -525,6 +525,7 @@ def test_install_needs_docker_a_free_name_and_a_lan_address(monkeypatch, docker_
     monkeypatch.setattr(dk, "_lan_ip", lambda: "")
     with pytest.raises(dk.DockerError, match="no private network"):
         dk.install("uptimekuma", "kuma2", "lan")
+    monkeypatch.setattr(dk, "_lan_ip", lambda: "192.168.0.100")
     monkeypatch.setattr(dk, "_port_free", lambda port, proto="tcp", host="0.0.0.0": port != 53)
     with pytest.raises(dk.DockerError, match="Port 53/tcp is in use"):
         dk.install("pihole", "pihole", "public")
@@ -792,7 +793,8 @@ def test_update_settings_rejects_bad_input(monkeypatch, data, msg):
 
 
 def test_update_settings_needs_a_lan_address_and_a_web_port_for_proxy(monkeypatch):
-    dk._save({"apps": {"kuma": _kuma_inst(), "mqtt": {"app": "mosquitto", "access": "lan", "host_ports": {"1883/tcp": 1883}, "env": {}}}})
+    # No address now and none remembered from before (a remembered one is used when the lookup fails).
+    dk._save({"apps": {"kuma": _kuma_inst(lan_ip=""), "mqtt": {"app": "mosquitto", "access": "lan", "host_ports": {"1883/tcp": 1883}, "env": {}}}})
     monkeypatch.setattr(dk, "_lan_ip", lambda: "")
     with pytest.raises(dk.DockerError, match="no private network"):
         dk.update_settings("kuma", {"access": "lan"})

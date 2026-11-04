@@ -32,7 +32,8 @@ def test_update_validates_and_clamps(state):
     assert state[-1]["paranoia"] == 1 and state[-1]["threshold"] == 100
 
 
-def test_rendering_follows_the_settings(state):
+def test_rendering_follows_the_settings(state, monkeypatch):
+    monkeypatch.setattr(waf, "_panel_trusted", lambda: [])  # the machine's own IP Blocker trust list stays out of it
     s = waf.load()
     s.update(mode="detect", paranoia=2, threshold=7, apps=["wordpress", "drupal"], trusted=["10.0.0.5"], sites_off=["shop.example"])
     pre = waf.render_pre(s)

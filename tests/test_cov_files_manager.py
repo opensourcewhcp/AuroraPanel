@@ -113,7 +113,7 @@ def test_default_user_comes_from_sudo_user_then_the_first_home_account(monkeypat
     users = {"pi": types.SimpleNamespace(pw_name="pi", pw_uid=1000, pw_dir="/home/pi"),
              "root": types.SimpleNamespace(pw_name="root", pw_uid=0, pw_dir="/root")}
     everyone = [users["root"], types.SimpleNamespace(pw_name="svc", pw_uid=999, pw_dir="/home/svc"),
-                types.SimpleNamespace(pw_name="bob", pw_uid=1001, pw_dir=str(home)),
+                types.SimpleNamespace(pw_name="bob", pw_uid=1001, pw_dir="/home/bob"),
                 types.SimpleNamespace(pw_name="nobody", pw_uid=65534, pw_dir="/nonexistent")]
 
     def getpwnam(n):
@@ -125,10 +125,11 @@ def test_default_user_comes_from_sudo_user_then_the_first_home_account(monkeypat
     assert files.default_user().pw_name == "pi"
     monkeypatch.setenv("SUDO_USER", "root")                      # root is never the default user
     monkeypatch.setenv("AURORA_USER", "ghost")                   # unknown names are skipped
-    monkeypatch.setattr(Path, "is_dir", lambda self: str(self) == str(home) or Path.exists(self))
+    real_is_dir = Path.is_dir
+    monkeypatch.setattr(Path, "is_dir", lambda self: str(self) == "/home/bob" or real_is_dir(self))  # bob's home "exists"
     picked = files.default_user()
     assert picked is not None and picked.pw_name == "bob"        # uid >= 1000 with a /home folder that exists
-    assert files._default_user_home() == home
+    assert files._default_user_home() == Path("/home/bob")
 
 
 def test_default_user_is_none_without_pwd(monkeypatch):

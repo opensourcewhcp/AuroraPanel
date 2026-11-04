@@ -525,7 +525,8 @@ def _tls_pair(name: str) -> tuple[str, str]:
 
 
 def _ufw(args: list[str]) -> None:
-    if shutil.which("ufw", path=PATH) and "active" in (_run(["ufw", "status"], 20).stdout or ""):
+    # "Status: inactive" contains "active" too, so match the whole status word.
+    if shutil.which("ufw", path=PATH) and re.search(r"(?im)^Status:\s*active\b", _run(["ufw", "status"], 20).stdout or ""):
         _run(["ufw"] + args, 60)
 
 

@@ -57,7 +57,13 @@ def wire(tmp_path, monkeypatch):
     monkeypatch.setattr(servers.http.client, "HTTPSConnection", FakeConn)
     monkeypatch.setattr(servers.http.client, "HTTPConnection", lambda host, port, timeout=None: FakeConn(host, port, timeout))
     monkeypatch.setattr(servers, "STATE", tmp_path / "servers.json")
-    monkeypatch.setattr(servers.socket, "gethostbyname", lambda h: {"pi.lan": "192.168.0.50", "vps.example": "203.0.113.9"}[h])
+    known = {"pi.lan": "192.168.0.50", "vps.example": "1.2.3.9"}  # public (Python 3.13 counts 203.0.113.0/24 as private)
+
+    def resolve(h):
+        if h not in known:
+            raise servers.socket.gaierror(-2, "Name or service not known")
+        return known[h]
+    monkeypatch.setattr(servers.socket, "gethostbyname", resolve)
     return FakeConn
 
 

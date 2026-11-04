@@ -9,6 +9,10 @@ import pytest
 
 from backend import sslcerts
 
+
+class _Calls(list):
+    """The recorded openssl calls; carries the canned answers too (a plain list can't take attributes)."""
+
 X509_OUT = "subject=CN = pi.lan\nissuer=CN = pi.lan\nnotAfter=Jan  1 00:00:00 2030 GMT\nnotBefore=Jan  1 00:00:00 2025 GMT\n"
 X509_LE = "subject=CN = www.example.com\nissuer=C = US, O = Let's Encrypt, CN = R11\nnotAfter=Mar  1 00:00:00 2027 GMT\nnotBefore=Dec  1 00:00:00 2026 GMT\n"
 SAN_OUT = "X509v3 Subject Alternative Name: \n    DNS:pi.lan, DNS:pi.local, IP Address:192.168.0.100, IP Address:FD00:0:0:0:0:0:0:1\n"
@@ -18,7 +22,7 @@ PEM = "-----BEGIN CERTIFICATE-----\nMIIBfake\n-----END CERTIFICATE-----\n"
 @pytest.fixture
 def openssl(monkeypatch):
     """openssl present; `calls` records every argv, `answers` maps a subcommand to (rc, stdout, stderr)."""
-    calls = []
+    calls = _Calls()
     answers = {"x509": (0, X509_OUT, ""), "san": (0, SAN_OUT, ""), "req": (0, "", "")}
 
     def run(argv, **kw):
@@ -154,7 +158,7 @@ def test_write_self_signed_puts_every_name_in_the_san_and_cleans_up_on_failure(o
     assert "subjectAltName=DNS:pi.lan,IP:192.168.0.100,DNS:pi.local" in argv
     assert crt.read_text() == PEM and key.read_text() == "KEY"
     assert not list(tmp_path.joinpath("ssl").glob("*.tmp"))
-    long_name = "x" * 70 + ".example.com"
+    long_name = "x" * 40 + "." + "y" * 30 + ".example.com"   # valid labels (63 max each), over 64 in all
     sslcerts.write_self_signed(crt, key, [long_name, "short.lan"])
     assert openssl[-1][openssl[-1].index("-subj") + 1] == "/CN=short.lan"   # a CN must fit in 64 characters
     openssl.answers["req"] = (1, "", "openssl exploded")
