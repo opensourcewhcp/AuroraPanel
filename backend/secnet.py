@@ -336,7 +336,7 @@ def ftp_findings(ports: list[dict]) -> list[dict]:
 
 # ---------------------------------------------------------------- SSH
 WEAK_MAC = re.compile(r"(md5|sha1|umac-64|-96)", re.I)
-WEAK_KEX = re.compile(r"(sha1$|group1-|group14-sha1|group-exchange-sha1|gss-.*sha1)", re.I)
+WEAK_KEX = re.compile(r"(sha1$|group1-|group14-sha1|group-exchange-sha1|gss-.*sha1|ecdh-sha2-nistp)", re.I)
 WEAK_CIPHER = re.compile(r"(cbc|3des|arcfour|blowfish|cast128|rijndael)", re.I)
 
 
@@ -350,7 +350,9 @@ def parse_sshd_t(text: str) -> dict[str, list[str]]:
 
 
 def weak_ssh(algos: dict[str, list[str]]) -> dict[str, list[str]]:
-    return {"macs": [a for a in algos.get("macs", []) if WEAK_MAC.search(a)],
+    # Same verdicts as ssh-audit, so the report agrees with itself when ssh-audit can't connect
+    # (OpenSSH 10 penalises repeated probes from one address): NIST curves and encrypt-and-MAC MACs go too.
+    return {"macs": [a for a in algos.get("macs", []) if WEAK_MAC.search(a) or "-etm@" not in a],
             "kexalgorithms": [a for a in algos.get("kexalgorithms", []) if WEAK_KEX.search(a)],
             "ciphers": [a for a in algos.get("ciphers", []) if WEAK_CIPHER.search(a)]}
 
@@ -361,6 +363,8 @@ def parse_ssh_audit(text: str) -> dict:
         d = json.loads(text)
     except ValueError:
         return {}
+    if not isinstance(d, dict) or not ((d.get("banner") or {}).get("raw")):
+        return {}  # never reached the server (refused or rate-limited): no verdict
     weak = {"macs": [], "kexalgorithms": [], "ciphers": [], "hostkeys": []}
     for sect, key in (("mac", "macs"), ("kex", "kexalgorithms"), ("enc", "ciphers"), ("key", "hostkeys")):
         for item in d.get(sect, []) or []:
@@ -373,12 +377,12 @@ def parse_ssh_audit(text: str) -> dict:
     return {"weak": weak, "cves": cves}
 
 
-def ssh_findings() -> list[dict]:
-    if not which("sshd"):
-        return []
-    r = _run([which("sshd"), "-T"], 20)
+def _ssh_state(sshd: str) -> tuple[dict, dict, list[dict]] | None:
+    """(offered, weak, cves): weak joins the built-in rules with ssh-audit's verdicts,
+    so the report and the fix agree on what has to go."""
+    r = _run([sshd, "-T"], 20)
     if r.returncode != 0:
-        return []
+        return None
     algos = parse_sshd_t(r.stdout)
     weak = weak_ssh(algos)
     cves: list[dict] = []
@@ -392,6 +396,16 @@ def ssh_findings() -> list[dict]:
             cves = a["cves"]
             if a["weak"].get("hostkeys"):
                 weak["hostkeys"] = a["weak"]["hostkeys"]
+    return algos, weak, cves
+
+
+def ssh_findings() -> list[dict]:
+    if not which("sshd"):
+        return []
+    st = _ssh_state(which("sshd"))
+    if st is None:
+        return []
+    _algos, weak, cves = st
     out = []
     fixable = "One click: offer only the strong ones (a separate file in sshd_config.d, tested with sshd -t before SSH reloads; open sessions stay connected)."
     if weak["macs"]:
@@ -421,9 +435,10 @@ def ssh_crypto_fix() -> dict:
     main = SSHD_CONFIG
     if "sshd_config.d/" not in main.read_text(errors="replace"):
         raise SecNetError("sshd_config has no “Include /etc/ssh/sshd_config.d/*.conf” line, add it first")
-    r = _run([sshd, "-T"], 20)
-    algos = parse_sshd_t(r.stdout)
-    weak = weak_ssh(algos)
+    st = _ssh_state(sshd)
+    if st is None:
+        raise SecNetError("sshd -T failed, check /etc/ssh/sshd_config")
+    algos, weak, _cves = st
     lines = ["# Written by AuroraPanel (Security Report): only strong SSH algorithms. Delete this file to undo."]
     for key, word in (("ciphers", "Ciphers"), ("macs", "MACs"), ("kexalgorithms", "KexAlgorithms")):
         keep = [a for a in algos.get(key, []) if a not in weak[key]]
@@ -435,8 +450,8 @@ def ssh_crypto_fix() -> dict:
     SSH_DROPIN.parent.mkdir(parents=True, exist_ok=True)
     SSH_DROPIN.write_text("\n".join(lines) + "\n")
     t = _run([sshd, "-t"], 20)
-    after = weak_ssh(parse_sshd_t(_run([sshd, "-T"], 20).stdout))
-    if t.returncode != 0 or any(after[k] for k in ("macs", "kexalgorithms", "ciphers") if weak[k]):
+    now = parse_sshd_t(_run([sshd, "-T"], 20).stdout)
+    if t.returncode != 0 or any(set(now.get(k, [])) & set(weak[k]) for k in ("macs", "kexalgorithms", "ciphers")):
         if old is None:
             SSH_DROPIN.unlink(missing_ok=True)
         else:

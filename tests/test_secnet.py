@@ -169,7 +169,7 @@ ciphers chacha20-poly1305@openssh.com,aes128-ctr,aes256-cbc
 macs umac-64-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha1
 kexalgorithms curve25519-sha256,diffie-hellman-group14-sha1
 """
-AUDIT = {"kex": [{"algorithm": "ecdh-sha2-nistp256", "notes": {"fail": ["NSA curve"]}}, {"algorithm": "kex-strict-s-v00@openssh.com", "notes": {"warn": ["x"]}},
+AUDIT = {"banner": {"raw": "SSH-2.0-OpenSSH_10.0"}, "kex": [{"algorithm": "ecdh-sha2-nistp256", "notes": {"fail": ["NSA curve"]}}, {"algorithm": "kex-strict-s-v00@openssh.com", "notes": {"warn": ["x"]}},
                  {"algorithm": "curve25519-sha256", "notes": {}}],
          "key": [{"algorithm": "ssh-rsa", "notes": {"warn": ["sha1"]}}], "mac": [{"algorithm": "umac-128@openssh.com", "notes": {"warn": ["tag"]}}],
          "enc": [], "cves": [{"name": "CVE-2023-48795", "cvssv2": 5.9, "description": "Terrapin"}, {"name": "CVE-2099-1", "cvssv2": 8.1, "description": "x"}]}
@@ -182,6 +182,8 @@ def test_ssh_parsers():
     r = secnet.parse_ssh_audit(json.dumps(AUDIT))
     assert r["weak"]["kexalgorithms"] == ["ecdh-sha2-nistp256"] and r["weak"]["hostkeys"] == ["ssh-rsa"] and len(r["cves"]) == 2
     assert secnet.parse_ssh_audit("not json") == {}
+    assert secnet.parse_ssh_audit(json.dumps({"banner": {"raw": ""}, "kex": []})) == {}  # refused: no verdict
+    assert secnet.parse_ssh_audit("[]") == {}
 
 
 def test_ssh_findings(monkeypatch):
@@ -262,6 +264,34 @@ def test_ssh_crypto_fix(monkeypatch, tmp_path):
     # only weak MACs offered: nothing strong to keep, so MACs are left alone
     monkeypatch.setattr(secnet, "_run", lambda argv, timeout=60, input=None: cp("macs hmac-sha1\nciphers aes128-ctr\n"))
     assert secnet.ssh_crypto_fix()["changed"] is False
+    # sshd -T itself fails
+    monkeypatch.setattr(secnet, "_run", lambda argv, timeout=60, input=None: cp("", 1))
+    with pytest.raises(secnet.SecNetError, match="sshd -T failed"):
+        secnet.ssh_crypto_fix()
+
+
+def test_ssh_crypto_fix_follows_ssh_audit(monkeypatch, tmp_path):
+    """What ssh-audit flags (NIST curves here) is removed too, so the report's issue really goes away."""
+    main = tmp_path / "sshd_config"
+    drop = tmp_path / "sshd_config.d" / "00-aurora-crypto.conf"
+    main.write_text("Include /etc/ssh/sshd_config.d/*.conf\n")
+    monkeypatch.setattr(secnet, "SSHD_CONFIG", main)
+    monkeypatch.setattr(secnet, "SSH_DROPIN", drop)
+    monkeypatch.setattr(secnet, "which", lambda *n: f"/usr/bin/{n[0]}")
+    before = "port 22\nciphers aes128-ctr\nmacs hmac-sha2-256-etm@openssh.com\nkexalgorithms curve25519-sha256,ecdh-sha2-nistp256\n"
+    after = "port 22\nciphers aes128-ctr\nmacs hmac-sha2-256-etm@openssh.com\nkexalgorithms curve25519-sha256\n"
+    audit = {"kex": [{"algorithm": "ecdh-sha2-nistp256", "notes": {"warn": ["NIST curve"]}}]}
+
+    def run(argv, timeout=60, input=None):
+        if "ssh-audit" in argv[0]:
+            return cp(json.dumps(audit))
+        if argv[0] == "systemctl" or argv[-1] == "-t":
+            return cp("")
+        return cp(after if drop.exists() else before)
+    monkeypatch.setattr(secnet, "_run", run)
+    assert {f["id"] for f in secnet.ssh_findings()} == {"ssh-weak-kex"}
+    assert secnet.ssh_crypto_fix()["changed"]
+    assert "KexAlgorithms curve25519-sha256\n" in drop.read_text()
 
 
 def test_timestamps(monkeypatch, tmp_path):

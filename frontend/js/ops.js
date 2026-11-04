@@ -2086,10 +2086,10 @@ window.AuroraOps = (ui) => {
         el("div", { class: "table-wrap" }, el("table", { class: "sr-ports-t" }, [
           el("thead", {}, el("tr", {}, ["Port", "Service", "Announces", "Firewall"].map((h) => el("th", { text: h })))),
           el("tbody", {}, ports.map((p) => el("tr", {}, [
-            el("td", {}, el("code", { text: `${p.port}/${p.proto}` })),
-            el("td", {}, [el("b", { text: p.service || "Unknown" }), el("span", { class: "muted mx-small", text: p.process ? ` ${p.process}` : "" })]),
-            el("td", { class: "muted", title: (p.addrs || []).join(", "), text: p.product || "" }),
-            el("td", {}, pill(...(FW[p.firewall] || ["?", "dim"]))),
+            el("td", { "data-l": "Port" }, el("code", { text: `${p.port}/${p.proto}` })),
+            el("td", { "data-l": "Service" }, [el("b", { text: p.service || "Unknown" }), el("span", { class: "muted mx-small", text: p.process ? ` ${p.process}` : "" })]),
+            el("td", { class: "muted", "data-l": "Announces", title: (p.addrs || []).join(", "), text: p.product || "" }),
+            el("td", { "data-l": "Firewall" }, pill(...(FW[p.firewall] || ["?", "dim"]))),
           ]))),
         ])),
       ]);
@@ -2130,7 +2130,7 @@ window.AuroraOps = (ui) => {
       const cats = rep.cats || {};
       const total = Object.values(cats).reduce((a, b) => a + b, 0);
       const catBtn = (key, name, ico, n) => el("button", { type: "button", class: `sr-cat${filter === key ? " on" : ""}`, title: key === "all" ? "" : SR_CATS[key].what,
-        onclick: () => { filter = key; LS.set("sr.cat", filter); draw(); } }, [ico ? icon(ico, 14) : null, name, el("span", { class: `sr-cat-n${n ? "" : " zero"}`, text: String(n) })].filter(Boolean));
+        onclick: () => { filter = key; LS.set("sr.cat", filter); if (view === "ports") { view = "issues"; LS.set("sr.view", view); } draw(); } }, [ico ? icon(ico, 14) : null, name, el("span", { class: `sr-cat-n${n ? "" : " zero"}`, text: String(n) })].filter(Boolean));
       const viewBtn = (key, name) => el("button", { type: "button", class: view === key ? "active" : "", text: name, onclick: () => { view = key; LS.set("sr.view", view); draw(); } });
       return el("div", { class: "sr-bar" }, [
         el("div", { class: "sr-cats" }, [catBtn("all", "All", null, total), ...Object.entries(SR_CATS).map(([k, c]) => catBtn(k, c.name, c.icon, cats[k] || 0))]),
