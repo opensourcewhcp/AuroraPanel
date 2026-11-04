@@ -50,14 +50,24 @@ CATALOG: dict[str, dict] = {
         "desc": "PHP process manager used by Nginx, Lighttpd and Caddy to run PHP sites.",
     },
     "mariadb": {
-        "name": "MariaDB", "group": "extra", "pkg": "mariadb-server", "service": "mariadb",
+        "name": "MariaDB", "group": "db", "pkg": "mariadb-server", "service": "mariadb",
         "procs": ("mariadbd", "mysqld"), "ram": "~80–150 MB",
         "desc": "MySQL-compatible database server (WordPress, most PHP apps).",
     },
     "postgresql": {
-        "name": "PostgreSQL", "group": "extra", "pkg": "postgresql", "service": "postgresql",
+        "name": "PostgreSQL", "group": "db", "pkg": "postgresql", "service": "postgresql",
         "procs": ("postgres",), "ram": "~30–60 MB",
         "desc": "Advanced open-source SQL database (Django, Rails, Nextcloud, many Python apps).",
+    },
+    "redis": {
+        "name": "Redis", "group": "db", "pkg": "redis-server", "service": "redis-server",
+        "procs": ("redis-server",), "ram": "~5–30 MB",
+        "desc": "In-memory key-value store for caches, sessions and queues (WordPress object cache, Laravel, Nextcloud). Listens on this server only.",
+    },
+    "memcached": {
+        "name": "Memcached", "group": "db", "pkg": "memcached", "service": "memcached",
+        "procs": ("memcached",), "ram": "~5–70 MB",
+        "desc": "Simple in-memory cache that speeds up PHP and Python sites. Listens on this server only.",
     },
     "vsftpd": {
         "name": "vsftpd", "group": "extra", "pkg": "vsftpd", "service": "vsftpd",
@@ -255,7 +265,38 @@ def status() -> dict:
             "needs": [n for n in c.get("needs", []) if not requires.installed(n)],
             "job": running[0].id if running else None,
         })
+    apps += _docker_dbs()
     return {"supported": True, "apps": apps}
+
+
+# Databases with no Debian package: installed from the Docker catalog, listed here next to the others.
+DOCKER_DBS = ("mongodb", "cassandra", "oracle", "couchdb", "influxdb")
+
+
+def _docker_dbs() -> list[dict]:
+    from . import dockerapps
+    insts = {}
+    try:
+        for name, inst in dockerapps._state().get("apps", {}).items():
+            if inst.get("app") in DOCKER_DBS:
+                insts.setdefault(inst["app"], []).append(name)
+    except (OSError, ValueError, AttributeError):
+        pass
+    running = set()
+    if insts:
+        r = dockerapps._run(["docker", "ps", "--format", "{{.Names}}"], 20)
+        running = set(r.stdout.split()) if r.returncode == 0 else set()
+    out = []
+    for k in DOCKER_DBS:
+        v = dockerapps.CATALOG[k]
+        names = insts.get(k, [])
+        out.append({
+            "id": k, "name": v["name"], "group": "db", "desc": v["desc"], "ram_typical": v["ram"].replace("≈ ", "~"),
+            "package": v["image"], "service": None, "installed": bool(names), "version": None, "broken": False,
+            "active": any(n in running for n in names), "ram_mb": None, "docroot": None,
+            "docker": True, "containers": names,
+        })
+    return out
 
 
 # Cached for the file manager, which asks on every directory listing.
@@ -328,6 +369,10 @@ def install(app_id: str, switch: bool = False) -> jobs.Job:
 def uninstall(app_id: str) -> jobs.Job:
     _require_linux()
     v = _app(app_id)
+    if app_id == "redis":
+        from . import requires
+        if requires.installed("mail"):
+            raise SysAppError("Email's spam filter (Rspamd) uses Redis, so it stays while Email is installed")
     global _web_cache
     _web_cache = (0.0, None)
     pkgs = [v["pkg"]]

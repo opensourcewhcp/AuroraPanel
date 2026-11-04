@@ -91,7 +91,44 @@ CATALOG: dict[str, dict] = {
                   "files": {"config/mosquitto.conf": "listener 1883\nallow_anonymous false\npassword_file /mosquitto/config/passwd\npersistence true\npersistence_location /mosquitto/data/\n"},
                   "setup": "mosquitto", "secret_keys": ["MQTT_PASSWORD"],
                   "note": "A login is created when it's installed — see it under “Generated passwords”. Add more with: docker exec -it <app> mosquitto_passwd -b /mosquitto/config/passwd USER PASSWORD, then Restart."},
+    # Databases with no Debian package. "local": their ports listen on 127.0.0.1 unless you pick otherwise.
+    "mongodb": {"name": "MongoDB", "cat": "Databases", "desc": "Document database that stores JSON-like records. Popular with Node.js apps.",
+                "image": "mongo:7", "ports": [(27017, "tcp", "db")], "volumes": [("/data/db", "data"), ("/data/configdb", "configdb")],
+                "env": {"MONGO_INITDB_ROOT_USERNAME": "admin", "MONGO_INITDB_ROOT_PASSWORD": "{secret}"}, "ram": "≈ 200 MB", "no_web": True, "local": True,
+                "note": "Listens on this server only, for apps and sites running here. User admin, the password is under “Generated passwords”. Needs a Raspberry Pi 5 or any 64-bit PC/VPS (MongoDB 5 and later don't run on a Pi 4).",
+                "home": "https://www.mongodb.com"},
+    "cassandra": {"name": "Apache Cassandra", "cat": "Databases", "desc": "Wide-column database built for huge amounts of data spread over many servers.",
+                  "image": "cassandra:5", "ports": [(9042, "tcp", "db")], "volumes": [("/var/lib/cassandra", "data")],
+                  "env": {"MAX_HEAP_SIZE": "512M", "HEAP_NEWSIZE": "128M", "CASSANDRA_CLUSTER_NAME": "Aurora"}, "ram": "≈ 1 GB", "no_web": True, "local": True,
+                  "note": "Listens on this server only, for apps and sites running here. Connect with cqlsh on port 9042. It has no password by default, so keep it on this server. Needs 2 GB of RAM or more, the first start takes a minute or two.",
+                  "home": "https://cassandra.apache.org"},
+    "oracle": {"name": "Oracle Database Free", "cat": "Databases", "desc": "Oracle's free edition of its SQL database (up to 2 CPUs, 2 GB RAM, 12 GB of data).",
+               "image": "container-registry.oracle.com/database/free:latest", "ports": [(1521, "tcp", "db")], "volumes": [("/opt/oracle/oradata", "oradata")],
+               "env": {"ORACLE_PWD": "{secret_alnum}"}, "ram": "≈ 2 GB", "no_web": True, "local": True, "uid": "54321:54321",
+               "note": "Listens on this server only, for apps and sites running here. Service name FREEPDB1 on port 1521, users SYS, SYSTEM and PDBADMIN share the password under “Generated passwords”. "
+                       "Needs 4 GB of RAM and about 10 GB of disk; the first start takes 5 to 15 minutes. Use is under Oracle's Free Use Terms.",
+               "home": "https://www.oracle.com/database/free/"},
+    "couchdb": {"name": "Apache CouchDB", "cat": "Databases", "desc": "JSON document database with a web admin page and sync for offline-first apps.",
+                "image": "couchdb:3", "ports": [(5984, "tcp", "web")], "volumes": [("/opt/couchdb/data", "data")],
+                "env": {"COUCHDB_USER": "admin", "COUCHDB_PASSWORD": "{secret}"}, "ram": "≈ 100 MB", "path": "/_utils/",
+                "note": "User admin, the password is under “Generated passwords”.", "home": "https://couchdb.apache.org"},
+    "influxdb": {"name": "InfluxDB", "cat": "Databases", "desc": "Time-series database for sensor readings, metrics and monitoring, with its own web page.",
+                 "image": "influxdb:2", "ports": [(8086, "tcp", "web")], "volumes": [("/var/lib/influxdb2", "data"), ("/etc/influxdb2", "config")],
+                 "env": {"DOCKER_INFLUXDB_INIT_MODE": "setup", "DOCKER_INFLUXDB_INIT_USERNAME": "admin", "DOCKER_INFLUXDB_INIT_PASSWORD": "{secret}",
+                         "DOCKER_INFLUXDB_INIT_ORG": "aurora", "DOCKER_INFLUXDB_INIT_BUCKET": "default"}, "ram": "≈ 150 MB",
+                 "note": "User admin, organization aurora, bucket default. The password is under “Generated passwords”.", "home": "https://www.influxdata.com"},
 }
+ACCESS_MODES = ("proxy", "local", "lan", "public")
+
+
+def _alnum_secret() -> str:
+    """For images that choke on symbols (Oracle): letters and digits, always with an upper, a lower and a digit."""
+    import string
+    pool = string.ascii_letters + string.digits
+    while True:
+        s = "".join(secrets.choice(pool) for _ in range(20))
+        if s[0].isalpha() and any(c.isupper() for c in s) and any(c.islower() for c in s) and any(c.isdigit() for c in s):
+            return s
 
 
 def _env() -> dict:
@@ -298,6 +335,8 @@ RESTART_POLICIES = ("unless-stopped", "always", "on-failure", "no")
 
 def port_bind(inst: dict, kind: str) -> str:
     """Which address a published port listens on: proxy → loopback for the web port, LAN address otherwise."""
+    if inst["access"] == "local":
+        return "127.0.0.1"
     if inst["access"] == "proxy" or (kind == "web" and inst.get("tls_port")):
         return "127.0.0.1" if kind == "web" else (inst.get("lan_ip") or "127.0.0.1")
     if inst["access"] == "lan" or kind == "dns":
@@ -364,7 +403,7 @@ def app_def(inst: dict) -> dict:
 
 
 def catalog() -> dict:
-    return {"catalog": [{"id": k, **{x: v.get(x) for x in ("name", "cat", "desc", "ram", "note", "home", "https_only", "no_web", "host_network")},
+    return {"catalog": [{"id": k, **{x: v.get(x) for x in ("name", "cat", "desc", "ram", "note", "home", "https_only", "no_web", "host_network", "local")},
                       "ports": [{"port": p, "proto": pr, "kind": k2} for p, pr, k2 in v["ports"]],
                       "folders": [f[1:] for _, f in v["volumes"] if f.startswith("@")]} for k, v in CATALOG.items()],
             "installed": installed(), "running": daemon_ok() if installed() else False, "arch": arch(), "lan_ip": _lan_ip(),
@@ -420,7 +459,7 @@ def _disk_usage() -> dict:
 
 
 def _url(inst: dict, app: dict) -> str:
-    if app.get("no_web"):
+    if app.get("no_web") or inst.get("access") == "local":
         return ""
     path = inst.get("path") or app.get("path") or "/"
     if inst["access"] == "proxy" and inst.get("domain"):
@@ -620,7 +659,7 @@ def install(app_id: str, name: str = "", access: str = "proxy", domain: str = ""
     d = _state()
     if name in d["apps"]:
         raise DockerError(f"An app called {name} already exists")
-    if access not in ("proxy", "lan", "public"):
+    if access not in ACCESS_MODES:
         raise DockerError("Unknown access mode")
     lan = _lan_ip()
     if access == "lan" and not lan:
@@ -648,8 +687,8 @@ def install(app_id: str, name: str = "", access: str = "proxy", domain: str = ""
             host_ports[key] = same or _free_port(cport if cport >= 1024 else 10000 + cport)
     env, secret_keys = {}, []
     for k, v in app["env"].items():
-        if v == "{secret}":
-            env[k] = secrets.token_urlsafe(18)
+        if v in ("{secret}", "{secret_alnum}"):
+            env[k] = _alnum_secret() if v == "{secret_alnum}" else secrets.token_urlsafe(18)
             secret_keys.append(k)
         elif v == "{tz}":
             env[k] = _tz()
@@ -1140,7 +1179,7 @@ def update_settings(name: str, data: dict) -> jobs.Job:
         raise DockerError("Unknown restart policy")
     mem, cpus = _parse_limits(data.get("mem_limit", inst.get("mem_limit", "")), data.get("cpus", inst.get("cpus", "")))
     access = data.get("access") or inst["access"]
-    if access not in ("proxy", "lan", "public"):
+    if access not in ACCESS_MODES:
         raise DockerError("Unknown access mode")
     inst["lan_ip"] = _lan_ip() or inst.get("lan_ip", "")
     if access == "lan" and not inst["lan_ip"]:
@@ -1374,7 +1413,7 @@ def custom_spec(data: dict) -> tuple[str, dict, dict]:
     if not _IMAGE.match(image):
         raise DockerError("Image looks like nginx:latest or ghcr.io/owner/app:1.2")
     access = data.get("access") or "lan"
-    if access not in ("proxy", "lan", "public"):
+    if access not in ACCESS_MODES:
         raise DockerError("Unknown access mode")
     restart = data.get("restart") or "unless-stopped"
     if restart not in RESTART_POLICIES:

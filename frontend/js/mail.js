@@ -1049,7 +1049,7 @@ window.AuroraMail = (ui) => {
       { value: "forwarders", label: "Forwarders", desc: "source address, destination address(es) separated by ; or |", icon: "forward" }], "accounts");
     const text = el("textarea", { rows: 9, class: "em-text em-mono", placeholder: "email,password,quota_mb\njane@example.com,1024\njohn@example.com,S3cure-pass!,5120" });
     const file = el("input", { type: "file", accept: ".csv,.txt,text/csv", onchange: async () => { const f = file.files[0]; if (f) text.value = await f.text(); } });
-    const dom = domainSelect(MAIL.domains || [], "", { all: ", none, " });
+    const dom = domainSelect(MAIL.domains || [], "", { all: "None" });
     const quota = el("input", { type: "number", value: 1024, min: 0, class: "em-qnum" });
     const out = el("div");
     const sample = () => downloadText(kind.value() === "accounts" ? "accounts-example.csv" : "forwarders-example.csv",

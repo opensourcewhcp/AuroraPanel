@@ -8184,7 +8184,7 @@
       const uName = el("input", { type: "text", placeholder: "myapp_user", autocomplete: "off", style: "min-width:0" });
       const uHost = myHostSelect();
       const uPw = dbPwField();
-      const uDb = el("select", {}, [el("option", { value: "", text: ", none, " }),
+      const uDb = el("select", {}, [el("option", { value: "", text: "None" }),
         ...d.databases.filter((x) => !x.system && !x.app).map((x) => el("option", { value: x.name, text: x.name }))]);
       const uAdmin = dbChk("Admin", false, "every privilege on every database; use for phpMyAdmin");
       const userCard = el("div", { class: "db-form" }, [
@@ -8490,7 +8490,7 @@
       const uName = el("input", { type: "text", placeholder: "myapp_user", autocomplete: "off", style: "min-width:0" });
       const uPw = pwField("pg-new-pw");
       const cdb = chk("Can create databases"), csu = chk("Superuser", false, "full admin; use for phpPgAdmin");
-      const uDb = el("select", {}, [el("option", { value: "", text: ", none, " }),
+      const uDb = el("select", {}, [el("option", { value: "", text: "None" }),
         ...d.databases.filter((x) => !x.system).map((x) => el("option", { value: x.name, text: x.name }))]);
       const userCard = el("div", { class: "db-form" }, [
         el("h3", { text: "Create user" }),
@@ -8721,7 +8721,7 @@
       if (r) watch(r.job, `${a.broken ? "Repairing" : "Installing"} ${a.name}…`);
     }
     async function doUninstall(a) {
-      const extra = a.id === "apache" ? "\n\nphpMyAdmin and your Apache sites will stop being served." : (a.id === "mariadb" || a.id === "postgresql") ? "\n\nDatabases stay on disk but nothing can use them until it is reinstalled." : "";
+      const extra = a.id === "redis" || a.id === "memcached" ? "\n\nSites that use it as a cache fall back to running without one, or stop if they require it." : a.id === "apache" ? "\n\nphpMyAdmin and your Apache sites will stop being served." : (a.id === "mariadb" || a.id === "postgresql") ? "\n\nDatabases stay on disk but nothing can use them until it is reinstalled." : "";
       if (!confirmInline(`Uninstall ${a.name}? Config files and website content are kept.${extra}`)) return;
       try { const r = await API.sysappUninstall(a.id); watch(r.job, `Uninstalling ${a.name}…`); }
       catch (e) { toast(e.message, "bad"); }
@@ -8731,7 +8731,24 @@
       if (r) { toast(`${a.name}: ${action}`, "good"); load(); }
     }
 
+    // Databases with no Debian package run from the Docker catalog; their card hands over to the Docker page.
+    function dockerCard(a) {
+      const pill = !a.installed ? el("span", { class: "pill dim", text: "Not installed" })
+        : el("span", { class: `pill ${a.active ? "good" : "dim"}`, text: a.active ? "Running" : "Stopped" });
+      const facts = [`Typical RAM ${esc(a.ram_typical)}`, a.installed ? `Docker app <b>${esc(a.containers.join(", "))}</b>` : "Runs in Docker"].join(" · ");
+      const btns = a.installed
+        ? [el("button", { class: "btn btn-sm btn-primary", text: "Manage", onclick: () => navigate("dockerapps") })]
+        : [el("button", { class: "btn btn-sm btn-primary", text: "Install", title: "Opens the Docker page with this database ready to install", onclick: () => navigate("dockerapps", { arg: `install:${a.id}` }) })];
+      return el("div", { class: `card sa-card ${a.installed ? "" : "sa-off"}` }, [
+        el("div", { class: "sa-head" }, [el("h3", { text: a.name }), el("span", { style: "flex:1" }), pill]),
+        el("p", { class: "muted sa-desc", text: a.desc }),
+        el("p", { class: "muted sa-facts", html: facts }),
+        el("div", { class: "sa-actions" }, btns),
+      ]);
+    }
+
     function card(a) {
+      if (a.docker) return dockerCard(a);
       const server = a.group === "server";
       const noUnits = server && !(a.units || []).length;
       const pill = a.broken ? el("span", { class: "pill bad", text: "Install incomplete" })
@@ -8786,6 +8803,7 @@
         if (!d.supported) { body.append(el("p", { class: "empty", text: "apt/systemd not available on this host." })); return; }
         body.append(
           el("h3", { text: "Web servers" }), grid(d.apps.filter((a) => a.group === "web")),
+          el("h3", { text: "Databases" }), grid(d.apps.filter((a) => a.group === "db")),
           el("h3", { text: "Extras" }), grid(d.apps.filter((a) => a.group === "extra")),
           el("h3", { text: "Mail, DNS & security" }), grid(d.apps.filter((a) => a.group === "server")),
         );

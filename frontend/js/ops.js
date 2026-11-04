@@ -710,7 +710,7 @@ window.AuroraOps = (ui) => {
       if (c.url) return [];
       const seen = new Set(), out = [];
       (c.ports || []).forEach((p) => {
-        if (p.bind === "127.0.0.1" || !p.host) return;  // loopback = behind the web address, not for clients
+        if (!p.host) return;  // no url, so a loopback port is not behind a web address: it is where local clients connect
         const a = `${connHost(p.bind)}:${p.host}`;
         if (!seen.has(a)) { seen.add(a); out.push({ addr: a, proto: p.proto }); }
       });
@@ -744,6 +744,13 @@ window.AuroraOps = (ui) => {
         ov = o; cs = c.containers; imgs = i.images; catalogData = k;
       } catch (e) { if (!quiet) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); } return; }
       drawHero(); draw();
+      const want = /^install:(.+)$/.exec(state.viewArg || "");
+      if (want && !quiet) {
+        state.viewArg = null;
+        const x = catalogData.catalog.find((a) => a.id === want[1]);
+        if (x && ov && ov.installed) installDlg(x);
+        else if (x) toast("Install Docker first: System Applications → Docker → Install", "bad");
+      }
     }
     async function watch(id, label) {
       log.hidden = false; prog.node.scrollIntoView({ block: "nearest" });
@@ -996,6 +1003,7 @@ window.AuroraOps = (ui) => {
       if (managed && !hostNet) {
         const opts = [];
         if (hasWeb) opts.push({ value: "proxy", label: "At a web address (recommended)", icon: "globe", desc: "https://app.yourdomain, the web port listens on this server only; everything else on the local network." });
+        opts.push({ value: "local", label: "On this server only", icon: "lock", desc: "127.0.0.1:<port>, only apps and sites on this server can connect. Nothing else can reach it." });
         if (ov.lan_ip) opts.push({ value: "lan", label: "On my local network only", icon: "wifi", desc: `Ports listen on ${ov.lan_ip}, reachable at home, not from the internet.` });
         opts.push({ value: "public", label: "On public ports", icon: "warning", desc: "Ports listen on every address, Docker skips the firewall for them, so the internet can reach the container directly.", tone: "warn" });
         opts.forEach((o) => {
@@ -1144,6 +1152,7 @@ window.AuroraOps = (ui) => {
       const domWrap = el("div", {}, field("Web address", domain, "A name whose DNS points to this server. Mark the container's web port as “Web page” above."));
       const rc = el("div", { class: "em-rcards" });
       const opts = [];
+      opts.push({ value: "local", label: "On this server only", icon: "lock", desc: "127.0.0.1:<port>, only apps and sites on this server can connect. Nothing else can reach it." });
       if (ov && ov.lan_ip) opts.push({ value: "lan", label: "On my local network only", icon: "wifi", desc: `http://${ov.lan_ip}:<port>, reachable at home, not from the internet.` });
       opts.push({ value: "proxy", label: "At a web address", icon: "globe", desc: "https://app.yourdomain, HTTPS from AutoSSL, protected by the WAF and your ban list." });
       opts.push({ value: "public", label: "On public ports", icon: "warning", desc: "Anyone on the internet can reach it directly, Docker skips the firewall for published ports.", tone: "warn" });
@@ -1193,12 +1202,13 @@ window.AuroraOps = (ui) => {
     // ---- catalog install (unchanged behaviour) -------------------------------------------------
     function installDlg(x) {
       const d = catalogData;
-      let access = (x.host_network || x.no_web) ? (d.lan_ip ? "lan" : "public") : "proxy";
+      let access = x.local ? "local" : (x.host_network || x.no_web) ? (d.lan_ip ? "lan" : "public") : "proxy";
       const name = el("input", { type: "text", value: x.id, maxlength: 31 });
       const domain = el("input", { type: "text", placeholder: `${x.id}.example.com` });
       const domWrap = el("div", {}, field("Web address", domain, "A name whose DNS points to this server (e.g. a subdomain in the Zone Editor). AutoSSL then gives it HTTPS."));
       const opts = [];
       if (!x.host_network && !x.no_web) opts.push({ value: "proxy", label: "At a web address (recommended)", icon: "globe", desc: "https://app.yourdomain, HTTPS, protected by the WAF and your ban list. The app itself is never exposed directly." });
+      if (!x.host_network) opts.push(x.local ? { ...{ value: "local", label: "On this server only", icon: "lock", desc: "127.0.0.1:<port>, only apps and sites on this server can connect. Nothing else can reach it." }, label: "On this server only (recommended)" } : { value: "local", label: "On this server only", icon: "lock", desc: "127.0.0.1:<port>, only apps and sites on this server can connect. Nothing else can reach it." });
       if (d.lan_ip) opts.push({ value: "lan", label: "On my local network only", icon: "wifi", desc: x.https_only ? `https://${d.lan_ip}:<port>, the panel adds HTTPS itself (self-signed certificate, your browser asks once to trust it). Reachable at home, not from the internet.` : `http://${d.lan_ip}:<port>, reachable from devices at home, not from the internet.` });
       opts.push({ value: "public", label: "On a public port", icon: "warning", desc: "Anyone on the internet can reach it directly, Docker skips the firewall for these ports. Only for apps with their own strong login.", tone: "warn" });
       const rc = el("div", { class: "em-rcards" });
