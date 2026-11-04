@@ -559,15 +559,27 @@ def _scan_kind(t: dict, kind: str, name: str, facts: dict) -> list[dict]:
 
 def _dmarc_findings(t: dict, facts: dict) -> list[dict]:
     d = t["name"]
-    live = dmarc.lookup(d)
-    a = dmarc.assess(d, dmarc.parse(live["record"]), live["spf"], live["dkim"], t.get("sends", False), live["parent"])
+    live = dmarc.live_records(d)
+    sends = t.get("sends", False)
+    a = dmarc.assess(d, dmarc.parse(live["record"]), live["spf"], live["dkim"], sends, live["parent"])
     facts.update({"record": live["record"] or live["parent"], "inherited": bool(live["parent"] and not live["record"]), "spf": live["spf"],
                   "dkim": live["dkim"], "level": a["level"], "dmarc_grade": a["grade"]})
+    here = live.get("here", False)
     out = []
     for x in a["findings"]:
         wiz = x["id"].startswith("dmarc")
-        out.append(_f(x["severity"], x["title"], x["detail"], x["fix"], "vhosts" if wiz else "deliverability",
-                      f"dmarc_wizard:{d}" if wiz else "", fid=x["id"], cat="email"))
+        if wiz:
+            action = f"dmarc_step:{d}" if here and x["id"] != "dmarc-inherited" else f"dmarc_wizard:{d}"
+        elif here and sends and x["id"].startswith(("spf", "dkim")):
+            action = f"mail_dns:{x['id'].split('-')[0]}:{d}"
+        else:
+            action = ""
+        fix = x["fix"] + (" One click publishes it in this server's DNS zone." if action and not action.startswith("dmarc_wizard") else "")
+        out.append(_f(x["severity"], x["title"], x["detail"], fix, "dmarc" if wiz else "deliverability", action, fid=x["id"], cat="email"))
+    if live.get("propagating"):
+        out.append(_f("info", "DNS caches still hold the old record",
+                      f"This server already answers with the new record; resolvers that looked it up earlier keep the old answer until it expires (up to an hour).",
+                      "Nothing to do, it clears by itself.", "dmarc", fid="dmarc-propagating", cat="email"))
     return out
 
 
@@ -681,6 +693,13 @@ def fix(action: str) -> dict:
         elif kind == "ca_distrust":
             r = distrust_emsign()
             msg = "emSign ECC Root CA - G3 is no longer trusted on this server" if r["changed"] else "It was already distrusted"
+        elif kind == "dmarc_step":
+            msg = dmarc.step(arg)["message"]
+        elif kind == "mail_dns":
+            what, _, dom = arg.partition(":")
+            from . import mail
+            mail.install_record(dom, what)
+            msg = f"{what.upper()} record for {dom} published in this server's DNS zone"
         elif kind in secnet.FIXES:
             msg = secnet.FIXES[kind]()["message"]
         elif kind == "port_lan":
@@ -721,6 +740,9 @@ FIX_INFO = {
                 "caution": "FTP clients must connect with “explicit FTP over TLS” afterwards."},
     "port_lan": {"label": "Local network only", "what": "Allow this port only from your local network (10.x, 172.16-31.x, 192.168.x) and block it from the internet.",
                  "caution": "Anyone using it from outside your network (or over a VPN with another range) loses access."},
+    "dmarc_step": {"label": "Tighten DMARC", "what": "Publish the next DMARC step in this server's DNS zone: monitoring becomes quarantine, quarantine becomes reject, with reports switched on.",
+                   "caution": "Mail that fails SPF and DKIM goes to spam (quarantine) or is refused (reject). Senders outside this server must be in SPF first.", "last": True},
+    "mail_dns": {"label": "Publish mail record", "what": "Write the SPF or DKIM record this server's mail needs into its DNS zone (replacing an old one)."},
     "dmarc_wizard": {"label": "Set up DMARC", "what": "Open the DMARC wizard for this domain.", "interactive": True},
     "panel_regen": {"label": "New panel certificate", "what": "Open Panel HTTPS to make a certificate that covers every name.", "interactive": True},
 }

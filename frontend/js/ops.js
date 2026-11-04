@@ -1634,9 +1634,9 @@ window.AuroraOps = (ui) => {
   const FIX_LABEL = { ca_distrust: "Distrust it", apache_harden: "Harden web server", panel_harden: "Harden panel TLS", panel_regen: "New panel certificate", ufw_enable: "Enable firewall",
     vhost_tls: "Use server-wide TLS", autossl_run: "Get Let's Encrypt certificate", hsts: "Turn on HSTS", force_https: "Force HTTPS",
     ssh_crypto: "Strong SSH algorithms only", timestamps_off: "Hide timestamps", mail_anon_off: "No anonymous TLS for mail", ftp_tls: "Require FTPS",
-    port_lan: "Local network only", dmarc_wizard: "Set up DMARC" };
-  const fixLabel = (a) => FIX_LABEL[a] || FIX_LABEL[(a || "").split(":")[0]] || "Fix";
-  const fixIsGlobal = (a) => !/^(autossl_run|hsts|force_https|port_lan|dmarc_wizard):/.test(a);
+    port_lan: "Local network only", dmarc_wizard: "Set up DMARC", dmarc_step: "Tighten DMARC", mail_dns: "Publish record" };
+  const fixLabel = (a) => /^mail_dns:/.test(a || "") ? `Publish ${a.split(":")[1].toUpperCase()}` : FIX_LABEL[a] || FIX_LABEL[(a || "").split(":")[0]] || "Fix";
+  const fixIsGlobal = (a) => !/^(autossl_run|hsts|force_https|port_lan|dmarc_wizard|dmarc_step|mail_dns):/.test(a);
 
   // ======================================================================
   //  Files → Shadow Copies (version history of a site's files)

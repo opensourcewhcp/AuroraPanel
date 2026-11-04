@@ -6286,118 +6286,197 @@
   }
   window.AuroraDmarc = { wizard: dmarcWizard, help: dmarcHelp };
 
-  // The card on a domain's Manage page.
+  // The DMARC card (DMARC page and a domain's Manage page): status, the record tag by tag with a switch each, save + verify.
+  const DM_RI = [[3600, "Every hour"], [21600, "Every 6 hours"], [43200, "Every 12 hours"], [86400, "Daily (default)"], [604800, "Weekly"]];
+  const DM_FO = [["0", "Both fail"], ["1", "Either fails"], ["d", "DKIM fails"], ["s", "SPF fails"]];
   function dmarcCard(domain) {
-    const host = el("div", { class: "card dmm-card dmc" }, [
-      el("div", { class: "cw-card-h" }, [icon("at", 16), el("div", {}, [el("h3", { text: "Email authentication (DMARC)" }), el("p", { text: `Stop others from sending email as @${domain}.` })])]),
-      el("div", { class: "loading", text: "Checking DNS…" })]);
-    const bodyBox = el("div", { class: "dmc-body" });
-    async function load() {
+    const host = el("div", { class: "dmx" }, el("div", { class: "card dmx-loading" }, [el("span", { class: "bk-spin" }), el("span", { class: "muted", text: `Checking DNS for ${domain}…` })]));
+    async function load(flash) {
       let st;
-      try { st = await API.dmarc(domain); } catch (e) { host.lastChild.replaceWith(el("p", { class: "dm-hint", text: e.message })); return; }
-      host.lastChild.replaceWith(bodyBox);
-      bodyBox.innerHTML = "";
-      if (!st.public) { bodyBox.append(el("p", { class: "dm-hint", text: st.note })); return; }
+      try { st = await API.dmarc(domain); } catch (e) { host.innerHTML = ""; host.append(el("div", { class: "card dmx-msg" }, [icon("error", 20), el("span", { text: e.message })])); return; }
+      host.innerHTML = "";
+      if (!st.public) { host.append(el("div", { class: "card dmx-msg" }, [icon("info", 20), el("span", { text: st.note })])); return; }
       const lv = DM_LEVEL[st.assess.level] || DM_LEVEL.missing;
-      const chk = (ok, label) => el("span", { class: `dmc-chk ${ok ? "ok" : "no"}` }, [icon(ok ? "check" : "error", 13), label]);
-      bodyBox.append(...[  // optional rows are null: append() would print "null"
-        el("div", { class: `dmc-status ${lv[1]}` }, [
-          el("span", { class: "dmc-shield" }, icon(lv[1] === "good" ? "shield" : lv[1] === "bad" ? "warning" : "eye", 22)),
-          el("div", { class: "grow" }, [el("b", { text: lv[0] }), el("span", { class: "muted", text: lv[2] })]),
-          el("span", { class: "dmc-grade", text: st.assess.grade }),
+      const live = st.record || st.parent_record;
+      const cur = dmarcParseP(live);
+      // ---- status header
+      const chk = (ok, label, hint) => el("div", { class: `dmx-chk ${ok ? "ok" : "no"}`, title: hint }, [el("span", { class: "dmx-chk-i" }, icon(ok ? "check" : "error", 14)), el("b", { text: label }), el("span", { text: ok ? "Published" : "Missing" })]);
+      const stepIdx = { none: 0, quarantine: 1, reject: 2 }[cur] ?? -1;
+      const journey = el("div", { class: "dmx-journey" }, DM_POLICY.map(([v, l, ic], k) => el("div", { class: `dmx-js${k < stepIdx ? " done" : k === stepIdx ? " on" : ""}` }, [el("span", { class: "dmx-js-dot" }, icon(k < stepIdx ? "check" : ic, 14)), el("span", { text: l })])));
+      const head = el("div", { class: `card dmx-head ${lv[1]}` }, [
+        el("div", { class: "dmx-grade" }, [el("b", { text: st.assess.grade }), el("span", { text: "grade" })]),
+        el("div", { class: "dmx-head-t" }, [
+          el("div", { class: "dmx-dom" }, [icon("at", 15), el("span", { text: domain }), st.served ? el("span", { class: "dmx-badge", text: `DNS served by this server · ${st.zone}` }) : st.zone ? el("span", { class: "dmx-badge warn", title: "Saving writes this server's zone, but the domain's public nameservers are elsewhere: add the record there too.", text: "Zone here, public DNS elsewhere" }) : el("span", { class: "dmx-badge dim", text: "DNS hosted elsewhere" })]),
+          el("h3", { text: lv[0] }), el("p", { class: "muted", text: lv[2] }),
+          journey,
         ]),
-        el("div", { class: "dmc-chks" }, [chk(!!st.record || !!st.parent_record, "DMARC"), chk(!!st.spf, "SPF"), chk(!!st.dkim, "DKIM")]),
-        st.record || st.parent_record ? el("div", { class: "dmc-rec" }, [el("span", { class: "muted mx-small", text: st.record ? `TXT _dmarc.${domain}` : `Inherited from _dmarc.${st.org}` }), el("code", { text: st.record || st.parent_record })]) : null,
-        st.pending ? el("p", { class: "dm-hint", text: "A newer record is published in this server's zone and is on its way through DNS (up to an hour)." }) : null,
-        el("ul", { class: "dmc-notes" }, st.assess.notes.map((n) => el("li", { class: n.tone }, [icon(n.tone === "good" ? "check" : n.tone === "bad" ? "error" : "warning", 13), el("span", { text: n.text })]))),
+        el("div", { class: "dmx-chks" }, [chk(!!live, "DMARC", "The policy record at _dmarc"), chk(!!st.spf, "SPF", st.spf || "Which servers may send"), chk(!!st.dkim, "DKIM", "A signing key in DNS")]),
+      ]);
+      const recBox = el("div", { class: "dmx-live" }, [
+        el("div", { class: "dmx-live-h" }, [el("span", { text: st.record ? `Live record · TXT _dmarc.${domain}` : st.parent_record ? `Inherited from _dmarc.${st.org}` : "No record published" }),
+          live ? btn("Copy", () => copyText(live), "btn-ghost btn-sm") : null].filter(Boolean)),
+        live ? dmarcTokens(live) : el("p", { class: "muted", text: "Receivers get no instruction about mail that fakes this domain." }),
+        st.pending ? el("p", { class: "dmx-pend" }, [icon("clock", 13), " Saved here; resolvers that asked before still hold the old answer for up to an hour."]) : null,
+        flash ? el("p", { class: `dmx-flash ${flash.ok ? "ok" : "bad"}` }, [icon(flash.ok ? "check" : "warning", 13), " ", flash.text]) : null,
       ].filter(Boolean));
-      // Quick controls: the policy as three big choices, the rest under "More settings".
+      const notes = el("ul", { class: "dmx-notes" }, st.assess.notes.map((n) => el("li", { class: n.tone }, [icon(n.tone === "good" ? "check" : n.tone === "bad" ? "error" : "warning", 14), el("span", { text: n.text })])));
+      const side = el("div", { class: "card dmx-side" }, [recBox, el("h4", { text: "What receivers see" }), notes,
+        el("div", { class: "dmx-side-act" }, [
+          el("button", { class: "btn btn-primary btn-sm", onclick: () => dmarcWizard(domain, () => load()) }, [icon("wand", 13), st.settings.enabled ? " Change with the wizard" : " Set up with the wizard"]),
+          el("button", { class: "btn btn-sm btn-ghost", onclick: dmarcHelp }, [icon("info", 13), " How DMARC works"])])]);
+
+      // ---- the settings, one row per tag
       const s = { ...st.settings, rua: [...(st.settings.rua || [])], ruf: [...(st.settings.ruf || [])] };
+      delete s.enabled;
       if (!st.settings.enabled && !s.rua.length) s.rua = [st.default_reports];
-      const preview = el("code", { class: "dmc-preview" });
-      const saveBtn = el("button", { class: "btn btn-primary btn-sm", text: st.settings.enabled ? "Save DMARC" : "Publish DMARC" });
+      const orig = JSON.stringify(s);
+      const preview = el("div", { class: "dmx-preview" });
+      const saveBtn = el("button", { class: "btn btn-primary", text: st.settings.enabled ? "Save and publish" : "Publish DMARC" });
+      const stateTxt = el("span", { class: "dmx-state muted" });
       let tmr = null;
       const refresh = () => {
         clearTimeout(tmr);
+        const changed = JSON.stringify(s) !== orig;
+        stateTxt.textContent = changed ? "Unsaved changes" : st.settings.enabled ? "Matches what's published" : "Not published yet";
+        stateTxt.className = `dmx-state ${changed ? "warn" : "muted"}`;
         tmr = setTimeout(async () => {
-          try { const r = await API.dmarcPreview(domain, s); preview.textContent = r.record; preview.classList.remove("bad"); saveBtn.disabled = false; }
-          catch (e) { preview.textContent = e.message; preview.classList.add("bad"); saveBtn.disabled = true; }
-        }, 250);
+          try { const r = await API.dmarcPreview(domain, s); preview.innerHTML = ""; preview.append(dmarcTokens(r.record, live || "")); saveBtn.disabled = !changed && !!st.settings.enabled; }
+          catch (e) { preview.innerHTML = ""; preview.append(el("span", { class: "dmx-err", text: e.message })); saveBtn.disabled = true; }
+        }, 200);
       };
-      const pol = el("div", { class: "dmc-pol" }, DM_POLICY.map(([v, l, ic, desc]) => el("button", { type: "button", class: `dmc-p${s.p === v ? " on" : ""} p-${v}`, onclick: (e) => {
-        s.p = v; pol.querySelectorAll(".dmc-p").forEach((b) => b.classList.toggle("on", b === e.currentTarget)); refresh();
-      } }, [icon(ic, 18), el("b", { text: l }), el("span", { text: desc })])));
-      const addr = (key) => el("input", { type: "text", value: s[key].join(", "), placeholder: key === "rua" ? `dmarc@${domain}` : "optional", oninput: (e) => { s[key] = e.target.value.split(/[\s,;]+/).filter(Boolean); refresh(); } });
-      const sp = el("select", { onchange: (e) => { s.sp = e.target.value; refresh(); } }, [["", "Same as the domain"], ["none", "Monitor"], ["quarantine", "Quarantine"], ["reject", "Reject"]].map(([v, l]) => el("option", { value: v, text: l })));
-      sp.value = s.sp || "";
-      const pctOut = el("b", { text: `${s.pct}%` });
+      const seg = (opts, val, set) => {
+        const w = el("div", { class: "dmx-seg" });
+        const paint = (v) => w.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.v === String(v)));
+        opts.forEach(([v, l]) => w.append(el("button", { type: "button", "data-v": String(v), text: l, onclick: () => { set(v); paint(v); refresh(); } })));
+        paint(val); return w;
+      };
+      const row = (tag, title, hint, ctl, opt) => {
+        // opt: {on, set(on)} gives the row a switch; its control shows only while it's on
+        const r = el("div", { class: `dmx-row${opt && !opt.on ? " off" : ""}${opt ? "" : " fixed"}` }, [
+          el("code", { class: "dmx-tag", text: tag }),
+          el("div", { class: "dmx-row-t" }, [el("b", { text: title }), el("span", { text: hint })]),
+          opt ? sw(opt.on, (v) => { opt.set(v); r.classList.toggle("off", !v); refresh(); }) : el("span", { class: "dmx-sw-gap" }),
+          ctl ? el("div", { class: "dmx-row-ctl" }, ctl) : null].filter(Boolean));
+        return r;
+      };
+      const addr = (key, ph) => el("input", { type: "text", value: s[key].join(", "), placeholder: ph, oninput: (e) => { s[key] = e.target.value.split(/[\s,;]+/).filter(Boolean); refresh(); } });
+      const pctOut = el("b", { class: "dmx-pct-v", text: `${s.pct}%` });
       const pct = el("input", { type: "range", min: "1", max: "100", value: String(s.pct), oninput: (e) => { s.pct = +e.target.value; pctOut.textContent = `${s.pct}%`; refresh(); } });
-      const strict = (key, label, hint) => el("div", { class: "dm-trow" }, [el("div", {}, [el("b", { text: label }), el("span", { text: hint })]), sw(s[key] === "s", (v) => { s[key] = v ? "s" : "r"; refresh(); })]);
-      const more = el("details", { class: "dmc-more" }, [el("summary", { text: "More settings" }),
-        el("label", { class: "cw-lbl" }, ["Daily reports to (rua)", addr("rua"), el("span", { class: "dm-hint", text: "Comma-separated. Aggregate XML reports, a few per day." })]),
-        el("label", { class: "cw-lbl" }, ["Subdomain policy (sp)", sp]),
-        el("label", { class: "cw-lbl" }, [el("span", { class: "dmc-pct-l" }, ["Apply to ", pctOut, " of failing mail (pct)"]), pct, el("span", { class: "dm-hint", text: "Below 100% lets you ramp up quarantine or reject gradually." })]),
-        el("label", { class: "cw-lbl" }, ["Failure reports to (ruf)", addr("ruf"), el("span", { class: "dm-hint", text: "Per-message reports. Few providers send them and they can contain message content." })]),
-        strict("adkim", "Strict DKIM alignment", "Only a signature for exactly this domain counts."),
-        strict("aspf", "Strict SPF alignment", "Only SPF for exactly this domain counts."),
+      let keepRua = s.rua.length ? s.rua : [st.default_reports], keepRuf = s.ruf.length ? s.ruf : [`dmarc@${domain}`];
+      let keepSp = s.sp || "reject", keepPct = s.pct < 100 ? s.pct : 50, keepRi = s.ri !== 86400 ? s.ri : 3600;
+      const ruaIn = addr("rua", `dmarc@${domain}`), rufIn = addr("ruf", `dmarc@${domain}`);
+      const rows = el("div", { class: "dmx-rows" }, [
+        row("v=DMARC1", "Version", "Always first: marks the TXT record as a DMARC policy.", el("span", { class: "dmx-fixed", text: "Required" })),
+        row("p=", "Policy for failing mail", "What receivers do with mail that fails SPF and DKIM for this domain.",
+          seg(DM_POLICY.map(([v, l]) => [v, l]), s.p, (v) => { s.p = v; })),
+        row("sp=", "Own policy for subdomains", "Off: subdomains follow the policy above. On: give them their own.",
+          seg(DM_POLICY.map(([v, l]) => [v, l]), keepSp, (v) => { keepSp = v; s.sp = v; }),
+          { on: !!s.sp, set: (v) => { s.sp = v ? keepSp : ""; } }),
+        row("pct=", "Apply to part of failing mail", "Off: 100%. On: ramp quarantine or reject up gradually.",
+          el("div", { class: "dmx-pct" }, [pct, pctOut]),
+          { on: s.pct < 100, set: (v) => { s.pct = v ? keepPct : 100; pct.value = String(s.pct); pctOut.textContent = `${s.pct}%`; } }),
+        row("rua=", "Daily aggregate reports", "XML summaries of every server sending as you. Comma-separated addresses.", ruaIn,
+          { on: s.rua.length > 0, set: (v) => { if (!v && s.rua.length) keepRua = s.rua; s.rua = v ? keepRua : []; ruaIn.value = s.rua.join(", "); } }),
+        row("ruf=", "Failure reports", "One report per failing message. Few providers send them; they may contain message content.", rufIn,
+          { on: s.ruf.length > 0, set: (v) => { if (!v && s.ruf.length) keepRuf = s.ruf; s.ruf = v ? keepRuf : []; rufIn.value = s.ruf.join(", "); } }),
+        row("fo=", "When to send failure reports", "Only matters with failure reports (ruf) on.",
+          seg(DM_FO, s.fo || "0", (v) => { s.fo = v; })),
+        row("adkim=s", "Strict DKIM alignment", "Off (r): a signature for a subdomain counts. On (s): only exactly this domain.", null,
+          { on: s.adkim === "s", set: (v) => { s.adkim = v ? "s" : "r"; } }),
+        row("aspf=s", "Strict SPF alignment", "Off (r): SPF for a subdomain counts. On (s): only exactly this domain.", null,
+          { on: s.aspf === "s", set: (v) => { s.aspf = v ? "s" : "r"; } }),
+        row("ri=", "Custom report interval", "Off: daily, which is what nearly every receiver does anyway.",
+          seg(DM_RI.filter(([v]) => v !== 86400), keepRi, (v) => { keepRi = v; s.ri = v; }),
+          { on: s.ri !== 86400, set: (v) => { s.ri = v ? keepRi : 86400; } }),
       ]);
       saveBtn.onclick = async () => {
-        saveBtn.disabled = true;
-        try { dmarcPublished(await API.dmarcSave(domain, s)); load(); } catch (e) { toast(e.message, "bad"); saveBtn.disabled = false; }
+        saveBtn.disabled = true; saveBtn.textContent = "Publishing and checking…";
+        try {
+          const r = await API.dmarcSave(domain, s);
+          if (!r.published) { dmarcPublished(r); load(); return; }
+          (r.external || []).forEach((x) => toast(`Reports to ${x.address}: that domain must publish TXT ${x.name} = v=DMARC1`, "warn"));
+          toast(r.verified ? "Published and verified" : "Saved, but not answered yet", r.verified ? "good" : "bad");
+          load({ ok: !!r.verified, text: r.message });
+        } catch (e) { toast(e.message, "bad"); saveBtn.disabled = false; saveBtn.textContent = "Save and publish"; }
       };
-      const removeBtn = st.zone_record ? el("button", { class: "btn btn-sm btn-ghost", text: "Remove record", onclick: async () => {
+      const removeBtn = st.zone_record ? btn("Remove record", async () => {
         if (!confirmInline(`Remove the DMARC record of ${domain}? Receivers will no longer get any instruction about forged mail.`)) return;
         try { await API.dmarcRemove(domain); toast("DMARC record removed", "good"); load(); } catch (e) { toast(e.message, "bad"); }
-      } }) : null;
-      bodyBox.append(
-        el("div", { class: "dmc-actions" }, [
-          el("button", { class: "btn btn-primary btn-sm", onclick: () => dmarcWizard(domain, () => load()) }, [icon("wand", 13), st.settings.enabled ? " Change with the wizard" : " Set up with the wizard"]),
-          el("button", { class: "btn btn-sm btn-ghost", onclick: dmarcHelp }, [icon("info", 13), " How DMARC works"]),
+      }, "btn-ghost") : null;
+      const editor = el("div", { class: "card dmx-edit" }, [
+        el("div", { class: "dmx-edit-h" }, [el("h3", { text: "Record settings" }), el("p", { class: "muted", text: "Every part of the record, switched on or off. Changed parts are highlighted in the preview." })]),
+        rows,
+        el("div", { class: "dmx-foot" }, [
+          el("div", { class: "dmx-foot-rec" }, [el("span", { class: "muted mx-small", text: `TXT _dmarc.${domain}` }), preview]),
+          el("div", { class: "dmx-foot-act" }, [stateTxt, removeBtn, saveBtn].filter(Boolean)),
         ]),
-        el("div", { class: "cw-lbl" }, ["Policy for mail that fails", pol]),
-        more,
-        el("div", { class: "dmc-rec" }, [el("span", { class: "muted mx-small", text: "Record to publish" }), preview]),
-        el("div", { class: "dmc-actions" }, [saveBtn, removeBtn].filter(Boolean)),
-      );
+      ]);
+      host.append(head, el("div", { class: "dmx-grid" }, [editor, side]));
       refresh();
     }
     load();
     return host;
   }
+  const dmarcParseP = (rec) => (((rec || "").match(/(?:^|;)\s*p\s*=\s*(\w+)/i) || [])[1] || "").toLowerCase();
+  // A record as tag chips; with `was`, the tags that differ from it are marked as changed.
+  function dmarcTokens(rec, was) {
+    const split = (t) => (t || "").split(";").map((x) => x.trim()).filter((x) => x.includes("="));
+    const tags = (t) => Object.fromEntries(split(t).map((x) => { const i = x.indexOf("="); return [x.slice(0, i).trim().toLowerCase(), x.slice(i + 1).trim()]; }));
+    const old = was != null ? tags(was) : null;
+    return el("div", { class: "dmx-toks" }, split(rec).map((x) => {
+      const i = x.indexOf("="), k = x.slice(0, i).trim().toLowerCase(), v = x.slice(i + 1).trim();
+      const ch = !!old && old[k] !== v;
+      return el("span", { class: `dmx-tok${ch ? " ch" : ""}`, title: ch ? (old[k] == null ? "New" : `Was ${old[k]}`) : "" }, [el("b", { text: `${k}=` }), el("span", { text: v })]);
+    }));
+  }
 
-  // Domains → DMARC: every domain on this server in one place, the chosen one's card below.
+  // Domains → DMARC: every domain and host on this server plus any name you type, the chosen one's card beside.
   async function viewDmarc(root) {
     root.append(el("div", { class: "em-head" }, [
-      el("div", { class: "em-head-txt" }, [el("h2", { text: "DMARC" }), el("p", { class: "muted", text: "Stop others from sending email that pretends to come from your domains. Pick a domain to see how well it's protected, then set its policy with the wizard or directly." })]),
+      el("div", { class: "em-head-txt" }, [el("h2", { text: "DMARC" }), el("p", { class: "muted", text: "Stop others from sending email that pretends to come from your domains. Pick a domain or host, see how well it's protected, and switch each part of its record on or off." })]),
       el("div", { class: "em-head-act" }, [el("button", { class: "btn btn-sm btn-ghost", onclick: dmarcHelp }, [icon("info", 13), " How DMARC works"])]),
     ]));
-    root.append(el("div", { class: "dmc-steps" }, [
-      ["eye", "1. Monitor", "p=none: nothing is blocked. Daily reports show every server sending as you."],
-      ["spam", "2. Quarantine", "p=quarantine: forged mail goes to the spam folder."],
-      ["ban", "3. Reject", "p=reject: forged mail is refused. Full protection."],
-    ].map(([ic, t, s]) => el("div", { class: "dmc-step" }, [icon(ic, 18), el("div", {}, [el("b", { text: t }), el("span", { text: s })])]))));
-    const box = el("div", { class: "dmc-page" }, el("div", { class: "loading", text: "Loading domains…" }));
+    const box = el("div", { class: "dmx-page" }, el("div", { class: "loading", text: "Loading domains…" }));
     root.append(box);
     let list;
     try { list = (await API.dmarcDomains()).domains; } catch (e) { box.innerHTML = ""; box.append(el("p", { class: "empty", text: e.message })); return; }
-    box.innerHTML = "";
-    if (!list.length) {
-      box.append(el("div", { class: "card" }, empty("at", "No domains yet", "Add a website with a real domain name (Domains) or a mail domain (Email), then set its DMARC policy here.")));
-      return;
-    }
+    const LSK = "aurora.dmarc.extra";
+    let extra = [];
+    try { extra = JSON.parse(localStorage.getItem(LSK) || "[]").filter((x) => typeof x === "string"); } catch (e) { extra = []; }
+    const saveExtra = () => { try { localStorage.setItem(LSK, JSON.stringify(extra)); } catch (e) { /* not kept, fine */ } };
     let cur = "";
-    try { cur = localStorage.getItem("aurora.dmarc.domain") || ""; } catch (e) { /* private window: start with the first domain */ }
-    if (!list.some((x) => x.domain === cur)) cur = list[0].domain;
-    const side = el("div", { class: "dmc-doms" });
-    const main = el("div", { class: "dmc-main" });
+    try { cur = localStorage.getItem("aurora.dmarc.domain") || ""; } catch (e) { /* private window */ }
+    const all = () => [...list.map((x) => x.domain), ...list.flatMap((x) => x.sites || []), ...extra];
+    if (!all().includes(cur)) cur = all()[0] || "";
+    box.innerHTML = "";
+    const side = el("div", { class: "card dmx-doms" });
+    const main = el("div", { class: "dmx-main" });
+    const pick = (d) => { cur = d; try { localStorage.setItem("aurora.dmarc.domain", cur); } catch (e) { /* fine */ } draw(); };
+    const add = el("input", { type: "text", placeholder: "Any domain or host…", "aria-label": "Check another domain or host" });
+    const addGo = () => {
+      const v = add.value.trim().toLowerCase().replace(/^[a-z]+:\/\//, "").replace(/[/?#].*$/, "").replace(/\.$/, "");
+      if (!v) return;
+      if (/^[\d.]+$/.test(v) || v.includes(":")) return toast("DMARC belongs to domain names: an IP address can't have a DMARC record. Enter the domain the mail is sent from.", "warn");
+      if (!/^[a-z0-9_-]+(\.[a-z0-9-]+)+$/.test(v)) return toast("Enter a domain name like example.com or mail.example.com", "warn");
+      if (!all().includes(v)) { extra.push(v); saveExtra(); }
+      add.value = ""; pick(v);
+    };
+    add.addEventListener("keydown", (e) => { if (e.key === "Enter") addGo(); });
+    const item = (d, ico, sub, removable) => el("div", { class: `dmx-dom-i${d === cur ? " on" : ""}` }, [
+      el("button", { type: "button", class: "dmx-dom-b", onclick: () => pick(d) }, [icon(ico, 15), el("span", { class: "grow" }, [el("b", { text: d }), el("span", { text: sub })])]),
+      removable ? el("button", { type: "button", class: "dmx-dom-x", title: "Remove from this list", onclick: () => { extra = extra.filter((x) => x !== d); saveExtra(); if (cur === d) cur = all()[0] || ""; draw(); } }, el("span", { html: "&times;" })) : null,
+    ].filter(Boolean));
     const draw = () => {
       side.innerHTML = "";
-      list.forEach((x) => side.append(el("button", { type: "button", class: `dmc-dom${x.domain === cur ? " on" : ""}`, onclick: () => { cur = x.domain; try { localStorage.setItem("aurora.dmarc.domain", cur); } catch (e) { /* not kept, fine */ } draw(); } }, [
-        icon(x.mail ? "mail" : "globe", 15),
-        el("span", { class: "grow" }, [el("b", { text: x.domain }), el("span", { text: x.mail ? "Mail domain" + (x.sites.length ? ` · ${x.sites.length} site${x.sites.length > 1 ? "s" : ""}` : "") : `${x.sites.length} site${x.sites.length > 1 ? "s" : ""}` })]),
-      ])));
+      side.append(el("div", { class: "dmx-add" }, [add, btn("Check", addGo, "btn-sm")]));
+      if (list.length) side.append(el("div", { class: "dmx-grp", text: "On this server" }));
+      list.forEach((x) => {
+        side.append(item(x.domain, x.mail ? "mail" : "globe", x.mail ? "Mail domain" + (x.sites.length ? ` · ${x.sites.length} site${x.sites.length > 1 ? "s" : ""}` : "") : `${x.sites.length} site${x.sites.length > 1 ? "s" : ""}`));
+        (x.sites || []).filter((h) => h !== x.domain).forEach((h) => side.append(el("div", { class: "dmx-sub" }, item(h, "link", "Host, own record optional"))));
+      });
+      if (extra.length) { side.append(el("div", { class: "dmx-grp", text: "Added by you" })); extra.forEach((d) => side.append(item(d, "at", "Checked by name", true))); }
       main.innerHTML = "";
-      main.append(dmarcCard(cur));
+      main.append(cur ? dmarcCard(cur) : el("div", { class: "card dmx-msg" }, [icon("at", 20), el("span", { text: "No domains yet. " +  "Add a website with a real domain name (Domains) or a mail domain (Email), or type any domain on the left." })]));
     };
     box.append(side, main);
     draw();

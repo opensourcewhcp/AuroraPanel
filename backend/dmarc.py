@@ -13,6 +13,7 @@ elsewhere the record is returned so it can be added at the DNS provider.
 from __future__ import annotations
 
 import re
+import time
 
 from . import problems
 
@@ -351,14 +352,37 @@ def _txt(name: str) -> list[str]:
         return []
 
 
+class _LocalDown(Exception):
+    pass
+
+
+def _local_txt(name: str) -> list[str]:
+    """TXT straight from this server's own DNS (no cache in between). [] = no such record; _LocalDown = not answering."""
+    import dns.resolver
+    r = dns.resolver.Resolver(configure=False)
+    r.nameservers = ["127.0.0.1"]
+    r.lifetime = 3
+    try:
+        return ["".join(p.decode(errors="replace") for p in rr.strings) for rr in r.resolve(name, "TXT")]
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+        return []
+    except Exception as exc:
+        raise _LocalDown(str(exc)) from exc
+
+
 def lookup(domain: str) -> dict:
-    """The live records: DMARC (own, or the parent's that receivers fall back to), SPF, DKIM."""
-    own = next((t for t in _txt(f"_dmarc.{domain}") if t.lower().replace(" ", "").startswith("v=dmarc1")), "")
+    """The live records as the world's resolvers see them."""
+    return _lookup(domain, _txt)
+
+
+def _lookup(domain: str, txt) -> dict:
+    """DMARC (own, or the parent's that receivers fall back to), SPF, DKIM, read through txt()."""
+    own = next((t for t in txt(f"_dmarc.{domain}") if t.lower().replace(" ", "").startswith("v=dmarc1")), "")
     parent = ""
     org = org_domain(domain)
     if not own and org != domain:
-        parent = next((t for t in _txt(f"_dmarc.{org}") if t.lower().replace(" ", "").startswith("v=dmarc1")), "")
-    spf = next((t for t in _txt(domain) if t.lower().startswith("v=spf1")), "")
+        parent = next((t for t in txt(f"_dmarc.{org}") if t.lower().replace(" ", "").startswith("v=dmarc1")), "")
+    spf = next((t for t in txt(domain) if t.lower().startswith("v=spf1")), "")
     dkim = False
     try:
         from . import mail
@@ -366,10 +390,40 @@ def lookup(domain: str) -> dict:
     except Exception:  # pragma: no cover - mail always imports; guard for trimmed installs
         sel = "aurora"
     for s in dict.fromkeys([sel, "default", "google", "selector1", "selector2", "k1", "mail", "dkim"]):
-        if any("p=" in t for t in _txt(f"{s}._domainkey.{domain}")):
+        if any("p=" in t for t in txt(f"{s}._domainkey.{domain}")):
             dkim = True
             break
     return {"record": own, "parent": parent, "org": org, "spf": spf, "dkim": dkim}
+
+
+def _authoritative(zone: str) -> bool:
+    """Do the zone's public nameservers point at this server? A zone file here means nothing to the world otherwise."""
+    try:
+        from . import mail
+        ns = mail._ns(zone)
+        mine = mail._my_names()
+        ip = mail._public_ip()
+        return any(n in mine or (ip and ip in mail._a(n)) for n in ns)
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
+        return False
+
+
+def live_records(domain: str) -> dict:
+    """What receivers get, without waiting for caches: when this server serves the domain's zone, ask it directly
+    (a record saved a minute ago counts at once); "public" is what the world's resolvers still hand out."""
+    pub = lookup(domain)
+    out = {**pub, "public": pub["record"], "here": False}
+    zone = _zone_for(domain)
+    if zone and _authoritative(zone):
+        try:
+            loc = _lookup(domain, _local_txt)
+        except _LocalDown as quiet_exc:
+            problems.quiet(quiet_exc)
+        else:
+            out.update(loc, public=pub["record"], here=True)
+    out["propagating"] = out["here"] and out["record"] != out["public"]
+    return out
 
 
 def _sends_here(domain: str) -> bool:
@@ -439,7 +493,7 @@ def status(domain: str) -> dict:
     if not is_public(domain):
         return {"domain": domain, "public": False, "settings": {**DEFAULTS, "enabled": False}, "wizard": WIZARD,
                 "note": "This name only exists on your network, so no mail server on the internet will look up its DMARC record."}
-    live = lookup(domain)
+    live = live_records(domain)
     zone = _zone_for(domain)
     zone_text = ""
     if zone:
@@ -451,10 +505,10 @@ def status(domain: str) -> dict:
     current = zone_text or live["record"]
     tags = parse(current)
     a = assess(domain, parse(live["record"]), live["spf"], live["dkim"], sends, live["parent"])
-    return {"domain": domain, "public": True, "record": live["record"], "parent_record": live["parent"], "org": live["org"],
-            "zone": zone, "zone_record": zone_text, "pending": bool(zone_text) and zone_text != live["record"],
+    return {"domain": domain, "public": True, "served": live.get("here", False) or (bool(zone) and _authoritative(zone)), "record": live["record"], "parent_record": live["parent"], "org": live["org"],
+            "zone": zone, "zone_record": zone_text, "pending": bool(zone_text) and (zone_text != live["record"] or live.get("propagating", False)),
             "spf": live["spf"], "dkim": live["dkim"], "sends_here": sends, "settings": settings_from(tags),
-            "assess": a, "wizard": WIZARD, "default_reports": f"dmarc@{domain}" if sends else f"postmaster@{domain}",
+            "assess": a, "wizard": WIZARD, "default_reports": f"dmarc@{domain}" if sends else f"postmaster@{org_domain(domain)}",
             "external": external_auth(domain, settings_from(tags)["rua"])}
 
 
@@ -473,8 +527,62 @@ def save(domain: str, settings: dict) -> dict:
     for i in reversed(idx):
         dnszones.delete_record(zone, i)
     dnszones.add_record(zone, {"name": name + ".", "type": "TXT", "text": value, "ttl": 3600})
-    return {"published": True, "zone": zone, "name": name, "value": value, "external": external_auth(domain, validate(settings)["rua"]),
-            "message": f"Published in the {zone} zone. Receivers see it within the record's TTL (about an hour)."}
+    ok = verify(domain, value)
+    msg = (f"Published in the {zone} zone and checked: this server's DNS now answers with the new record. "
+           "Resolvers that looked it up before keep the old answer for up to an hour." if ok else
+           f"Saved in the {zone} zone, but this server's DNS doesn't answer with it yet. Check the Zone Editor (BIND must be running).")
+    if not _authoritative(zone):
+        msg += f" Note: {zone}'s public nameservers are elsewhere, so add the same TXT record at your DNS provider too."
+    return {"published": True, "verified": ok, "zone": zone, "name": name, "value": value,
+            "external": external_auth(domain, validate(settings)["rua"]), "message": msg}
+
+
+def _norm(v: str) -> str:
+    return re.sub(r"\s+", "", v or "").rstrip(";").lower()
+
+
+def verify(domain: str, value: str, tries: int = 4) -> bool:
+    """Read the record back from this server's own DNS (BIND reloads the zone in a moment)."""
+    want = _norm(value)
+    for i in range(tries):
+        try:
+            if any(_norm(t) == want for t in _local_txt(f"_dmarc.{domain}")):
+                return True
+        except _LocalDown as quiet_exc:
+            problems.quiet(quiet_exc)
+        if i < tries - 1:
+            time.sleep(0.5)
+    return False
+
+
+def next_step(tags: dict, domain: str, sends: bool) -> dict:
+    """The settings one step further along: none -> quarantine -> reject (pct 100), reports on, subdomains covered."""
+    s = settings_from(tags) if tags else {**DEFAULTS, "p": "none"}
+    if tags:
+        s["p"] = {"none": "quarantine", "quarantine": "reject"}.get(s["p"], s["p"]) if s["pct"] >= 100 or s["p"] == "none" else s["p"]
+        s["pct"] = 100
+    if s.get("sp") == "none" and s["p"] != "none":
+        s["sp"] = ""
+    if not s.get("rua"):
+        s["rua"] = [f"dmarc@{domain}" if sends else f"postmaster@{org_domain(domain)}"]
+    return validate(s)
+
+
+def step(domain: str) -> dict:
+    """One-click fix from the Security Report: publish the next DMARC step in this server's zone."""
+    domain = clean_domain(domain)
+    zone = _zone_for(domain)
+    if not zone or not _authoritative(zone):
+        raise DmarcError(f"DNS for {domain} isn't served by this server, use the DMARC wizard and add the record at your DNS provider")
+    cur = live_records(domain)
+    sends = _sends_here(domain)
+    s = next_step(parse(cur["record"]), domain, sends)
+    if not cur["record"] and cur["spf"] and (cur["dkim"] or not sends):
+        s["p"] = "quarantine"  # own mail already passes SPF (and DKIM): skip the monitor-only step
+    r = save(domain, s)
+    words = {"none": "monitoring (p=none)", "quarantine": "quarantine, failing mail goes to spam", "reject": "reject, forged mail is refused"}
+    return {**r, "message": f"DMARC for {domain} is now {words[s['p']]}, reports to {', '.join(s['rua'])}. "
+                       + ("Published and checked: this server's DNS answers with it." if r["verified"] else f"Saved in the {r['zone']} zone, but this server's DNS doesn't answer with it yet.")}
 
 
 def remove(domain: str) -> dict:

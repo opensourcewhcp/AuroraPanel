@@ -301,6 +301,16 @@ def test_scan_panel_mail_network_dmarc_server(monkeypatch):
     f = {x["id"]: x for x in dm["findings"]}
     assert f["dmarc-missing"]["action"] == "dmarc_wizard:x.com" and f["spf-missing"]["action"] == "" and f["spf-missing"]["view"] == "deliverability"
     assert dm["facts"]["level"] == "missing" and all(x["cat"] == "email" for x in dm["findings"])
+    # DNS served here: every DMARC/SPF/DKIM issue is a one-click fix, and a fresh record waiting on caches is noted
+    monkeypatch.setattr(dmarc, "live_records", lambda d: {"record": "v=DMARC1; p=none", "parent": "", "org": d, "spf": "", "dkim": False,
+                                                         "here": True, "propagating": True})
+    f = {x["id"]: x for x in secreport._scan_target({"id": "dmarc:x.com", "kind": "dmarc", "name": "x.com", "sends": True, "label": "d"})["findings"]}
+    assert f["dmarc-none"]["action"] == "dmarc_step:x.com" and f["spf-missing"]["action"] == "mail_dns:spf:x.com"
+    assert f["dkim-missing"]["action"] == "mail_dns:dkim:x.com" and "One click" in f["spf-missing"]["fix"] and f["dmarc-propagating"]["severity"] == "info"
+    monkeypatch.setattr(dmarc, "live_records", lambda d: {"record": "", "parent": "v=DMARC1; p=reject", "org": "x.com", "spf": "v=spf1 -all", "dkim": True,
+                                                         "here": True, "propagating": False})
+    f = {x["id"]: x for x in secreport._scan_target({"id": "dmarc:a.x.com", "kind": "dmarc", "name": "a.x.com", "sends": False, "label": "d"})["findings"]}
+    assert f["dmarc-inherited"]["action"] == "dmarc_wizard:a.x.com" and "dmarc-propagating" not in f
     # server
     monkeypatch.setattr(secreport, "_posture", lambda: [secreport._f("medium", "2FA", "d", fid="2fa")])
     s = secreport._scan_target({"id": "server", "kind": "server", "name": "ns0", "label": "s"})
@@ -358,6 +368,11 @@ def test_fix_actions(monkeypatch):
                                                      "hsts:x.test", "force_https:x.test", "ca_distrust", "ssh_crypto", "port_lan:445/tcp")}
     assert "22/tcp" in out["ufw_enable"] and "2 cipher/protocol lines" in out["vhost_tls:a.conf"] and "no cipher lines" in out["vhost_tls:b.conf"]
     assert out["ssh_crypto"] == "did ssh_crypto" and out["port_lan:445/tcp"] == "lan 445/tcp" and "already" in out["ca_distrust"]
+    from backend import mail
+    monkeypatch.setattr(dmarc, "step", lambda d: {"message": f"step {d}"})
+    monkeypatch.setattr(mail, "install_record", lambda d, k: calls.append((d, k)))
+    assert secreport.fix("dmarc_step:x.com")["message"] == "step x.com"
+    assert "SPF record for x.com" in secreport.fix("mail_dns:spf:x.com")["message"] and ("x.com", "spf") in calls
     with pytest.raises(secreport.SecReportError, match="Unknown"):
         secreport.fix("nope")
     monkeypatch.setattr(secnet, "port_lan_fix", lambda arg: (_ for _ in ()).throw(secnet.SecNetError("Bad port")))

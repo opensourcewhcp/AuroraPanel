@@ -4,6 +4,18 @@ import pytest
 from backend import dmarc, dnszones
 
 
+@pytest.fixture(autouse=True)
+def _no_local_dns(monkeypatch, request):
+    """No BIND on a test box: this server's own DNS reads as down unless a test fakes it."""
+    if "real_local_txt" in request.keywords:
+        return
+    def down(name):
+        raise dmarc._LocalDown("no server")
+    monkeypatch.setattr(dmarc, "_local_txt", down)
+    monkeypatch.setattr(dmarc.time, "sleep", lambda s: None)
+    monkeypatch.setattr(dmarc, "_authoritative", lambda z: True)  # a zone here is the public one unless a test says otherwise
+
+
 def test_names():
     assert dmarc.clean_domain(" WWW.Example.COM. ") == "example.com"
     with pytest.raises(dmarc.DmarcError):
@@ -189,3 +201,115 @@ def test_domains_lists_mail_and_site_main_domains(monkeypatch):
     monkeypatch.setattr(mail, "load", lambda: (_ for _ in ()).throw(OSError("x")))
     monkeypatch.setattr(sites, "list_sites", lambda: (_ for _ in ()).throw(OSError("x")))
     assert dmarc.domains() == []
+
+
+@pytest.mark.real_local_txt
+def test_local_txt(monkeypatch):
+    import dns.resolver
+    seen = {}
+
+    class R:
+        def __init__(self, configure=True):
+            seen["configure"] = configure
+
+        def resolve(self, name, kind):
+            seen["ns"] = self.nameservers
+            if name == "nx":
+                raise dns.resolver.NXDOMAIN()
+            if name == "none":
+                raise dns.resolver.NoAnswer()
+            if name == "down":
+                raise dns.resolver.NoNameservers()
+            return [_RR("v=DMARC1; ", "p=none")]
+    monkeypatch.setattr(dns.resolver, "Resolver", R)
+    assert dmarc._local_txt("_dmarc.x.com") == ["v=DMARC1; p=none"] and seen == {"configure": False, "ns": ["127.0.0.1"]}
+    assert dmarc._local_txt("nx") == [] and dmarc._local_txt("none") == []
+    with pytest.raises(dmarc._LocalDown):
+        dmarc._local_txt("down")
+
+
+def test_live_records_prefers_this_servers_dns(monkeypatch):
+    pub = {"_dmarc.x.com": ["v=DMARC1; p=none"], "x.com": ["v=spf1 mx ~all"]}
+    loc = {"_dmarc.x.com": ["v=DMARC1; p=quarantine"], "x.com": ["v=spf1 mx ~all"], "aurora._domainkey.x.com": ["v=DKIM1; p=AB"]}
+    monkeypatch.setattr(dmarc, "_txt", lambda n: pub.get(n, []))
+    monkeypatch.setattr(dmarc, "_zone_for", lambda d: "")
+    r = dmarc.live_records("x.com")
+    assert r["record"] == "v=DMARC1; p=none" and not r["here"] and not r["propagating"]
+    monkeypatch.setattr(dmarc, "_zone_for", lambda d: "x.com")
+    r = dmarc.live_records("x.com")  # this server's DNS is down: the public answer stands
+    assert r["record"] == "v=DMARC1; p=none" and not r["here"]
+    monkeypatch.setattr(dmarc, "_local_txt", lambda n: loc.get(n, []))
+    r = dmarc.live_records("x.com")
+    assert r["record"] == "v=DMARC1; p=quarantine" and r["public"] == "v=DMARC1; p=none" and r["here"] and r["propagating"] and r["dkim"]
+    pub["_dmarc.x.com"] = loc["_dmarc.x.com"]
+    assert dmarc.live_records("x.com")["propagating"] is False
+
+
+def test_verify(monkeypatch):
+    assert dmarc.verify("x.com", "v=DMARC1; p=none") is False  # server down, every try
+    answers = iter([[], ["v=DMARC1;  p=none;"]])
+    monkeypatch.setattr(dmarc, "_local_txt", lambda n: next(answers))
+    assert dmarc.verify("x.com", "v=DMARC1; p=none") is True
+    monkeypatch.setattr(dmarc, "_local_txt", lambda n: ["v=DMARC1; p=reject"])
+    assert dmarc.verify("x.com", "v=DMARC1; p=none", tries=2) is False
+
+
+def test_next_step():
+    ns = lambda rec, sends=True: dmarc.next_step(dmarc.parse(rec), "x.com", sends)
+    s = ns("")
+    assert s["p"] == "none" and s["rua"] == ["dmarc@x.com"]
+    assert ns("", sends=False)["rua"] == ["postmaster@x.com"]
+    s = ns("v=DMARC1; p=none; rua=mailto:a@x.com")
+    assert s["p"] == "quarantine" and s["rua"] == ["a@x.com"]
+    s = ns("v=DMARC1; p=quarantine; pct=40")
+    assert s["p"] == "quarantine" and s["pct"] == 100
+    s = ns("v=DMARC1; p=quarantine; sp=none")
+    assert s["p"] == "reject" and s["sp"] == ""
+    assert ns("v=DMARC1; p=reject")["p"] == "reject"
+
+
+def test_step(monkeypatch):
+    z = FakeZones({"x.com": []})
+    z.install(monkeypatch)
+    monkeypatch.setattr(dmarc, "_sends_here", lambda d: True)
+    state = {"rec": "", "spf": "", "dkim": False}
+    monkeypatch.setattr(dmarc, "live_records", lambda d: {"record": state["rec"], "spf": state["spf"], "dkim": state["dkim"]})
+    served = []
+    monkeypatch.setattr(dmarc, "_local_txt", lambda n: served)
+    r = dmarc.step("x.com")  # nothing yet, own mail not authenticated: start by monitoring
+    assert "p=none" in r["value"] and "monitoring" in r["message"] and r["verified"] is False
+    state.update(spf="v=spf1 mx ~all", dkim=True)
+    served.append("v=DMARC1; p=quarantine; rua=mailto:dmarc@x.com; adkim=r; aspf=r")
+    r = dmarc.step("x.com")  # SPF and DKIM already pass: straight to quarantine
+    assert "p=quarantine" in r["value"] and r["verified"] and "checked" in r["message"]
+    assert len([x for x in z.zones["x.com"] if "DMARC1" in x["text"]]) == 1
+    state["rec"] = "v=DMARC1; p=quarantine; rua=mailto:dmarc@x.com"
+    assert "reject" in dmarc.step("x.com")["message"]
+    with pytest.raises(dmarc.DmarcError, match="isn't served"):
+        dmarc.step("other.org")
+
+
+@pytest.mark.real_local_txt
+def test_authoritative(monkeypatch):
+    import backend.mail as mail
+    monkeypatch.setattr(mail, "_my_names", lambda: {"vps.example.net", "203.0.113.5"})
+    monkeypatch.setattr(mail, "_public_ip", lambda: "203.0.113.5")
+    monkeypatch.setattr(mail, "_a", lambda n: {"ns1.x.com": ["203.0.113.5"]}.get(n, ["198.51.100.1"]))
+    monkeypatch.setattr(mail, "_ns", lambda z: {"x.com": ["ns1.x.com", "ns2.other.net"], "y.com": ["vps.example.net"]}.get(z, ["ns.cloudflare.com"]))
+    assert dmarc._authoritative("x.com") and dmarc._authoritative("y.com") and not dmarc._authoritative("z.com")
+    monkeypatch.setattr(mail, "_ns", lambda z: (_ for _ in ()).throw(OSError("no dns")))
+    assert dmarc._authoritative("x.com") is False
+
+
+def test_zone_here_but_public_dns_elsewhere(monkeypatch):
+    z = FakeZones({"x.com": []})
+    z.install(monkeypatch)
+    monkeypatch.setattr(dmarc, "_authoritative", lambda zone: False)
+    monkeypatch.setattr(dmarc, "_txt", lambda n: [])
+    monkeypatch.setattr(dmarc, "_local_txt", lambda n: ["v=DMARC1; p=reject"])
+    r = dmarc.live_records("x.com")
+    assert r["record"] == "" and not r["here"]  # the local zone is not what the world sees
+    assert "DNS provider too" in dmarc.save("x.com", {"p": "none"})["message"]
+    with pytest.raises(dmarc.DmarcError, match="isn't served"):
+        dmarc.step("x.com")
+    assert dmarc.status("x.com")["served"] is False
