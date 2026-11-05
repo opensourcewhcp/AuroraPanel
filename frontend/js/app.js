@@ -274,7 +274,7 @@
     vhosts: "globe", redirects: "redirect", revproxy: "redirect", zones: "zone", dmarc: "at", dyndns: "refresh", ddnshosts: "refresh",
     activity: "t_activity", isolation: "t_isolate", dockerapps: "t_docker", servers: "t_servers", mysites: "globe", panelusers: "t_usergear", wptoolkit: "t_wptool", migrate: "t_migrate", alerts: "t_bell", schedbackups: "t_cloudup", updates: "t_update", autossl: "t_autossl",
     visitors: "visitors", errors: "errors", bandwidth: "gauge", rawaccess: "rawlog", analytics: "chart", resources: "dashboard",
-    ssh: "key", ipblocker: "ban", ssl: "lock", panelhttps: "lock", tokens: "token", hotlink: "link", secreport: "listing",
+    ssh: "key", ella: "shield", ipblocker: "ban", ssl: "lock", panelhttps: "lock", tokens: "token", hotlink: "link", secreport: "listing",
     leech: "trap", modsec: "shield", instaban: "trap", security: "phone", fixperms: "home", virus: "virus", globalsec: "shield",
     files: "folder", shadow: "shadow", disk: "disk", backups: "backup", cron: "cron", indexes: "indexes",
     errorpages: "error", handlers: "handler", mime: "mime", dns: "dns",
@@ -862,7 +862,7 @@
     backups: "Backups", network: "Interfaces & Wi-Fi", firewall: "Firewall", users: "Users", security: "Security", panelhttps: "Panel HTTPS",
     indexes: "Indexes", mime: "MIME Types", errorpages: "Error Pages", handlers: "Apache Handlers",
     virus: "Virus Scanner", dns: "Track DNS",
-    ssh: "SSH Access", ipblocker: "IP Blocker & Trust", ssl: "SSL/TLS Certificates", tokens: "Manage API Tokens",
+    ssh: "SSH Access", ella: "WAF Ella", ipblocker: "IP Blocker & Trust", ssl: "SSL/TLS Certificates", tokens: "Manage API Tokens",
     hotlink: "Hotlink Protection", redirects: "Redirects", modsec: "WAF Firewall", instaban: "InstaBan", globalsec: "Global Security", secreport: "Security Report", activity: "Activity Log", isolation: "Site Isolation", dockerapps: "Docker", servers: "Servers", mysites: "My Websites", panelusers: "Panel Users", wptoolkit: "WordPress Toolkit", migrate: "Move from cPanel", alerts: "Alerts", schedbackups: "Scheduled Backups", updates: "Updates", autossl: "AutoSSL", ddnshosts: "Dynamic DNS", visitors: "Visitors", errors: "Errors", bandwidth: "Bandwidth", rawaccess: "Raw Access", analytics: "Analytics", resources: "Resource Usage", leech: "Fail2ban",
     fixperms: "Fix Home Permissions", vhosts: "Domains", revproxy: "Reverse Proxy", dyndns: "Dynamic DNS Updater", zones: "Zone Editor", dmarc: "DMARC",
     mysql: "Manage Databases", mysqlwiz: "MariaDB Wizard", pgsql: "PostgreSQL Databases",
@@ -995,7 +995,7 @@
       git: viewGit,
       inodes: viewInodes,
       about: viewAbout,
-    }[view] || mailViews()[view] || extraViews()[view] || opsViews()[view] || cloudViews()[view] || viewDashboard);
+    }[view] || mailViews()[view] || extraViews()[view] || opsViews()[view] || cloudViews()[view] || ellaViews()[view] || viewDashboard);
     if (VIEW_NEEDS[view]) requireGate(root, view, VIEW_NEEDS[view], render);
     else render(root);
   }
@@ -1187,6 +1187,7 @@
       { label: "Dynamic DNS Updater", icon: "refresh", view: "dyndns" },
       { label: "Port Checker", icon: "plug", view: "portcheck" },
       { label: "Network Monitor", icon: "radar", view: "netmon" },
+      { label: "WAF Ella", icon: "shield", view: "ella" },
       { label: "IP Blocker & Trust", icon: "ban", view: "ipblocker" },
       { label: "Fail2ban", icon: "trap", view: "leech" },
       { label: "Interfaces & Wi-Fi", icon: "wifi", view: "network" },
@@ -10219,6 +10220,12 @@
   }
 
   // ---- Cloud Apps and Third-party Apps (frontend/js/cloud.js) ----
+  let ELLAV = null;
+  function ellaViews() {
+    if (!ELLAV && window.AuroraElla) ELLAV = window.AuroraElla({ el, icon, btn, pill, field, toast, API, openModal, closeModal });
+    return ELLAV || {};
+  }
+
   let CLOUDV = null;
   function cloudViews() {
     if (!CLOUDV && window.AuroraCloud) {

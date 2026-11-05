@@ -36,8 +36,10 @@ const API = (() => {
       location.reload();
     }
     if (!res.ok) {
-      const err = new Error((data && data.detail) || res.statusText || "Request failed");
+      const detail = data && data.detail;
+      const err = new Error((detail && typeof detail === "object" ? detail.message : detail) || res.statusText || "Request failed");
       err.status = res.status;
+      err.detail = detail;
       throw err;
     }
     return data;
@@ -304,6 +306,12 @@ const API = (() => {
     fail2banEvents: (limit) => request("GET", "/api/fail2ban/events" + (limit ? `?limit=${limit}` : "")),
     fail2banEventsDelete: (keys) => request("POST", "/api/fail2ban/events/delete", { keys }),
     // bans & trusted addresses
+    ellaEvents: (params) => request("GET", "/api/ella/events?" + new URLSearchParams(Object.entries(params).filter(([, v]) => v !== "" && v !== null && v !== undefined))),
+    ellaBlocks: () => request("GET", "/api/ella/blocks"),
+    ellaBan: (body) => request("POST", "/api/ella/blocks", body),
+    ellaUnban: (id, reason = "") => request("POST", `/api/ella/blocks/${encodeURIComponent(id)}/unban`, { reason }),
+    ellaSources: () => request("GET", "/api/ella/sources"),
+    ellaLeaks: () => request("GET", "/api/ella/leaks"),
     guard: () => request("GET", "/api/guard"),
     guardBan: (target, reason, duration, source) => request("POST", "/api/guard/ban", { target, reason, duration, source }),
     guardUnban: (target) => request("POST", "/api/guard/unban", { target }),

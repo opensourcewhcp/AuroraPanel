@@ -205,3 +205,13 @@ def test_wordpress_toolkit_can_uninstall_a_site():
     ops = (FRONT / "js" / "ops.js").read_text(encoding="utf-8")
     assert 'btn("Uninstall", () => uninstallWp(d)' in ops and "API.appRemove2(d.path, db.checked, false)" in ops
     assert "Also delete its database and database user" in ops
+
+
+def test_ella_page_is_wired_and_never_builds_html_from_events():
+    ella_js = (FRONT / "js" / "ella.js").read_text(encoding="utf-8")
+    app_js = (FRONT / "js" / "app.js").read_text(encoding="utf-8")
+    html = (FRONT / "index.html").read_text(encoding="utf-8")
+    assert html.index("/js/ella.js") < html.index("/js/app.js")
+    assert '{ label: "WAF Ella", icon: "shield", view: "ella" }' in app_js and 'ella: "WAF Ella"' in app_js
+    for unsafe in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "html:"):
+        assert unsafe not in ella_js, unsafe

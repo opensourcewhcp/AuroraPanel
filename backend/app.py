@@ -72,6 +72,9 @@ class _GZipFrontend(GZipMiddleware):
 
 
 app.add_middleware(_GZipFrontend, minimum_size=1024)
+from .ella import routes as ella_routes, service as ella_service  # noqa: E402
+
+app.include_router(ella_routes.router)
 app.add_middleware(authz.AuthzMiddleware)
 app.add_middleware(audit.AuditMiddleware)  # outermost: also records refused calls
 
@@ -4115,6 +4118,10 @@ def _metrics_start():
         instaban.start()
     except Exception as exc:
         problems.record("InstaBan", exc, hint="InstaBan is not watching the logs. Open Security → InstaBan.")
+    try:
+        ella_service.start()
+    except Exception as exc:
+        problems.record("WAF Ella", exc, hint="WAF Ella isn't collecting events or checking its bans.")
     try:
         slackbot.start()  # Socket Mode: receives button clicks and /aurora
     except Exception as exc:

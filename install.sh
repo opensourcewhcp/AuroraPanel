@@ -134,6 +134,9 @@ if [ $UNINSTALL = 1 ]; then
   fi
   command -v semanage >/dev/null && semanage fcontext -d "${APP_DIR}/\.venv/bin(/.*)?" 2>/dev/null || true
   rm -rf /usr/local/lib/aurora
+  systemctl disable aurora-ella.service 2>/dev/null || true
+  rm -f /usr/local/sbin/ella-cli /etc/systemd/system/aurora-ella.service
+  command -v nft >/dev/null && nft delete table inet aurora_ella 2>/dev/null || true
   ok "Service removed"
 
   say "Removing helpers"
@@ -407,6 +410,33 @@ if [ $FRESH = 1 ] && [ $NO_HTTPS = 0 ] && [ ! -f "$DROPIN" ]; then
     warn "Couldn't create the panel's certificate — it runs on plain HTTP for now (Security → Panel HTTPS)"
   fi
 fi
+
+# --- ella-cli: emergency access that needs neither the panel nor its virtualenv ---
+cat > /usr/local/sbin/ella-cli <<EOF
+#!/bin/sh
+cd "${APP_DIR}" && exec /usr/bin/python3 -m backend.ella.cli "\$@"
+EOF
+chmod 755 /usr/local/sbin/ella-cli
+# Firewall tables don't survive a reboot: WAF Ella's bans go back before the network comes up.
+cat > /etc/systemd/system/aurora-ella.service <<EOF
+[Unit]
+Description=WAF Ella: restore bans after a reboot
+DefaultDependencies=no
+After=local-fs.target
+Before=network-pre.target shutdown.target
+Wants=network-pre.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/ella-cli restore
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable aurora-ella.service >/dev/null 2>&1 || warn "Could not enable aurora-ella.service, so bans come back only when the panel starts"
 
 # --- systemd unit -----------------------------------------------------------
 say "Writing ${UNIT}"
