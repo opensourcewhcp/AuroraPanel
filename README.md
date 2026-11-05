@@ -8,7 +8,10 @@ Free, open source, MIT licensed.</p>
   <a href="https://github.com/opensourcewhcp/AuroraPanel/releases"><img alt="Version 1.1.36" src="https://img.shields.io/badge/version-1.1.36-ff7a1a"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-green"></a>
   <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-blue">
-  <img alt="Runs on Raspberry Pi" src="https://img.shields.io/badge/runs%20on-Raspberry%20Pi%20%7C%20Debian%20%7C%20Ubuntu-c51a4a">
+  <img alt="Runs on Raspberry Pi" src="https://img.shields.io/badge/runs%20on-Raspberry%20Pi-c51a4a">
+  <img alt="Runs on Debian" src="https://img.shields.io/badge/runs%20on-Debian-a80030">
+  <img alt="Runs on Ubuntu" src="https://img.shields.io/badge/runs%20on-Ubuntu-e95420">
+  <img alt="Runs on Fedora" src="https://img.shields.io/badge/runs%20on-Fedora-294172">
   <a href="https://forums.raspberrypi.com/viewtopic.php?p=2388892"><img alt="Raspberry Pi Forums thread" src="https://img.shields.io/badge/community-Raspberry%20Pi%20Forums-555"></a>
 </p>
 
