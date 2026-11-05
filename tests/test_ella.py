@@ -10,6 +10,7 @@ import pytest
 from backend.ella import adapter as A, blocks, cli, collector, leaks, service
 from backend.ella.blocks import Engine
 from backend.ella.db import Store
+from backend.ella.registry import Registry, parse_banned
 
 AUDIT_LINE = json.dumps({
     "transaction": {"time": "04/Nov/2026:18:58:38.217220 --0500", "transaction_id": "abc", "remote_address": "203.0.113.5"},
@@ -28,6 +29,9 @@ class FakeAdapter:
         self.sets = {4: {}, 6: {}}
         self.fail = set()
         self.calls = []
+        self.guard_sets = {"ban4": {}, "ban6": {}, "f2b4": {}, "f2b6": {}}
+        self.jails = {}
+        self.f2b_up, self.f2b_missing, self.ufw = True, False, ""
 
     def call(self, op, args=None, operation_id=""):
         args = args or {}
@@ -46,6 +50,25 @@ class FakeAdapter:
             return {"ok": True}
         if op == "nft_list":
             return {"ok": True, "elements": [{"element": k, "expires": v} for k, v in self.sets[args["family"]].items()], "error": ""}
+        if op == "guard_list":
+            return {"ok": True, "elements": [{"element": k, "expires": v} for k, v in self.guard_sets.get(args["name"], {}).items()], "error": ""}
+        if op == "guard_del":
+            self.guard_sets.get(args["name"], {}).pop(str(A.net(args["target"])), None)
+            return {"ok": True, "error": ""}
+        if op == "f2b_banned":
+            return {"ok": self.f2b_up, "jails": self.jails if self.f2b_up else {}, "error": "" if self.f2b_up else "not running"}
+        if op == "f2b_unban":
+            self.jails[args["jail"]] = [i for i in self.jails.get(args["jail"], []) if i != args["ip"]]
+            return {"ok": True, "error": ""}
+        if op == "f2b_ban":
+            self.jails.setdefault(args["jail"], []).append(args["ip"])
+            return {"ok": True, "error": ""}
+        if op == "f2b_status":
+            return {"ok": self.f2b_up, "jails": list(self.jails), "missing": self.f2b_missing, "error": ""}
+        if op == "f2b_jail":
+            return {"ok": True, "banned": self.jails[args["jail"]], "failed_now": 0, "failed_total": 0, "banned_total": 1, "bantime": 3600, "findtime": 600, "maxretry": 5, "journal": "x", "logpath": [], "actions": ["aurora-guard"]}
+        if op == "ufw_status":
+            return {"ok": True, "installed": bool(self.ufw), "active": bool(self.ufw), "output": self.ufw}
         return {"ok": True, "available": True}
 
 
@@ -227,6 +250,34 @@ def test_truncation_restarts_from_zero(tmp_path):
     assert _count(store) == 3
 
 
+def test_a_new_file_in_the_old_ones_place_is_read_from_its_start(tmp_path):
+    """A filesystem can give a new file the inode of a deleted one, and it may have grown past the old position already."""
+    store, c, log = _collector(tmp_path)
+    log.write_text("")
+    c.tick()
+    log.write_text(_line(1) + _line(2))
+    c.tick()
+    store.run(lambda x: x.execute("UPDATE sources SET inode = ?", (os.stat(log).st_ino,)))
+    log.write_text(_line(3) + _line(4) + _line(5) + _line(6))  # same inode here, different start, bigger than before
+    c.tick()
+    urls = {r[0] for p in store.months() for r in sqlite3.connect(p).execute("SELECT url FROM events")}
+    assert urls == {f"/p{i}" for i in range(1, 7)}
+
+
+def test_a_growing_file_is_not_mistaken_for_a_new_one(tmp_path):
+    store, c, log = _collector(tmp_path)
+    log.write_text("")
+    c.tick()
+    with log.open("a", newline="") as f:
+        f.write(_line(1))
+    c.tick()
+    for n in range(2, 12):
+        with log.open("a", newline="") as f:
+            f.write(_line(n))
+        c.tick()
+    assert _count(store) == 11
+
+
 def test_reading_again_after_a_crash_adds_nothing(tmp_path):
     store, c, log = _collector(tmp_path)
     log.write_text("")
@@ -405,7 +456,8 @@ def api(admin, tmp_path, monkeypatch):
     monkeypatch.setattr(blocks, "_panel_server_nets", lambda: [])
     monkeypatch.setattr(blocks, "_guard_protected", lambda ip: [])
     store = Store(tmp_path / "ella")
-    service.configure(store=store, engine=Engine(store, FakeAdapter()))
+    engine = Engine(store, FakeAdapter())
+    service.configure(store=store, engine=engine, registry=Registry(engine, FakeGuard(engine.adapter), FakeFirewall(), None))
     yield admin
     service.configure()
 
@@ -425,6 +477,316 @@ def test_api_ban_unban_audit_and_scope(api):
 def test_api_safety_lock_answers_409(api):
     r = api.post("/api/ella/blocks", json={"target": "127.0.0.1"})
     assert r.status_code == 409 and r.json()["detail"]["forceable"] is False
+
+
+class FakeGuard:
+    def __init__(self, adapter):
+        self.adapter, self.bans = adapter, []
+
+    def _state(self):
+        return {"bans": self.bans}
+
+    def ban(self, target, reason="", duration=None, client_ip=None, source=""):
+        n = str(A.net(target))
+        self.bans.append({"cidr": n, "reason": reason, "source": source})
+        self.adapter.guard_sets["ban4"][n] = None
+
+    def unban(self, target, include_fail2ban=True):
+        assert include_fail2ban is False or target  # the registry must lift only this list's own entry
+        n = str(A.net(target))
+        self.last_include_fail2ban = include_fail2ban
+        self.bans[:] = [b for b in self.bans if b["cidr"] != n]
+        self.adapter.guard_sets["ban4"].pop(n, None)
+
+
+class FakeFirewall:
+    @staticmethod
+    def _firewalld():
+        return False
+
+
+@pytest.fixture
+def reg(engine):
+    r = Registry(engine, FakeGuard(engine.adapter), FakeFirewall(), None)
+    return r
+
+
+def _sources(reg, target="203.0.113.9/32"):
+    return {b["source"]: b for b in reg.engine.list_blocks() if b["target"] == target}
+
+
+def test_three_sources_on_one_address_are_lifted_one_at_a_time(reg):
+    a = reg.adapter
+    reg.engine.ban("203.0.113.9", None, "", "admin")
+    reg.guard.ban("203.0.113.9", "manual")
+    a.jails["sshd"] = ["203.0.113.9"]
+    a.guard_sets["f2b4"]["203.0.113.9/32"] = 300
+    reg.sync()
+    m = _sources(reg)
+    assert set(m) == {"ella", "guard", "fail2ban:sshd"} and all(b["actual_state"] == "present" for b in m.values())
+    assert m["fail2ban:sshd"]["expires_at"] and m["guard"]["owner"] == "IP Blocker"
+    assert reg.unban(m["guard"]["id"], "admin")["state"] == "applied"
+    assert reg.guard.last_include_fail2ban is False
+    reg.sync()
+    assert set(_sources(reg)) == {"ella", "fail2ban:sshd"} and a.sets[4]
+    assert reg.unban(m["fail2ban:sshd"]["id"], "admin")["state"] == "applied"
+    reg.sync()
+    assert set(_sources(reg)) == {"ella"} and a.sets[4] and a.jails["sshd"] == []
+
+
+def test_ufw_is_shown_but_never_changed(reg):
+    reg.adapter.ufw = "Status: active\n[ 1] Anywhere                   DENY IN     203.0.113.9\n[ 2] 22/tcp                     ALLOW IN    Anywhere\n"
+    reg.sync()
+    m = _sources(reg)
+    assert set(m) == {"ufw"} and m["ufw"]["backend"] == "ufw"
+    with pytest.raises(blocks.BlockError, match="read-only"):
+        reg.unban(m["ufw"]["id"], "admin")
+
+
+def test_no_ufw_is_no_problem(reg):
+    assert reg.sync()["added"] == 0
+
+
+def test_an_entry_ending_outside_ella_is_recorded(reg):
+    reg.guard.ban("203.0.113.9", "x")
+    reg.sync()
+    reg.guard.unban("203.0.113.9")
+    assert reg.sync()["ended"] == 1 and not _sources(reg)
+    assert reg.store.audit_entries(1)[0]["action"] == "block.ended"
+
+
+def test_fail2ban_being_down_does_not_look_like_its_bans_ended(reg):
+    reg.adapter.jails["sshd"] = ["203.0.113.9"]
+    reg.sync()
+    reg.adapter.f2b_up = False
+    assert reg.sync()["ended"] == 0 and "fail2ban:sshd" in _sources(reg)
+
+
+def test_drift_is_found_and_resolved(reg):
+    a = reg.adapter
+    a.sets[4]["203.0.113.1/32"] = None
+    a.guard_sets["ban4"]["203.0.113.2/32"] = None
+    a.guard_sets["f2b4"]["203.0.113.3/32"] = 60
+    reg.guard.bans.append({"cidr": "203.0.113.4/32", "reason": "x"})
+    kinds = {(d["backend"], d["target"], d["kind"]) for d in reg.drift()}
+    assert kinds == {("ella", "203.0.113.1/32", "external"), ("guard", "203.0.113.2/32", "external"), ("fail2ban", "203.0.113.3/32", "external"), ("guard", "203.0.113.4/32", "missing")}
+    reg.sync()
+    assert reg.store.setting("drift") and any(e["action"] == "drift.found" for e in reg.store.audit_entries(10))
+    reg.resolve("ella", "203.0.113.1", "accept", "admin")
+    assert "ella" in _sources(reg, "203.0.113.1/32") and "203.0.113.1/32" in a.sets[4]
+    reg.resolve("guard", "203.0.113.2", "remove", "admin")
+    reg.resolve("fail2ban", "203.0.113.3", "remove", "admin")
+    assert not a.guard_sets["ban4"].get("203.0.113.2/32") and not a.guard_sets["f2b4"]
+    reg.resolve("guard", "203.0.113.4", "restore", "admin")
+    assert "203.0.113.4/32" in a.guard_sets["ban4"]
+    assert not reg.drift()
+    with pytest.raises(blocks.BlockError, match="isn't there"):
+        reg.resolve("guard", "203.0.113.2", "remove", "admin")
+
+
+def test_fail2ban_states(reg):
+    a = reg.adapter
+    assert reg.fail2ban_overview()["state"] == "unconfigured"
+    a.jails["sshd"] = []
+    o = reg.fail2ban_overview()
+    assert o["state"] == "ok" and o["jails"][0]["uses_panel_sets"] and o["jails"][0]["bantime"] == 3600
+    with pytest.raises(blocks.BlockError, match="already has jails"):
+        reg.fail2ban_init("admin")
+    a.f2b_up = False
+    assert reg.fail2ban_overview()["state"] == "stopped"
+    a.f2b_missing = True
+    assert reg.fail2ban_overview()["state"] == "not_installed"
+
+
+def test_fail2ban_ban_goes_through_the_safety_lock(reg):
+    reg.adapter.jails["sshd"] = []
+    with pytest.raises(blocks.SafetyLocked):
+        reg.fail2ban_ban("sshd", "203.0.113.9", "admin", "203.0.113.9")
+    assert reg.adapter.jails["sshd"] == []
+    reg.fail2ban_ban("sshd", "203.0.113.9", "admin", None)
+    assert reg.adapter.jails["sshd"] == ["203.0.113.9"]
+
+
+@pytest.mark.parametrize("text,want", [
+    ("[{'sshd': ['1.2.3.4']}, {'recidive': []}]", {"sshd": ["1.2.3.4"], "recidive": []}),
+    ("__import__('os').system('id')", {}), ("", {}), ("[{'bad jail;': ['1.2.3.4']}]", {}),
+])
+def test_fail2ban_output_is_read_as_data(text, want):
+    assert parse_banned(text) == want
+
+
+CTX = {"path": "/l", "inode": 1, "offset": 0}
+
+
+def test_apache_error_line():
+    e = collector.PARSERS["apache_error"].parse(b"[Wed Nov 04 22:15:31.403603 2026] [core:error] [pid 49:tid 49] [client 203.0.113.9:4242] AH00126: Invalid URI token=abc123def", CTX)
+    assert e["client_ip"] == "203.0.113.9" and e["severity"] == "ERROR" and "token=[masked]" in e["evidence"][0]["msg"]
+    e = collector.PARSERS["apache_error"].parse(b"[Wed Nov 04 22:15:31.403603 2026] [mpm_event:notice] [pid 4995:tid 4995] AH00492: caught SIGWINCH", CTX)
+    assert e["client_ip"] is None and "client_ip" in json.loads(e["missing_fields"]) and e["severity"] == "NOTICE"
+
+
+def test_apache_startup_notes_are_not_unreadable():
+    assert collector.PARSERS["apache_error"].parse(b"AH00558: httpd: Could not reliably determine the server's fully qualified domain name", CTX) == {"skip": True}
+    assert collector.PARSERS["apache_error"].parse(b"something else entirely", CTX) is None
+
+
+def test_every_operation_the_code_calls_exists_in_the_real_adapter():
+    """Fakes accept any name, so a typo or a name the check refuses would only show on a real server."""
+    import re as _re
+    from pathlib import Path as _P
+    called = set()
+    for f in _P(A.__file__).parent.glob("*.py"):
+        called |= set(_re.findall(r"""adapter\.call\(\s*["']([a-z0-9_]+)["']""", f.read_text(encoding="utf-8")))
+        called |= set(_re.findall(r"""\ba\.call\(\s*["']([a-z0-9_]+)["']""", f.read_text(encoding="utf-8")))
+    assert {"f2b_banned", "f2b_status", "f2b_jail", "f2b_ban", "f2b_unban", "guard_del", "journal_read", "ufw_status", "nft_add"} <= called
+    real = A.EllaSystemAdapter()
+    for op in sorted(called):
+        assert A.re.fullmatch(r"[a-z0-9_]+", op) and hasattr(real, f"op_{op}"), op
+    with pytest.raises(TypeError):  # gets past the name check, and only then complains about its arguments
+        real.call("f2b_jail", {})
+
+
+def test_nginx_error_line():
+    e = collector.PARSERS["nginx_error"].parse(b'2026/11/04 22:15:31 [error] 12#12: *1 open() "/x" failed, client: 203.0.113.9, server: a.example, request: "GET /x HTTP/1.1", host: "a.example"', CTX)
+    assert e["client_ip"] == "203.0.113.9" and e["domain"] == "a.example" and e["severity"] == "ERROR"
+
+
+@pytest.mark.parametrize("line,action,jail,ip", [
+    (b"2026-11-04 22:05:00,469 fail2ban.actions        [29066]: NOTICE  [aurora-panel] Ban 203.0.113.9", "ban", "aurora-panel", "203.0.113.9"),
+    (b"2026-11-04 22:05:00,469 fail2ban.actions        [29066]: NOTICE  [sshd] Unban 203.0.113.9", "unban", "sshd", "203.0.113.9"),
+    (b"2026-11-04 22:04:12,047 fail2ban.filter         [29066]: INFO    [sshd] Found 203.0.113.9 - 2026-11-04 22:04:11", "detected", "sshd", "203.0.113.9"),
+])
+def test_fail2ban_log_lines(line, action, jail, ip):
+    e = collector.PARSERS["fail2ban_log"].parse(line, CTX)
+    assert (e["action"], e["rule_id"], e["client_ip"]) == (action, jail, ip)
+
+
+def test_fail2ban_chatter_is_skipped_and_errors_kept():
+    assert collector.PARSERS["fail2ban_log"].parse(b"2026-11-04 22:10:23,418 fail2ban.jail [893]: INFO    Jail 'sshd' started", CTX) == {"skip": True}
+    assert collector.PARSERS["fail2ban_log"].parse(b"2026-11-04 22:10:23,418 fail2ban.x [893]: ERROR   oops", CTX)["action"] == "error"
+
+
+def test_panel_audit_line():
+    line = json.dumps({"ts": 1793848653.2, "user": "admin", "ip": "192.0.2.1", "action": "login failed", "ok": False, "status": 401, "method": "POST", "path": "/api/login"}).encode()
+    e = collector.PARSERS["panel_audit"].parse(line, CTX)
+    assert (e["action"], e["account"], e["client_ip"], e["url"], e["status"]) == ("login_failed", "admin", "192.0.2.1", "/api/login", 401)
+
+
+def test_journal_parsers():
+    assert collector._journal_sshd("Failed password for invalid user bob from 203.0.113.9 port 22 ssh2")[:3] == ("203.0.113.9", "bob", "login_failed")
+    assert collector._journal_sshd("Invalid user  from 2001:db8::1 port 22")[0] == "2001:db8::1"
+    assert collector._journal_sshd("Accepted password for admin from 192.0.2.1 port 1 ssh2")[2] == "login"
+    assert collector._journal_sshd("Server listening on 0.0.0.0 port 22") is None
+    assert collector._journal_postfix("warning: unknown[203.0.113.9]: SASL LOGIN authentication failed: x")[2] == "login_failed"
+    assert collector._journal_dovecot("imap-login: Login aborted: (auth failed, 1 attempts in 2 secs): user=<a@b.c>, rip=203.0.113.9, lip=1.1.1.1")[:3] == ("203.0.113.9", "a@b.c", "login_failed")
+    f = collector._journal_firewall("aurora-block: IN=eth0 SRC=203.0.113.9 DST=1.1.1.1 PROTO=TCP SPT=1 DPT=22")
+    assert f[0] == "203.0.113.9" and f[2] == "dropped" and f[4] == ("tcp", "dpt:22")
+
+
+class FakeJournal(FakeAdapter):
+    def __init__(self):
+        super().__init__()
+        self.records = {}
+
+    def call(self, op, args=None, operation_id=""):
+        if op == "journal_read":
+            recs = self.records.get(args["journal"], [])
+            c = args.get("cursor")
+            if not c:
+                return {"ok": True, "records": recs[-1:], "error": ""}
+            at = next((i for i, r in enumerate(recs) if r["cursor"] == c), -1)
+            return {"ok": True, "records": recs[at + 1:], "error": ""}
+        return super().call(op, args, operation_id)
+
+
+def _ssh(n, ip="203.0.113.9"):
+    return {"cursor": f"c{n}", "ts": 1793848000.0 + n, "message": f"Failed password for u{n} from {ip} port 22 ssh2", "priority": "6"}
+
+
+def test_journal_source_starts_at_the_end_and_keeps_its_place(tmp_path):
+    store, a = Store(tmp_path), FakeJournal()
+    c = collector.Collector(store, adapter=a, log_dir=str(tmp_path / "none"), system=False)
+    a.records["sshd"] = [_ssh(0)]
+    c._tick_journal("sshd", None)
+    assert not store.months()
+    row = lambda: dict(store.read(lambda x: x.execute("SELECT * FROM sources WHERE path='journal:sshd'").fetchone()))  # noqa: E731
+    a.records["sshd"] += [_ssh(1), _ssh(2)]
+    assert c._tick_journal("sshd", row()) == 2
+    assert c._tick_journal("sshd", row()) == 0
+    store.run(lambda x: x.execute("UPDATE sources SET cursor='c0' WHERE path='journal:sshd'"))  # as if the position wasn't saved
+    assert c._tick_journal("sshd", row()) == 0 and _count(store) == 2
+
+
+def test_a_stack_trace_is_one_event(tmp_path):
+    store, c, log = _collector(tmp_path)
+    err = log.with_name("error.log")
+    err.write_text("")
+    c.tick()
+    head = b"[Wed Nov 04 22:15:31.403603 2026] [php:error] [pid 49] [client 203.0.113.9:1] Fatal\n"
+    err.write_bytes(head + b"Stack trace:\n#0 /a.php(1): x()\n#1 {main}\n  thrown in /a.php\n" + head)
+    c.tick()
+    assert _count(store) == 2
+    r = store.read(lambda x: x.execute("SELECT unparsed FROM sources WHERE path=?", (str(err),)).fetchone())
+    assert r["unparsed"] == 0
+    tags = [json.loads(x[0]) for p in store.months() for x in sqlite3.connect(p).execute("SELECT tags FROM events ORDER BY id")]
+    assert "multiline" in tags[0] and "multiline" not in tags[1]
+
+
+def test_history_import_is_marked_and_not_repeated(tmp_path):
+    store, c, log = _collector(tmp_path)
+    log.write_text(_line(1) + _line(2) + "junk\n")
+    r = c.import_file(str(log), "apache_access")
+    assert r == {"lines": 3, "unparsed": 1, "stored": 2} and c.import_file(str(log), "apache_access")["stored"] == 0
+    assert {x[0] for p in store.months() for x in sqlite3.connect(p).execute("SELECT historical FROM events")} == {1}
+
+
+def test_custom_source_regex_and_json(tmp_path):
+    store, c, log = _collector(tmp_path)
+    other, j = tmp_path / "app.log", tmp_path / "app.json"
+    other.write_text("")
+    j.write_text("")
+    store.set_setting("custom_sources", [
+        {"path": str(other), "format": "regex", "pattern": r"^(?P<client_ip>\S+) (?P<url>\S+) (?P<status>\d+)$", "fields": None},
+        {"path": str(j), "format": "json", "pattern": None, "fields": {"client_ip": "ip", "url": "path", "ts": "time"}}])
+    c.tick()
+    other.write_text("203.0.113.9 /x?token=abc 500\nnot this format\n")
+    j.write_text(json.dumps({"ip": "203.0.113.8", "path": "/y", "time": 1793848000}) + "\n[1]\n")
+    c.tick()
+    got = {r[0]: r[1:] for p in store.months() for r in sqlite3.connect(p).execute("SELECT client_ip, url, status FROM events WHERE source='custom'")}
+    assert got == {"203.0.113.9": ("/x", 500), "203.0.113.8": ("/y", None)}
+    assert store.read(lambda x: x.execute("SELECT sum(unparsed) FROM sources WHERE kind='custom'").fetchone()[0]) == 2
+
+
+@pytest.mark.parametrize("spec", [
+    {"path": "relative.log", "format": "regex", "pattern": "(?P<url>x)"}, {"path": "/proc/self/environ", "format": "regex", "pattern": "(?P<url>x)"}, {"path": "/a/../etc/shadow", "format": "regex", "pattern": "(?P<url>x)"},
+    {"path": "/var/log/a", "format": "regex", "pattern": r"(?P<url>(a+)+)"}, {"path": "/var/log/a", "format": "regex", "pattern": r"(?P<nope>x)"}, {"path": "/var/log/a", "format": "regex", "pattern": ""},
+    {"path": "/var/log/a", "format": "json", "fields": {"nope": "x"}}, {"path": "/var/log/a", "format": "xml"},
+])
+def test_custom_source_validation(spec):
+    with pytest.raises(ValueError):
+        collector.check_custom(spec)
+
+
+def test_api_blocks_list_covers_every_source_and_drift(api):
+    reg_ = service.parts()["registry"]
+    reg_.guard.ban("203.0.113.9", "x")
+    assert api.post("/api/ella/drift/check", json={}).json()["added"] == 1
+    assert {b["source"] for b in api.get("/api/ella/blocks").json()["blocks"]} == {"guard"}
+    assert api.get("/api/ella/drift").json()["drift"] == []
+    block = api.get("/api/ella/blocks").json()["blocks"][0]["id"]
+    assert api.post(f"/api/ella/blocks/{block}/unban", json={}).json()["state"] == "applied"
+    assert api.post("/api/ella/drift/resolve", json={"backend": "guard", "target": "203.0.113.9", "action": "remove"}).status_code == 400
+
+
+def test_api_lists_sources_that_are_not_on_this_server(api):
+    paths = {s["path"]: s for s in api.get("/api/ella/sources").json()["sources"]}
+    assert paths["/var/log/nginx/access.log"]["status"] in ("not_found", "ok") and paths["/var/log/nginx/access.log"]["format"] == "combined"
+
+
+def test_api_fail2ban_and_import_limits(api):
+    assert api.get("/api/ella/fail2ban").json()["state"] == "unconfigured"
+    assert api.post("/api/ella/sources/import", json={"path": "/etc/shadow", "kind": "apache_access"}).status_code == 400
+    assert api.post("/api/ella/sources/custom", json={"path": "/var/log/a", "format": "regex", "pattern": "(?P<url>(a+)+)"}).status_code == 400
 
 
 def test_api_needs_a_login(client):

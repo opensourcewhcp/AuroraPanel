@@ -274,7 +274,7 @@
     vhosts: "globe", redirects: "redirect", revproxy: "redirect", zones: "zone", dmarc: "at", dyndns: "refresh", ddnshosts: "refresh",
     activity: "t_activity", isolation: "t_isolate", dockerapps: "t_docker", servers: "t_servers", mysites: "globe", panelusers: "t_usergear", wptoolkit: "t_wptool", migrate: "t_migrate", alerts: "t_bell", schedbackups: "t_cloudup", updates: "t_update", autossl: "t_autossl",
     visitors: "visitors", errors: "errors", bandwidth: "gauge", rawaccess: "rawlog", analytics: "chart", resources: "dashboard",
-    ssh: "key", ella: "shield", ipblocker: "ban", ssl: "lock", panelhttps: "lock", tokens: "token", hotlink: "link", secreport: "listing",
+    ssh: "key", nginx: "globe", ella: "shield", ipblocker: "ban", ssl: "lock", panelhttps: "lock", tokens: "token", hotlink: "link", secreport: "listing",
     leech: "trap", modsec: "shield", instaban: "trap", security: "phone", fixperms: "home", virus: "virus", globalsec: "shield",
     files: "folder", shadow: "shadow", disk: "disk", backups: "backup", cron: "cron", indexes: "indexes",
     errorpages: "error", handlers: "handler", mime: "mime", dns: "dns",
@@ -862,7 +862,7 @@
     backups: "Backups", network: "Interfaces & Wi-Fi", firewall: "Firewall", users: "Users", security: "Security", panelhttps: "Panel HTTPS",
     indexes: "Indexes", mime: "MIME Types", errorpages: "Error Pages", handlers: "Apache Handlers",
     virus: "Virus Scanner", dns: "Track DNS",
-    ssh: "SSH Access", ella: "WAF Ella", ipblocker: "IP Blocker & Trust", ssl: "SSL/TLS Certificates", tokens: "Manage API Tokens",
+    ssh: "SSH Access", nginx: "Nginx Websites", ella: "WAF Ella", ipblocker: "IP Blocker & Trust", ssl: "SSL/TLS Certificates", tokens: "Manage API Tokens",
     hotlink: "Hotlink Protection", redirects: "Redirects", modsec: "WAF Firewall", instaban: "InstaBan", globalsec: "Global Security", secreport: "Security Report", activity: "Activity Log", isolation: "Site Isolation", dockerapps: "Docker", servers: "Servers", mysites: "My Websites", panelusers: "Panel Users", wptoolkit: "WordPress Toolkit", migrate: "Move from cPanel", alerts: "Alerts", schedbackups: "Scheduled Backups", updates: "Updates", autossl: "AutoSSL", ddnshosts: "Dynamic DNS", visitors: "Visitors", errors: "Errors", bandwidth: "Bandwidth", rawaccess: "Raw Access", analytics: "Analytics", resources: "Resource Usage", leech: "Fail2ban",
     fixperms: "Fix Home Permissions", vhosts: "Domains", revproxy: "Reverse Proxy", dyndns: "Dynamic DNS Updater", zones: "Zone Editor", dmarc: "DMARC",
     mysql: "Manage Databases", mysqlwiz: "MariaDB Wizard", pgsql: "PostgreSQL Databases",
@@ -995,7 +995,7 @@
       git: viewGit,
       inodes: viewInodes,
       about: viewAbout,
-    }[view] || mailViews()[view] || extraViews()[view] || opsViews()[view] || cloudViews()[view] || ellaViews()[view] || viewDashboard);
+    }[view] || mailViews()[view] || extraViews()[view] || opsViews()[view] || cloudViews()[view] || ellaViews()[view] || nginxViews()[view] || viewDashboard);
     if (VIEW_NEEDS[view]) requireGate(root, view, VIEW_NEEDS[view], render);
     else render(root);
   }
@@ -1154,6 +1154,7 @@
     ]},
     { name: "Domains", icon: "globe", tiles: [
       { label: "Domains", icon: "globe", view: "vhosts" },
+      { label: "Nginx Websites", icon: "globe", view: "nginx" },
       { label: "Redirects", icon: "redirect", view: "redirects" },
       { label: "Reverse Proxy", icon: "redirect", view: "revproxy" },
       { label: "Zone Editor", icon: "zone", view: "zones" },
@@ -6221,6 +6222,19 @@
       [data, folders, shadowInfo] = await Promise.all([API.sites(), API.folderSites().catch(() => ({ sites: [] })), API.shadow().catch(() => ({ sites: [] }))]);
       render();
       otherDomains(otherBox, data, load);
+      const srv = data.server || {};
+      const old = document.getElementById("sites-server-note");
+      if (old) old.remove();
+      if (srv.apache_active === false) {
+        otherBox.parentNode.prepend(el("div", { id: "sites-server-note", class: "dm-note warn", style: "margin-bottom:14px" }, [
+          icon("error", 15),
+          el("span", { text: `Apache isn't running${srv.other ? `, ${srv.other} is on port 80 instead` : ""}. The sites below are set up in Apache, so visitors can't reach them right now, and the WAF Firewall isn't protecting anything. Your files are safe.` }),
+          ...(srv.other === "nginx" ? [btn("Manage Nginx websites", () => navigate("nginx"), "btn-sm btn-primary")] : []),
+          btn("Switch back to Apache", async () => {
+            try { await API.sysappControl("apache", "start", true); toast("Apache is running", "good"); load(); } catch (e) { toast(e.message, "bad"); }
+          }, "btn-sm btn-ghost"),
+        ]));
+      }
     }); };
     search.addEventListener("input", render);
     applyBtn.addEventListener("click", async () => {
@@ -10220,6 +10234,12 @@
   }
 
   // ---- Cloud Apps and Third-party Apps (frontend/js/cloud.js) ----
+  let NGINXV = null;
+  function nginxViews() {
+    if (!NGINXV && window.AuroraNginx) NGINXV = window.AuroraNginx({ el, icon, btn, pill, field, toast, API, openModal, closeModal, navigate });
+    return NGINXV || {};
+  }
+
   let ELLAV = null;
   function ellaViews() {
     if (!ELLAV && window.AuroraElla) ELLAV = window.AuroraElla({ el, icon, btn, pill, field, toast, API, openModal, closeModal });

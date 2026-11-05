@@ -248,6 +248,15 @@ def _dir_has_index(docroot: str) -> bool | None:
         return None
 
 
+def _server_state() -> dict:
+    """The sites listed here are Apache's. If Apache isn't running, nothing is serving them, whatever else holds port 80."""
+    from . import sysapps
+    try:
+        return {"apache_active": bool(sysapps._active(["apache2"]).get("apache2")), "other": sysapps._running_web_server("apache")}
+    except (OSError, subprocess.SubprocessError, KeyError):
+        return {"apache_active": True, "other": None}  # can't tell: no warning rather than a wrong one
+
+
 def list_sites() -> dict:
     if not (IS_LINUX and AVAIL.exists()):
         return {"supported": False, "sites": []}
@@ -276,7 +285,7 @@ def list_sites() -> dict:
     for x in sites:
         if x["system"] and x["has_http"] and https:
             x["https_via"] = {"ssl": https["ssl"], "cert_expires": https["cert_expires"]}
-    return {"supported": True, "sites": sites, "certbot": bool(shutil.which("certbot"))}
+    return {"supported": True, "sites": sites, "certbot": bool(shutil.which("certbot")), "server": _server_state()}
 
 
 def _builtin_https() -> dict | None:

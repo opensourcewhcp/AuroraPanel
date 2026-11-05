@@ -72,9 +72,89 @@ class _GZipFrontend(GZipMiddleware):
 
 
 app.add_middleware(_GZipFrontend, minimum_size=1024)
+from . import nginxsites  # noqa: E402
 from .ella import routes as ella_routes, service as ella_service  # noqa: E402
 
 app.include_router(ella_routes.router)
+
+
+class NginxSiteBody(BaseModel):
+    server_name: str = ""
+    aliases: list[str] = []
+    mode: str = "php"
+    docroot: str = ""
+    proxy: str = ""
+    https: str = "none"
+    force_https: bool = False
+    max_body_mb: int = 64
+    custom: str = ""
+
+
+class NginxEnableBody(BaseModel):
+    on: bool
+
+
+class NginxControlBody(BaseModel):
+    action: str
+
+
+def _nginx_call(fn):
+    try:
+        return fn()
+    except (nginxsites.NginxError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/nginx")
+def api_nginx(user: str = auth.CurrentUser):
+    return nginxsites.status()
+
+
+@app.post("/api/nginx/sites")
+def api_nginx_create(body: NginxSiteBody, user: str = auth.CurrentUser):
+    return _nginx_call(lambda: nginxsites.create(body.model_dump()))
+
+
+@app.put("/api/nginx/sites/{name}")
+def api_nginx_update(name: str, body: NginxSiteBody, user: str = auth.CurrentUser):
+    return _nginx_call(lambda: nginxsites.update(name, body.model_dump()))
+
+
+@app.post("/api/nginx/sites/{name}/enabled")
+def api_nginx_enabled(name: str, body: NginxEnableBody, user: str = auth.CurrentUser):
+    return _nginx_call(lambda: nginxsites.set_enabled(name, body.on))
+
+
+@app.delete("/api/nginx/sites/{name}")
+def api_nginx_delete(name: str, delete_files: bool = False, user: str = auth.CurrentUser):
+    return _nginx_call(lambda: nginxsites.delete(name, delete_files))
+
+
+@app.get("/api/nginx/sites/{name}/logs")
+def api_nginx_logs(name: str, kind: str = "error", lines: int = 200, user: str = auth.CurrentUser):
+    return _nginx_call(lambda: nginxsites.logs(name, kind, lines))
+
+
+@app.post("/api/nginx/test")
+def api_nginx_test(user: str = auth.CurrentUser):
+    return nginxsites.test_config()
+
+
+@app.post("/api/nginx/control")
+def api_nginx_control(body: NginxControlBody, user: str = auth.CurrentUser):
+    return _nginx_call(lambda: nginxsites.control(body.action))
+
+
+@app.post("/api/nginx/default-site")
+def api_nginx_default(user: str = auth.CurrentUser):
+    return _nginx_call(lambda: {"ok": nginxsites.ensure_default()})
+
+
+@app.post("/api/nginx/import-apache")
+def api_nginx_import(user: str = auth.CurrentUser):
+    return _nginx_call(nginxsites.import_apache)
+
+
 app.add_middleware(authz.AuthzMiddleware)
 app.add_middleware(audit.AuditMiddleware)  # outermost: also records refused calls
 

@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS sources (
   path TEXT PRIMARY KEY, kind TEXT NOT NULL, inode INTEGER, offset INTEGER NOT NULL DEFAULT 0,
   prev_inode INTEGER, prev_offset INTEGER, prev_until REAL,
   last_event_ts REAL, last_read_ts REAL, lines INTEGER NOT NULL DEFAULT 0, unparsed INTEGER NOT NULL DEFAULT 0,
-  samples TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'ok', last_error TEXT NOT NULL DEFAULT '');
+  samples TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'ok', last_error TEXT NOT NULL DEFAULT '', cursor TEXT, head TEXT);
 CREATE TABLE IF NOT EXISTS blocks (
   id TEXT PRIMARY KEY, source TEXT NOT NULL, owner TEXT NOT NULL, scope TEXT NOT NULL, backend TEXT NOT NULL, target TEXT NOT NULL,
   reason TEXT NOT NULL DEFAULT '', ttl INTEGER, created_at REAL NOT NULL, expires_at REAL,
@@ -66,6 +66,8 @@ DEFAULT_SETTINGS = {
     "trusted_proxies": [],
     "protected_paths": ["/.well-known/acme-challenge/"],
     "capabilities": {},
+    "custom_sources": [],
+    "drift": [],
 }
 GENESIS = "0" * 64
 
@@ -116,6 +118,10 @@ class Store:
 
     def _worker(self) -> None:
         self._main = self._connect(self.dir / "ella.db", MAIN_DDL)
+        have = {r["name"] for r in self._main.execute("PRAGMA table_info(sources)")}
+        for column in ("cursor", "head"):  # databases made by stage 1
+            if column not in have:
+                self._main.execute(f"ALTER TABLE sources ADD COLUMN {column} TEXT")
         for k, v in DEFAULT_SETTINGS.items():
             self._main.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (k, json.dumps(v)))
         while True:

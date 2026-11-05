@@ -342,8 +342,11 @@ def _check_port80(app_id: str, switch: bool):
     if not other:
         return
     if not switch:
-        raise ConflictError(
-            f"{CATALOG[other]['name']} is running on port 80. Stop it and switch to {CATALOG[app_id]['name']}?", other)
+        msg = f"{CATALOG[other]['name']} is running on port 80. Stop it and switch to {CATALOG[app_id]['name']}?"
+        if other == "apache":
+            msg += (f"\n\nThe websites in this panel run on Apache, and {CATALOG[app_id]['name']} won't serve them, or the WAF Firewall."
+                    " They stay safe, and come back when you switch to Apache again.")
+        raise ConflictError(msg, other)
     svc = CATALOG[other]["service"]
     subprocess.run(["systemctl", "disable", "--now", svc], capture_output=True, text=True, timeout=60)
 

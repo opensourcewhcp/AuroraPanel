@@ -17,7 +17,11 @@ import time
 from pathlib import Path
 
 BASE_PATH = "/usr/sbin:/usr/bin:/sbin:/bin"  # never the Fedora compatibility folder
-PROGRAMS = {"nft", "conntrack", "ss", "systemctl", "httpd", "apache2ctl", "systemd-run"}
+PROGRAMS = {"nft", "conntrack", "ss", "systemctl", "httpd", "apache2ctl", "systemd-run", "journalctl", "fail2ban-client", "ufw"}
+JOURNALS = {"sshd": ["-t", "sshd", "-t", "sshd-session"], "postfix": ["-u", "postfix", "-u", "postfix@-"], "dovecot": ["-u", "dovecot"],
+            "cron": ["-u", "crond", "-u", "cron"], "firewall": ["-k", "--grep", "aurora-block: "]}
+CURSOR = re.compile(r"^[A-Za-z0-9=;_-]{1,256}$")
+JAIL_NAME = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 UNITS = {"httpd", "apache2", "nginx", "fail2ban", "aurorapanel"}
 GUARD_SETS = {"ban4", "ban6", "f2b4", "f2b6", "trust4", "trust6"}
 TABLE = ("inet", "aurora_ella")
@@ -78,7 +82,7 @@ class EllaSystemAdapter:
 
     # ------------------------------------------------------------- the one entry point
     def call(self, op: str, args: dict | None = None, operation_id: str = "") -> dict:
-        fn = getattr(self, f"op_{op}", None) if re.fullmatch(r"[a-z_]+", op or "") else None
+        fn = getattr(self, f"op_{op}", None) if re.fullmatch(r"[a-z0-9_]+", op or "") else None
         if fn is None:
             raise AdapterError(f"Unknown operation: {op!r}")
         return fn(operation_id=operation_id, **(args or {}))
@@ -188,6 +192,89 @@ class EllaSystemAdapter:
             timer = self._exec("bypass", operation_id, ["systemd-run", "--quiet", "--collect", f"--on-active={minutes}m", nft, "delete", "element",
                                                         "inet", "aurora_guard", f"trust{n.version}", "{ " + el + " }"])
         return {"ok": r["ok"], "guard": guard["ok"], "guard_timer": bool(timer and timer["ok"]), "error": r["stderr"][-400:]}
+
+    def op_guard_del(self, name: str, target: str, operation_id: str = "") -> dict:
+        """Take an entry nobody has a record of out of a guard set (the operator chose "remove" on a drift)."""
+        if name not in ("ban4", "ban6", "f2b4", "f2b6"):
+            raise AdapterError(f"Unknown guard set: {name!r}")
+        r = self._exec("guard_del", operation_id, ["nft", "delete", "element", "inet", "aurora_guard", name, "{ " + _elem(net(target)) + " }"])
+        return {"ok": r["ok"], "error": r["stderr"][-400:]}
+
+    # ------------------------------------------------------------- journald
+    def op_journal_read(self, journal: str, cursor: str | None = None, operation_id: str = "") -> dict:
+        """Records after the cursor. With no cursor, only the newest one: a new source starts at the end."""
+        if journal not in JOURNALS:
+            raise AdapterError(f"Unknown journal: {journal!r}")
+        if cursor is not None and not CURSOR.match(cursor):
+            raise AdapterError("Bad journal cursor")
+        where = ["--after-cursor", cursor] if cursor else ["-n", "1"]
+        r = self._exec("journal_read", operation_id, ["journalctl", "-o", "json", "--no-pager", "-q", *JOURNALS[journal], *where], timeout=30)
+        if r.get("missing"):
+            return {"ok": False, "missing": True, "records": [], "error": r["stderr"]}
+        records = []
+        for line in r["stdout"].splitlines():  # a cut-off last line fails to parse and is simply read again next time
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            msg = d.get("MESSAGE")
+            if isinstance(msg, list):
+                msg = bytes(x & 255 for x in msg if isinstance(x, int)).decode("utf-8", "replace")
+            records.append({"cursor": d.get("__CURSOR"), "ts": int(d.get("__REALTIME_TIMESTAMP") or 0) / 1e6, "message": msg if isinstance(msg, str) else "", "priority": d.get("PRIORITY")})
+        return {"ok": r["ok"] or not r["stderr"], "records": records, "error": r["stderr"][-300:]}
+
+    # ------------------------------------------------------------- fail2ban
+    def op_f2b_status(self, operation_id: str = "") -> dict:
+        r = self._exec("f2b_status", operation_id, ["fail2ban-client", "status"], timeout=15)
+        if r.get("missing"):
+            return {"ok": False, "missing": True, "jails": [], "error": r["stderr"]}
+        m = re.search(r"Jail list:\s*(.*)", r["stdout"])
+        return {"ok": r["ok"], "jails": [x.strip() for x in (m.group(1).split(",") if m else []) if x.strip()], "error": (r["stderr"] or r["stdout"])[-300:]}
+
+    def op_f2b_banned(self, operation_id: str = "") -> dict:
+        from .registry import parse_banned
+        r = self._exec("f2b_banned", operation_id, ["fail2ban-client", "banned"], timeout=15)
+        return {"ok": r["ok"], "jails": parse_banned(r["stdout"]) if r["ok"] else {}, "error": r["stderr"][-300:]}
+
+    def op_f2b_jail(self, jail: str, operation_id: str = "") -> dict:
+        if not JAIL_NAME.match(jail or ""):
+            raise AdapterError(f"Bad jail name: {jail!r}")
+        st = self._exec("f2b_jail", operation_id, ["fail2ban-client", "status", jail], timeout=15)
+        num = lambda rx: int((re.search(rx, st["stdout"]) or [0, 0])[1])  # noqa: E731
+        ips = re.search(r"Banned IP list:\s*(.*)", st["stdout"])
+        journal = re.search(r"Journal matches:\s*(.*)", st["stdout"])
+        out = {"ok": st["ok"], "failed_now": num(r"Currently failed:\s*(\d+)"), "failed_total": num(r"Total failed:\s*(\d+)"), "banned_total": num(r"Total banned:\s*(\d+)"),
+               "banned": ips.group(1).split() if ips else [], "journal": journal.group(1).strip() if journal else None}
+        for key in ("bantime", "findtime", "maxretry"):
+            g = self._exec("f2b_jail", operation_id, ["fail2ban-client", "get", jail, key], timeout=15)
+            out[key] = int(g["stdout"].strip()) if g["ok"] and g["stdout"].strip().lstrip("-").isdigit() else None
+        logs = self._exec("f2b_jail", operation_id, ["fail2ban-client", "get", jail, "logpath"], timeout=15)
+        out["logpath"] = re.findall(r"(/\S+)", logs["stdout"]) if logs["ok"] else []
+        acts = self._exec("f2b_jail", operation_id, ["fail2ban-client", "get", jail, "actions"], timeout=15)
+        out["actions"] = re.findall(r"[\w.-]+", acts["stdout"].split("\n", 1)[-1]) if acts["ok"] else []
+        return out
+
+    def _f2b_change(self, op: str, verb: str, jail: str, ip: str, operation_id: str) -> dict:
+        if not JAIL_NAME.match(jail or ""):
+            raise AdapterError(f"Bad jail name: {jail!r}")
+        addr = net(ip)
+        if addr.num_addresses != 1:
+            raise AdapterError("fail2ban takes single addresses")
+        r = self._exec(op, operation_id, ["fail2ban-client", "set", jail, verb, str(addr.network_address)], timeout=20)
+        return {"ok": r["ok"], "error": (r["stderr"] or r["stdout"])[-300:]}
+
+    def op_f2b_ban(self, jail: str, ip: str, operation_id: str = "") -> dict:
+        return self._f2b_change("f2b_ban", "banip", jail, ip, operation_id)
+
+    def op_f2b_unban(self, jail: str, ip: str, operation_id: str = "") -> dict:
+        return self._f2b_change("f2b_unban", "unbanip", jail, ip, operation_id)
+
+    # ------------------------------------------------------------- ufw, read-only
+    def op_ufw_status(self, operation_id: str = "") -> dict:
+        r = self._exec("ufw_status", operation_id, ["ufw", "status", "numbered"], timeout=15)
+        if r.get("missing"):
+            return {"ok": True, "installed": False, "active": False, "output": ""}
+        return {"ok": r["ok"], "installed": True, "active": "Status: active" in r["stdout"], "output": r["stdout"], "error": r["stderr"][-200:]}
 
     # ------------------------------------------------------------- cutting live connections
     def op_conntrack_kill(self, target: str, operation_id: str = "") -> dict:

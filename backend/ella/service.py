@@ -12,11 +12,13 @@ from . import leaks
 from .adapter import BASE_PATH, EllaSystemAdapter
 from .blocks import Engine
 from .collector import Collector
+from .registry import Registry
 from .configs import ConfigManager
 from .db import Store, ella_dir
 
 COLLECT_SECONDS = 0.4  # how often logs are read; the batch of each pass is one transaction
 ENFORCE_SECONDS = 5
+REGISTRY_SECONDS = 30  # how often every ban list is compared with the firewall
 _lock = threading.Lock()
 _parts: dict = {}
 
@@ -26,7 +28,8 @@ def parts() -> dict:
         if not _parts:
             store = Store(ella_dir())
             adapter = EllaSystemAdapter(store.dir / "adapter.log")
-            _parts.update(store=store, adapter=adapter, engine=Engine(store, adapter), collector=Collector(store),
+            engine = Engine(store, adapter)
+            _parts.update(store=store, adapter=adapter, engine=engine, registry=Registry(engine), collector=Collector(store, adapter=adapter, system=True),
                           configs=ConfigManager(adapter, store.dir / "snapshots", audit=store.audit,
                                                 on_critical=lambda title, detail: problems.record(title, RuntimeError(detail), hint="See WAF Ella's audit log.")))
         return _parts
@@ -41,7 +44,7 @@ def configure(**overrides) -> None:
 
 def _loop() -> None:
     p = parts()
-    next_enforce = 0.0
+    next_enforce = next_registry = 0.0
     while True:
         try:
             p["collector"].tick()
@@ -60,6 +63,12 @@ def _loop() -> None:
                         problems.record("WAF Ella stored secrets", RuntimeError(f"{found['total']} possible secrets in stored events"), hint="See Sources in WAF Ella for where. The values aren't shown.")
             except Exception as exc:  # noqa: BLE001
                 problems.record("WAF Ella leak check", exc, hint="Stored events weren't checked for secrets today.")
+        if time.time() >= next_registry:
+            next_registry = time.time() + REGISTRY_SECONDS
+            try:
+                p["registry"].sync()
+            except Exception as exc:  # noqa: BLE001
+                problems.record("WAF Ella ban list", exc, hint="The combined ban list and its checks aren't being updated.")
         time.sleep(COLLECT_SECONDS)
 
 

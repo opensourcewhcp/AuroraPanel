@@ -1,4 +1,4 @@
-/* WAF Ella, stage 1: Live Events, Blocks and Sources. Loaded before app.js.
+/* WAF Ella: Live Events, Blocks, Fail2Ban and Sources. Loaded before app.js.
    Everything in an event came from a stranger's request or a log file: it only ever reaches the page
    through el()'s text option (textContent), never as HTML. */
 window.AuroraElla = (ui) => {
@@ -118,32 +118,98 @@ window.AuroraElla = (ui) => {
 
   function viewBlocks(body) {
     const box = el("div");
+    const driftBox = el("div");
+    const READ_ONLY = ["ufw", "firewalld"];
+    const ACTION_LABEL = { accept: "Accept into the list", remove: "Remove from the firewall", restore: "Put back" };
+    async function drawDrift() {
+      try {
+        const { drift, checked } = await API.ellaDrift();
+        driftBox.replaceChildren(el("h3", { text: "Differences from the firewall" }),
+          el("p", { class: "muted", text: checked ? `Compared ${stamp(checked)}. Updates every 30 seconds.` : "Not compared yet." }),
+          drift.length ? el("div", { class: "table-wrap mx-table-wrap" }, el("table", { class: "mx-table" }, [
+            el("thead", {}, el("tr", {}, ["Address", "List", "Kind", "What's wrong", ""].map((c) => el("th", { text: c })))),
+            el("tbody", {}, drift.map((d) => el("tr", {}, [el("td", { text: show(d.target, 64) }), el("td", { text: show(d.backend) }), el("td", {}, pill(show(d.kind), "warn")), el("td", { text: show(d.detail) }),
+              el("td", {}, d.actions.map((a) => btn(ACTION_LABEL[a] || a, async () => {
+                try { await API.ellaDriftResolve(d.backend, d.target, a); toast("Done", "good"); } catch (e) { toast(e.message, "bad"); }
+                load();
+              }, "btn-sm btn-ghost"))),
+            ]))),
+          ])) : checked ? el("p", { class: "muted", text: "None: every list agrees with the firewall." }) : "");
+      } catch (e) {
+        driftBox.replaceChildren(el("p", { class: "dm-note warn", text: `Couldn't compare with the firewall: ${e.message}` }));
+      }
+    }
     const load = async () => {
       box.replaceChildren(el("div", { class: "loading", text: "Loading…" }));
       try {
         const { blocks } = await API.ellaBlocks();
         box.replaceChildren(blocks.length ? el("div", { class: "table-wrap mx-table-wrap" }, el("table", { class: "mx-table" }, [
-          el("thead", {}, el("tr", {}, ["Address", "Scope", "Backend", "State", "Expires", "Checked", "Reason", "By", ""].map((c) => el("th", { text: c })))),
+          el("thead", {}, el("tr", {}, ["Address", "Source", "Scope", "Backend", "State", "Expires", "Checked", "Reason", "By", ""].map((c) => el("th", { text: c })))),
           el("tbody", {}, blocks.map((b) => el("tr", {}, [
-            el("td", { text: show(b.target, 64) }), el("td", { text: show(b.scope) }), el("td", { text: show(b.backend) }),
-            el("td", {}, [pill(show(b.op_state), STATE_PILL[b.op_state] || "dim"), b.op_error ? el("div", { class: "muted", text: show(b.op_error) }) : ""]),
+            el("td", { text: show(b.target, 64) }), el("td", { text: show(b.source, 64) }), el("td", { text: show(b.scope) }), el("td", { text: show(b.backend) }),
+            el("td", {}, [pill(show(b.op_state || b.actual_state), STATE_PILL[b.op_state || b.actual_state] || "dim"), b.op_error ? el("div", { class: "muted", text: show(b.op_error) }) : ""]),
             el("td", {}, b.expires_at ? when(b.expires_at) : el("span", { text: "no expiry" })), el("td", {}, when(b.last_verified_at)),
             el("td", { text: show(b.reason) }), el("td", { text: show(b.owner) }),
-            el("td", {}, btn("Unban", async () => {
+            el("td", {}, READ_ONLY.includes(b.source) ? el("span", { class: "muted", text: "read-only" }) : btn("Unban", async () => {
               try {
                 const op = await API.ellaUnban(b.id);
-                toast(op.state === "applied" ? "Unbanned: confirmed gone from WAF Ella's set. Bans from other sources stay." : `Not confirmed yet: ${op.error || op.state}`, op.state === "applied" ? "good" : "warn");
+                toast(op.state === "applied" ? `Unbanned from ${show(b.source, 40)} only, and confirmed. Other sources' bans on this address stay.` : `Not confirmed yet: ${op.error || op.state}`, op.state === "applied" ? "good" : "warn");
               } catch (e) { toast(e.message, "bad"); }
               load();
             }, "btn-sm btn-ghost")),
           ]))),
-        ])) : el("p", { class: "empty", text: "WAF Ella has no active bans. Fail2ban and IP Blocker bans are listed on their own pages for now." }));
+        ])) : el("p", { class: "empty", text: "No active bans from WAF Ella, fail2ban, the IP Blocker, ufw or firewalld." }));
+        await drawDrift();
       } catch (e) {
         box.replaceChildren(el("p", { class: "dm-note warn", text: `Couldn't load bans: ${e.message}` }));
       }
     };
-    body.append(el("div", { class: "toolbar" }, [btn("Ban an address", () => banDialog("", load), "btn-primary")]), box);
+    body.append(el("div", { class: "toolbar" }, [btn("Ban an address", () => banDialog("", load), "btn-primary"),
+      btn("Compare now", async () => { try { await API.ellaDriftCheck(); } catch (e) { toast(e.message, "bad"); } load(); }, "btn-ghost")]), box, driftBox);
     load();
+  }
+
+  async function viewFail2ban(body) {
+    let d;
+    try { d = await API.ellaF2b(); } catch (e) {
+      body.replaceChildren(el("p", { class: "dm-note warn", text: `Couldn't read fail2ban: ${e.message}` }));
+      return;
+    }
+    const reload = () => { body.replaceChildren(); viewFail2ban(body); };
+    if (d.state === "not_installed") {
+      body.append(el("p", { class: "dm-note warn", text: "Fail2ban isn't installed. Nothing is banning repeat login failures. No data here doesn't mean no attacks." }));
+      return;
+    }
+    if (d.state === "stopped") {
+      body.append(el("p", { class: "dm-note warn", text: `Fail2ban isn't running: ${show(d.error)}. Nothing is banning repeat login failures.` }));
+      return;
+    }
+    if (d.state === "unconfigured") {
+      body.append(el("p", { class: "dm-note warn", text: "Unconfigured (0 active jails). Fail2ban is running, but it isn't watching anything." }),
+        el("div", { class: "toolbar" }, [btn("Set up the panel's default jails", async () => {
+          try { await API.ellaF2bInit(); toast("Jails are on", "good"); } catch (e) { toast(e.message, "bad"); }
+          reload();
+        }, "btn-primary")]));
+    } else {
+      body.append(el("div", { class: "table-wrap mx-table-wrap" }, el("table", { class: "mx-table" }, [
+        el("thead", {}, el("tr", {}, ["Jail", "Banned now", "Failing now", "Total bans", "Ban time", "Window", "Max tries", "Reads", "Ban goes to", ""].map((c) => el("th", { text: c })))),
+        el("tbody", {}, d.jails.map((j) => el("tr", {}, [el("td", { text: show(j.name) }), el("td", { text: show((j.banned || []).join(", ") || "none", 200) }), el("td", { text: String(j.failed_now) }), el("td", { text: String(j.banned_total) }),
+          el("td", { text: j.bantime === null ? "not available" : `${j.bantime}s` }), el("td", { text: j.findtime === null ? "not available" : `${j.findtime}s` }), el("td", { text: show(j.maxretry) }),
+          el("td", { text: show(j.journal || (j.logpath || []).join(", "), 120) }), el("td", { text: j.uses_panel_sets ? "the panel's ban sets" : show((j.actions || []).join(", ")) }),
+          el("td", {}, btn("Ban an address", () => {
+            const ip = el("input", { type: "text", placeholder: "IP address" });
+            openModal(`Ban in jail ${show(j.name)}`, el("div", {}, [el("p", { class: "muted", text: `Uses this jail's ban time. For a ban with its own length, use Blocks.` }), field("Address", ip)]),
+              [btn("Cancel", closeModal, "btn-ghost"), btn("Ban address", async () => {
+                try { await API.ellaF2bBan(j.name, ip.value.trim()); closeModal(); toast("Banned", "good"); reload(); } catch (e) { toast(e.message, "bad"); }
+              }, "btn-danger")]);
+          }, "btn-sm btn-ghost")),
+        ]))),
+      ])));
+    }
+    body.append(el("h3", { text: "History" }), d.history.length ? el("div", { class: "table-wrap mx-table-wrap" }, el("table", { class: "mx-table" }, [
+      el("thead", {}, el("tr", {}, ["Time", "What", "Address", "Jail"].map((c) => el("th", { text: c })))),
+      el("tbody", {}, d.history.map((e) => el("tr", {}, [el("td", {}, when(e.ts_event)), el("td", { text: show(e.action) }), el("td", { text: show(e.client_ip, 64) }), el("td", { text: show(e.rule_id) })]))),
+    ])) : el("p", { class: "muted", text: "Nothing recorded since WAF Ella started reading fail2ban's log." }));
   }
 
   async function leakNote(body) {
@@ -169,12 +235,12 @@ window.AuroraElla = (ui) => {
       }
       const now = Date.now() / 1000;
       body.append(el("div", { class: "table-wrap mx-table-wrap" }, el("table", { class: "mx-table" }, [
-        el("thead", {}, el("tr", {}, ["Log", "Format", "State", "Last event", "Lines read", "Unreadable lines", "Problem"].map((c) => el("th", { text: c })))),
+        el("thead", {}, el("tr", {}, ["Log", "Format", "Fields", "State", "Last event", "Behind", "Lines read", "Unreadable lines", "Problem"].map((c) => el("th", { text: c })))),
         el("tbody", {}, sources.map((s) => {
-          const stale = !s.last_read_ts || now - s.last_read_ts > STALE_SECONDS;
-          const state = stale ? "not being read" : s.status;
-          return el("tr", {}, [el("td", { text: show(s.path) }), el("td", { text: show(s.kind) }), el("td", {}, pill(show(state), state === "ok" ? "good" : "bad")),
-            el("td", {}, when(s.last_event_ts)), el("td", { text: String(s.lines) }), el("td", { text: String(s.unparsed) }), el("td", { text: s.last_error ? show(s.last_error) : "" })]);
+          const stale = s.status !== "not_found" && (!s.last_read_ts || now - s.last_read_ts > STALE_SECONDS);
+          const state = stale ? "not being read" : s.status === "not_found" ? "not on this server" : s.status;
+          return el("tr", {}, [el("td", { text: show(s.path) }), el("td", { text: show(s.format || s.kind) }), el("td", { text: show(s.fields) }), el("td", {}, pill(show(state), state === "ok" ? "good" : s.status === "not_found" ? "dim" : "bad")),
+            el("td", {}, when(s.last_event_ts)), el("td", { text: s.lag_bytes === null || s.lag_bytes === undefined ? "" : `${s.lag_bytes} bytes` }), el("td", { text: String(s.lines) }), el("td", { text: String(s.unparsed) }), el("td", { text: s.last_error ? show(s.last_error) : "" })]);
         })),
       ])));
     } catch (e) {
@@ -184,7 +250,7 @@ window.AuroraElla = (ui) => {
 
   function viewElla(root) {
     const body = el("div");
-    const tabs = [["Live Events", (b) => viewEvents(b, () => open(1))], ["Blocks", viewBlocks], ["Sources", viewSources]];
+    const tabs = [["Live Events", (b) => viewEvents(b, () => open(1))], ["Blocks", viewBlocks], ["Fail2Ban", viewFail2ban], ["Sources", viewSources]];
     const bar = el("div", { class: "toolbar" });
     function open(i) {
       body.replaceChildren();
@@ -192,7 +258,7 @@ window.AuroraElla = (ui) => {
       tabs[i][1](body);
     }
     root.append(el("div", { class: "em-head" }, [el("div", { class: "em-head-txt" }, [el("h2", {}, [icon("shield", 20), " WAF Ella"]),
-      el("p", { class: "muted", text: "Security events from your logs, and bans confirmed in the firewall. It runs alongside WAF Firewall, Fail2ban and IP Blocker, which keep working as before." })])]), bar, body);
+      el("p", { class: "muted", text: "Security events from your logs, and bans confirmed in the firewall. It works alongside WAF Firewall, Fail2ban and IP Blocker, which keep working as before." })])]), bar, body);
     open(0);
   }
 

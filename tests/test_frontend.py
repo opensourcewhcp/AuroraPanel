@@ -207,6 +207,16 @@ def test_wordpress_toolkit_can_uninstall_a_site():
     assert "Also delete its database and database user" in ops
 
 
+def test_nginx_page_is_wired_and_never_builds_html():
+    js = (FRONT / "js" / "nginx.js").read_text(encoding="utf-8")
+    app_js = (FRONT / "js" / "app.js").read_text(encoding="utf-8")
+    html = (FRONT / "index.html").read_text(encoding="utf-8")
+    assert html.index("/js/nginx.js") < html.index("/js/app.js")
+    assert '{ label: "Nginx Websites", icon: "globe", view: "nginx" }' in app_js and 'nginx: "Nginx Websites"' in app_js
+    for unsafe in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "html:"):
+        assert unsafe not in js, unsafe
+
+
 def test_ella_page_is_wired_and_never_builds_html_from_events():
     ella_js = (FRONT / "js" / "ella.js").read_text(encoding="utf-8")
     app_js = (FRONT / "js" / "app.js").read_text(encoding="utf-8")

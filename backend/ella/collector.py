@@ -18,8 +18,10 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
-MAX_LINE = {"modsec_audit": 512_000, "apache_access": 16_000}
+MAX_LINE = {"modsec_audit": 512_000}
+DEFAULT_MAX_LINE = 16_000
 READ_CHUNK = 4_000_000
+JOURNAL_SECONDS = 2
 DRAIN_SECONDS = 60  # Apache children keep writing to a rotated file until a graceful reload reaches them
 HEADER_ALLOW = {"host", "user-agent", "referer", "origin", "content-type", "x-forwarded-for"}
 SECRET_NAME = re.compile(r"pass(word|wd)?|token|secret|api[_-]?key|cvv|card|authorization|cookie", re.I)
@@ -182,8 +184,257 @@ class ApacheAccess:
             "confidence": "n/a", "action": "logged", "tags": "[]", "raw_ref": f"{ctx['path']}@{ctx['inode']}:{ctx['offset']}", "evidence": []}, self.wanted)
 
 
-PARSERS = {"modsec_audit": ModsecAudit(), "apache_access": ApacheAccess()}
-_ROTATED = re.compile(r"(\.\d+|-\d{8}|\.gz|\.xz|\.old)$")
+class NginxAccess(ApacheAccess):
+    kind = "nginx_access"
+
+
+# ----------------------------------------------------------------------------- error logs and the like
+def _message_event(ts, ip, severity, action, msg, ctx, wanted, rule=None, tags=(), account=None, domain=None) -> dict:
+    """An event whose main content is one line of text. The text is untrusted and goes through masking."""
+    return _finish({"ts_event": ts, "domain": domain or ctx.get("domain"), "peer_ip": clean(ip, 64), "client_ip": clean(ip, 64), "client_ip_source": "peer" if ip else None, "query_keys": "[]",
+                    "headers": "{}", "rule_id": clean(rule, 64), "severity": severity, "confidence": "n/a", "action": action, "tags": json.dumps(list(tags)), "account": clean(account, 64),
+                    "raw_ref": ctx.get("ref") or f"{ctx['path']}@{ctx['inode']}:{ctx['offset']}", "evidence": [{"msg": mask(msg, 512)}] if msg else []}, wanted)
+
+
+_APACHE_ERROR = re.compile(r"^\[(?P<t>[^\]]+)\] \[(?:[^:\]]*:)?(?P<lvl>\w+)\](?: \[pid [^\]]*\])?(?: \([^)]*\)[^:]*:)?(?: \[client (?P<ip>[^\]]+)\])?\s*(?P<msg>.*)$")
+_LEVELS = {"emerg": "CRITICAL", "alert": "CRITICAL", "crit": "CRITICAL", "error": "ERROR", "warn": "WARNING", "warning": "WARNING", "notice": "NOTICE", "info": "NOTICE", "debug": "NOTICE"}
+
+
+class ApacheError:
+    kind = "apache_error"
+    wanted = ("peer_ip", "client_ip", "severity")
+    continuation = re.compile(rb"^\s|^PHP Stack trace|^Stack trace|^#\d+ ")
+
+    def parse(self, line: bytes, ctx: dict) -> dict | None:
+        m = _APACHE_ERROR.match(line.decode("utf-8", "replace"))
+        if not m:
+            # Apache's startup notes come before logging is set up: no timestamp, and nothing about a visitor.
+            return {"skip": True} if re.match(rb"AH\d+: ", line) else None
+        try:
+            ts = datetime.strptime(re.sub(r"\.\d+", "", m.group("t")), "%a %b %d %H:%M:%S %Y").timestamp()
+        except ValueError:
+            return None
+        ip = m.group("ip")
+        if ip:
+            ip = ip.rsplit(":", 1)[0].strip("[]")
+        return _message_event(ts, ip, _LEVELS.get(m.group("lvl").lower(), "NOTICE"), "logged", m.group("msg"), ctx, self.wanted)
+
+
+_NGINX_ERROR = re.compile(r"^(\d{4}/\d\d/\d\d \d\d:\d\d:\d\d) \[(\w+)\] [^:]*: (.*?)(?:, client: ([^,]+))?(?:, server: ([^,]*))?(?:, request: .*)?$")
+
+
+class NginxError:
+    kind = "nginx_error"
+    wanted = ("peer_ip", "client_ip", "severity")
+
+    def parse(self, line: bytes, ctx: dict) -> dict | None:
+        m = _NGINX_ERROR.match(line.decode("utf-8", "replace"))
+        if not m:
+            return None
+        ts = time.mktime(time.strptime(m.group(1), "%Y/%m/%d %H:%M:%S"))
+        return _message_event(ts, m.group(4), _LEVELS.get(m.group(2).lower(), "NOTICE"), "logged", m.group(3), ctx, self.wanted, domain=clean(m.group(5), 200))
+
+
+_F2B = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),\d+ fail2ban\.\S+\s+\[\d+\]: (\w+)\s+(?:\[([\w.-]+)\] )?(.*)$")
+_F2B_WHAT = re.compile(r"^(Found|Ban|Unban|Restore Ban) (\S+)")
+
+
+class Fail2banLog:
+    kind = "fail2ban_log"
+    wanted = ("client_ip", "rule_id")
+
+    def parse(self, line: bytes, ctx: dict) -> dict | None:
+        m = _F2B.match(line.decode("utf-8", "replace"))
+        if not m:
+            return None
+        ts = time.mktime(time.strptime(m.group(1), "%Y-%m-%d %H:%M:%S"))
+        level, jail, rest = m.group(2), m.group(3), m.group(4)
+        what = _F2B_WHAT.match(rest)
+        if what:
+            action = {"Found": "detected", "Ban": "ban", "Restore Ban": "ban", "Unban": "unban"}[what.group(1)]
+            return _message_event(ts, what.group(2), "WARNING" if action == "ban" else "NOTICE", action, rest, ctx, self.wanted, rule=jail)
+        if level in ("ERROR", "CRITICAL"):
+            return _message_event(ts, None, "ERROR", "error", rest, ctx, ("rule_id",), rule=jail)
+        return {"skip": True}
+
+
+class PanelAudit:
+    """The panel's own log of logins and changes: JSON lines from audit.py."""
+    kind = "panel_audit"
+    wanted = ("client_ip", "account", "url", "status")
+
+    def parse(self, line: bytes, ctx: dict) -> dict | None:
+        try:
+            d = json.loads(line)
+            ts, what = float(d["ts"]), str(d["action"])
+        except (ValueError, KeyError, TypeError):
+            return None
+        failed = what == "login failed"
+        e = _message_event(ts, d.get("ip"), "WARNING" if failed else "NOTICE", "login_failed" if failed else "login" if what == "login" else "admin_action", what, ctx, self.wanted, account=d.get("user"))
+        e.update(method=clean(d.get("method"), 16), url=mask(d.get("path"), 512), status=d.get("status") if isinstance(d.get("status"), int) else None)
+        return _finish(e, self.wanted)
+
+
+_PHP = re.compile(r"^\[(\d\d-\w{3}-\d{4} \d\d:\d\d:\d\d)[^\]]*\] (?:PHP )?(\w+)[: ]+(.*)$")
+
+
+class PhpError:
+    kind = "php_error"
+    wanted = ("severity",)
+    continuation = re.compile(rb"^\s|^PHP Stack trace|^Stack trace|^#\d+ |^thrown in ")
+
+    def parse(self, line: bytes, ctx: dict) -> dict | None:
+        m = _PHP.match(line.decode("utf-8", "replace"))
+        if not m:
+            return None
+        ts = time.mktime(time.strptime(m.group(1), "%d-%b-%Y %H:%M:%S"))
+        lvl = m.group(2).upper()
+        sev = "CRITICAL" if lvl in ("ALERT", "EMERGENCY", "FATAL") else "ERROR" if lvl.startswith("ERR") else "WARNING" if lvl.startswith("WARN") else "NOTICE"
+        return _message_event(ts, None, sev, "logged", m.group(3), ctx, self.wanted)
+
+
+_VSFTPD = re.compile(r'^\w{3} (\w{3}\s+\d+ \d\d:\d\d:\d\d \d{4}) \[pid \d+\] (?:\[([^\]]*)\] )?(FAIL LOGIN|OK LOGIN): Client "([^"]+)"')
+
+
+class VsftpdLog:
+    kind = "vsftpd_log"
+    wanted = ("client_ip", "account")
+
+    def parse(self, line: bytes, ctx: dict) -> dict | None:
+        m = _VSFTPD.match(line.decode("utf-8", "replace"))
+        if not m:
+            return {"skip": True}  # transfers and connects: not security events on their own
+        ts = time.mktime(time.strptime(re.sub(r"\s+", " ", m.group(1)), "%b %d %H:%M:%S %Y"))
+        failed = m.group(3).startswith("FAIL")
+        return _message_event(ts, m.group(4).replace("::ffff:", ""), "WARNING" if failed else "NOTICE", "login_failed" if failed else "login", m.group(3), ctx, self.wanted, account=m.group(2))
+
+
+# ----------------------------------------------------------------------------- operator-defined formats
+CUSTOM_FIELDS = {"client_ip", "domain", "method", "url", "status", "user_agent", "rule_id", "severity", "ts"}
+_NESTED = re.compile(r"\([^()]*[+*][^()]*\)[+*{]|\(\?[^)]*\)[+*]{2}")
+
+
+def check_custom(spec: dict) -> dict:
+    """Refuse a custom source before it can run: an absolute log path, and no pattern prone to catastrophic backtracking."""
+    path = str(spec.get("path") or "")
+    if not re.fullmatch(r"/[\w./-]{1,200}", path) or ".." in path or path.startswith(("/proc", "/sys", "/dev")):
+        raise ValueError("Path must be an absolute path to a log file")
+    fmt = spec.get("format")
+    if fmt == "regex":
+        pattern = str(spec.get("pattern") or "")
+        if not pattern or len(pattern) > 500:
+            raise ValueError("A pattern is needed, 500 characters at most")
+        if _NESTED.search(pattern):
+            raise ValueError("That pattern has a repeat inside a repeat, which can hang on hostile input")
+        groups = set(re.compile(pattern).groupindex)
+        if not groups or groups - CUSTOM_FIELDS:
+            raise ValueError(f"Name groups after these fields only: {', '.join(sorted(CUSTOM_FIELDS))}")
+    elif fmt == "json":
+        fields = spec.get("fields")
+        if not isinstance(fields, dict) or not fields or set(fields) - CUSTOM_FIELDS:
+            raise ValueError(f"Map these fields only: {', '.join(sorted(CUSTOM_FIELDS))}")
+    else:
+        raise ValueError("Format must be regex or json")
+    return {"path": path, "format": fmt, "pattern": spec.get("pattern"), "fields": spec.get("fields")}
+
+
+class CustomSource:
+    wanted = ("client_ip", "url", "status")
+
+    def __init__(self, spec: dict):
+        self.spec = spec
+        self.kind = "custom"
+        self.rx = re.compile(spec["pattern"]) if spec["format"] == "regex" else None
+
+    def parse(self, line: bytes, ctx: dict) -> dict | None:
+        text = line[:4000].decode("utf-8", "replace").rstrip(chr(13))  # a log written on Windows
+        if self.rx:
+            m = self.rx.search(text)
+            if not m:
+                return None
+            got = m.groupdict()
+        else:
+            try:
+                d = json.loads(text)
+            except ValueError:
+                return None
+            if not isinstance(d, dict):
+                return None
+            got = {k: d.get(v) for k, v in self.spec["fields"].items()}
+        try:
+            ts = float(got.get("ts"))
+        except (TypeError, ValueError):
+            ts = time.time()
+        path, keys = split_url(str(got.get("url") or ""))
+        e = _message_event(ts, got.get("client_ip"), clean(got.get("severity"), 16), "logged", None, ctx, self.wanted, rule=got.get("rule_id"), domain=clean(got.get("domain"), 200))
+        st = str(got.get("status") or "")
+        e.update(method=clean(got.get("method"), 16), url=path, query_keys=json.dumps(keys), status=int(st) if st.isdigit() else None, user_agent=clean(mask(got.get("user_agent"), 512), 512))
+        return _finish(e, self.wanted)
+
+
+PARSERS = {"modsec_audit": ModsecAudit(), "apache_access": ApacheAccess(), "nginx_access": NginxAccess(), "apache_error": ApacheError(), "nginx_error": NginxError(),
+           "fail2ban_log": Fail2banLog(), "panel_audit": PanelAudit(), "php_error": PhpError(), "vsftpd_log": VsftpdLog()}
+_ROTATED = re.compile(r"(\.\d+|-\d{8}(-\d+)?|\.gz|\.xz|\.old)$")
+# Logs outside Apache's folder that this server may have. Absent ones are listed as not found, not hidden.
+SYSTEM_FILES = [("/var/log/nginx/access.log", "nginx_access"), ("/var/log/nginx/error.log", "nginx_error"), ("/var/log/fail2ban.log", "fail2ban_log"), ("/var/lib/aurora/audit.jsonl", "panel_audit"),
+                ("/var/log/php-fpm/error.log", "php_error"), ("/var/log/vsftpd.log", "vsftpd_log")]
+
+
+# ----------------------------------------------------------------------------- journald
+_IP = r"([0-9a-fA-F:.]+)"
+_SSH = [(re.compile(rf"Failed \S+ for (?:invalid user )?(\S*) from {_IP}"), "login_failed", "WARNING"), (re.compile(rf"Invalid user (\S*) from {_IP}"), "login_failed", "WARNING"),
+        (re.compile(rf"Accepted \S+ for (\S+) from {_IP}"), "login", "NOTICE")]
+
+
+def _journal_sshd(msg: str) -> tuple | None:
+    for rx, action, sev in _SSH:
+        m = rx.search(msg)
+        if m:
+            return m.group(2), m.group(1), action, sev, ()
+    return None
+
+
+def _journal_postfix(msg: str) -> tuple | None:
+    m = re.search(rf"\[{_IP}\]: SASL \S+ authentication failed", msg)
+    if m:
+        return m.group(1), None, "login_failed", "WARNING", ()
+    m = re.search(rf"NOQUEUE: reject: \S+ from [^\[]*\[{_IP}\]", msg)
+    if m:
+        return m.group(1), None, "rejected", "NOTICE", ()
+    return None
+
+
+def _journal_dovecot(msg: str) -> tuple | None:
+    if "auth failed" in msg or "Authentication failure" in msg or "authentication failure" in msg:
+        m = re.search(rf"rip={_IP}", msg)
+        u = re.search(r"user=<([^>]*)>", msg)
+        if m:
+            return m.group(1), u.group(1) if u else None, "login_failed", "WARNING", ()
+    return None
+
+
+def _journal_firewall(msg: str) -> tuple | None:
+    m = re.search(rf"\bSRC={_IP}", msg)
+    if not m:
+        return None
+    port = re.search(r"\bDPT=(\d+)", msg)
+    proto = re.search(r"\bPROTO=(\w+)", msg)
+    return m.group(1), None, "dropped", "NOTICE", tuple(x for x in (proto.group(1).lower() if proto else "", f"dpt:{port.group(1)}" if port else "") if x)
+
+
+def _journal_cron(msg: str) -> tuple | None:
+    return (None, None, "logged", "NOTICE", ()) if msg else None
+
+
+JOURNAL_SOURCES = {"sshd": _journal_sshd, "postfix": _journal_postfix, "dovecot": _journal_dovecot, "firewall": _journal_firewall, "cron": _journal_cron}
+SOURCE_INFO = {
+    "modsec_audit": ("JSON", "client, request, status, rules, matched data"), "apache_access": ("combined", "client, request, status, size, User-Agent"),
+    "nginx_access": ("combined", "client, request, status, size, User-Agent"), "apache_error": ("text", "client, severity, message"), "nginx_error": ("text", "client, domain, severity, message"),
+    "fail2ban_log": ("text", "client, jail, ban and unban"), "panel_audit": ("JSON", "client, panel user, action, status"), "php_error": ("text", "severity, message"),
+    "vsftpd_log": ("text", "client, user, login result"), "custom": ("set by you", "the fields you mapped"), "journal:sshd": ("journald", "client, user, login result"),
+    "journal:postfix": ("journald", "client, login failures, rejections"), "journal:dovecot": ("journald", "client, user, login failures"), "journal:firewall": ("journald", "client, protocol, port"),
+    "journal:cron": ("journald", "message"), "instaban": ("JSON", "client, request, matched pattern"),
+}
 
 
 def discover(log_dir: str = "/var/log/apache2") -> list[tuple[str, str]]:
@@ -192,15 +443,29 @@ def discover(log_dir: str = "/var/log/apache2") -> list[tuple[str, str]]:
     audit = Path(log_dir) / "modsec_audit.log"
     if audit.exists():
         found.append((str(audit), "modsec_audit"))
-    for p in sorted(set(glob.glob(f"{log_dir}/*access.log") + glob.glob(f"{log_dir}/*access_log"))):
-        if not _ROTATED.search(p):
-            found.append((p, "apache_access"))
+    for pattern, kind in (("*access.log", "apache_access"), ("*access_log", "apache_access"), ("*error.log", "apache_error"), ("*error_log", "apache_error")):
+        for p in sorted(glob.glob(f"{log_dir}/{pattern}")):
+            if not _ROTATED.search(p):
+                found.append((p, kind))
     return found
 
 
 def _domain_from(path: str) -> str | None:
-    m = re.match(r"(.+)-access\.log$", Path(path).name)
+    m = re.match(r"(.+)-(?:access|error)\.log$", Path(path).name)
     return m.group(1).lower() if m and "." in m.group(1) else None
+
+
+HEAD_BYTES = 256
+
+
+def _head_mark(path: str, length: int | None = None) -> str | None:
+    """A file's identity beyond its inode, which a filesystem can hand straight to a new file: "length:hash" of its start."""
+    try:
+        with open(path, "rb") as f:
+            data = f.read(HEAD_BYTES if length is None else length)
+    except OSError:
+        return None
+    return f"{len(data)}:{hashlib.sha256(data).hexdigest()}" if data else None
 
 
 def _find_rotated(path: str, inode: int) -> str | None:
@@ -215,10 +480,14 @@ def _find_rotated(path: str, inode: int) -> str | None:
 
 
 class Collector:
-    def __init__(self, store, log_dir: str = "/var/log/apache2", server: str | None = None):
+    def __init__(self, store, log_dir: str = "/var/log/apache2", server: str | None = None, adapter=None, system: bool = False, instaban_state: str = "/var/lib/aurora/instaban.json"):
         self.store = store
         self.log_dir = log_dir
         self.server = server or socket.gethostname()
+        self.adapter = adapter
+        self.system = system  # read the logs and journals outside Apache's folder too
+        self.instaban_state = Path(instaban_state)
+        self._next_journal = 0.0
         # Files are kept open: an open file can still be read after logrotate renames or even deletes it.
         self._current: dict = {}
         self._previous: dict = {}
@@ -242,7 +511,8 @@ class Collector:
 
     def _read(self, f, path: str, inode: int, offset: int, kind: str) -> tuple[list[dict], int, int, int, list[str]]:
         """Parse whole lines from offset. (events, new offset, lines, unparsed, samples)"""
-        parser, limit = PARSERS[kind], MAX_LINE[kind]
+        parser, limit = self._parser(path, kind), MAX_LINE.get(kind, DEFAULT_MAX_LINE)
+        following = getattr(parser, "continuation", None)
         events, unparsed, lines, samples = [], 0, 0, []
         f.seek(offset)
         data = f.read(READ_CHUNK)
@@ -256,6 +526,12 @@ class Collector:
             at = offset + pos
             pos += len(raw) + 1
             lines += 1
+            if following is not None and events and following.match(raw):
+                # One event over several lines (a stack trace): it belongs to the event before it.
+                tags = json.loads(events[-1].get("tags") or "[]")
+                if "multiline" not in tags:
+                    events[-1]["tags"] = json.dumps([*tags, "multiline"])
+                continue
             ctx = {"path": path, "inode": inode, "offset": at, "domain": _domain_from(path)}
             ev = parser.parse(raw[:limit], ctx) if len(raw) <= limit else None
             if ev is None:
@@ -269,13 +545,119 @@ class Collector:
             events.append(ev)
         return events, offset + end, lines, unparsed, samples
 
+    def _parser(self, path: str, kind: str):
+        if kind == "custom":
+            spec = next(s for s in (self.store.setting("custom_sources") or []) if s["path"] == path)
+            return CustomSource(spec)
+        return PARSERS[kind]
+
+    def _all_files(self) -> list[tuple[str, str]]:
+        found = discover(self.log_dir)
+        if self.system:
+            found += [(p, k) for p, k in SYSTEM_FILES if os.path.exists(p)]
+            # Each Nginx website keeps its own logs.
+            for pattern, kind in (("/var/log/nginx/*-access.log", "nginx_access"), ("/var/log/nginx/*-error.log", "nginx_error")):
+                found += [(p, kind) for p in sorted(glob.glob(pattern))]
+        found += [(s["path"], "custom") for s in (self.store.setting("custom_sources") or []) if os.path.exists(s["path"])]
+        return found
+
     def tick(self) -> int:
         """Read what is new in every source. Returns the events stored by this pass."""
         rows = {r["path"]: dict(r) for r in self.store.read(lambda c: c.execute("SELECT * FROM sources").fetchall())}
         total = 0
-        for path, kind in discover(self.log_dir):
+        for path, kind in self._all_files():
             total += self._tick_one(path, kind, rows.get(path))
+        if self.system and self.adapter and time.time() >= self._next_journal:
+            self._next_journal = time.time() + JOURNAL_SECONDS
+            for name in JOURNAL_SOURCES:
+                total += self._tick_journal(name, rows.get(f"journal:{name}"))
+            total += self._tick_instaban(rows.get("instaban"))
         return total
+
+    def _save_row(self, path: str, kind: str, cursor, status: str, error: str, events: list[dict], lines: int, unparsed: int, last) -> None:
+        now = time.time()
+
+        def save(c):
+            c.execute("INSERT INTO sources(path, kind) VALUES (?, ?) ON CONFLICT(path) DO NOTHING", (path, kind))
+            c.execute("UPDATE sources SET cursor=?, status=?, last_error=?, last_read_ts=?, last_event_ts=?, lines=lines+?, unparsed=unparsed+? WHERE path=?", (cursor, status, error, now, last, lines, unparsed, path))
+        self.store.run(save)
+
+    def _tick_journal(self, name: str, row: dict | None) -> int:
+        """Position is journald's own cursor; the cursor also makes each record's identity, so repeats are dropped."""
+        path, kind, parse = f"journal:{name}", f"journal_{name}", JOURNAL_SOURCES[name]
+        cursor = row["cursor"] if row else None
+        r = self.adapter.call("journal_read", {"journal": name, "cursor": cursor})
+        if not r["ok"] and not r["records"]:
+            self._save_row(path, kind, cursor, "unavailable", r.get("error", "")[:200], [], 0, 0, row["last_event_ts"] if row else None)
+            return 0
+        if cursor is None:  # first look: note where the journal ends, and read from there on
+            self._save_row(path, kind, r["records"][-1]["cursor"] if r["records"] else None, "ok", "", [], 0, 0, None)
+            return 0
+        events, now = [], time.time()
+        for rec in r["records"]:
+            got = parse(rec["message"])
+            if got is None:
+                continue
+            ip, account, action, severity, tags = got
+            ctx = {"path": path, "ref": f"{path}#{rec['cursor']}", "domain": None}
+            e = _message_event(rec["ts"], ip, severity, action, rec["message"], ctx, ("client_ip",), tags=tags, account=account)
+            e.update(hash=hashlib.sha256(f"{path}|{rec['cursor']}".encode()).hexdigest(), ts_received=now, server=self.server, source=kind, historical=0)
+            events.append(e)
+        added = self.store.add_events(events) if events else 0
+        last = max((e["ts_event"] for e in events), default=row["last_event_ts"] if row else None)
+        new_cursor = r["records"][-1]["cursor"] if r["records"] else cursor
+        self._save_row(path, kind, new_cursor, "ok", "", events, len(r["records"]), 0, last)
+        return added
+
+    def _tick_instaban(self, row: dict | None) -> int:
+        """InstaBan keeps its hits in its state file, so this source polls them. Its patterns stay where they are."""
+        path = "instaban"
+        if not self.instaban_state.exists():
+            if row:
+                self._save_row(path, "instaban", row["cursor"], "not_found", "", [], 0, 0, row["last_event_ts"])
+            return 0
+        try:
+            hits = json.loads(self.instaban_state.read_text(encoding="utf-8")).get("hits") or []
+        except (OSError, ValueError) as exc:
+            self._save_row(path, "instaban", row["cursor"] if row else None, "error", str(exc)[:200], [], 0, 1, row["last_event_ts"] if row else None)
+            return 0
+        since = float(row["cursor"]) if row and row["cursor"] else None
+        if since is None:  # start from now, as every other source does
+            self._save_row(path, "instaban", str(max((h.get("ts", 0) for h in hits), default=0)), "ok", "", [], 0, 0, None)
+            return 0
+        events, now = [], time.time()
+        for h in hits:
+            if float(h.get("ts", 0)) <= since:
+                continue
+            url, keys = split_url(str(h.get("request") or h.get("path") or ""))
+            ctx = {"path": path, "ref": f"instaban#{h.get('ts')}", "domain": h.get("site")}
+            e = _message_event(float(h["ts"]), h.get("ip"), "WARNING", "ban" if h.get("banned") else "detected", f"Matched: {h.get('pattern')}", ctx, ("client_ip", "url"), rule=h.get("pattern_id"), domain=clean(h.get("site"), 200))
+            e.update(url=url, query_keys=json.dumps(keys), user_agent=clean(mask(h.get("ua"), 512), 512), confidence="high", hash=hashlib.sha256(f"instaban|{json.dumps(h, sort_keys=True)}".encode()).hexdigest(),
+                     ts_received=now, server=self.server, source="instaban", historical=0)
+            events.append(e)
+        added = self.store.add_events(events) if events else 0
+        newest = max((e["ts_event"] for e in events), default=since)
+        self._save_row(path, "instaban", str(newest), "ok", "", events, len(events), 0, newest if events else (row["last_event_ts"] if row else None))
+        return added
+
+    def import_file(self, path: str, kind: str) -> dict:
+        """Read a whole log as history. Marked historical, so nothing can ever ban because of it, and repeats are dropped."""
+        if kind not in PARSERS:
+            raise ValueError("Unknown format")
+        inode, offset, stored, lines, unparsed = os.stat(path).st_ino, 0, 0, 0, 0
+        with open(path, "rb") as f:
+            while True:
+                events, new_offset, n, bad, _ = self._read(f, path, inode, offset, kind)
+                for e in events:
+                    e["historical"] = 1
+                if events:
+                    stored += self.store.add_events(events)
+                lines += n
+                unparsed += bad
+                if new_offset == offset:
+                    break
+                offset = new_offset
+        return {"lines": lines, "unparsed": unparsed, "stored": stored}
 
     def _tick_one(self, path: str, kind: str, row: dict | None) -> int:
         now = time.time()
@@ -312,6 +694,14 @@ class Collector:
                     self._previous[path] = old_handle
             elif st.st_size < s["offset"]:
                 s["offset"] = 0  # truncated in place (copytruncate)
+            elif s.get("head") and st.st_size != s["offset"]:
+                # Same inode and big enough, but does it start the same? If not, it's a new file in the old one's place.
+                seen_len = int(s["head"].split(":", 1)[0])
+                if _head_mark(path, seen_len) != s["head"]:
+                    s["offset"] = 0
+                    old = self._current.pop(path, None)
+                    if old is not None:
+                        old.close()
             if s.get("prev_inode"):
                 # After a panel restart there is no open file left: look for it under its new name.
                 old = self._handle(self._previous, path, s["prev_inode"], None if path in self._previous else _find_rotated(path, s["prev_inode"]))
@@ -330,9 +720,10 @@ class Collector:
         added = self.store.add_events(events) if events else 0
         last = max((e["ts_event"] for e in events), default=s.get("last_event_ts"))
         keep = (json.loads(s.get("samples") or "[]") + samples)[-5:]
+        head = _head_mark(path)
 
         def save(c):
-            c.execute("UPDATE sources SET inode=?, offset=?, prev_inode=?, prev_offset=?, prev_until=?, last_event_ts=?, last_read_ts=?, lines=lines+?, unparsed=unparsed+?, samples=?, status=?, last_error=? WHERE path=?",
-                      (s["inode"], s["offset"], s.get("prev_inode"), s.get("prev_offset"), s.get("prev_until"), last, now, lines, unparsed, json.dumps(keep), s["status"], s["last_error"], path))
+            c.execute("UPDATE sources SET inode=?, offset=?, prev_inode=?, prev_offset=?, prev_until=?, last_event_ts=?, last_read_ts=?, lines=lines+?, unparsed=unparsed+?, samples=?, status=?, last_error=?, head=? WHERE path=?",
+                      (s["inode"], s["offset"], s.get("prev_inode"), s.get("prev_offset"), s.get("prev_until"), last, now, lines, unparsed, json.dumps(keep), s["status"], s["last_error"], head, path))
         self.store.run(save)
         return added

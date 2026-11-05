@@ -332,7 +332,8 @@ def _unban_f2b(ip: str):
     _del_elem("f2b", n)
 
 
-def unban(target: str) -> dict:
+def unban(target: str, include_fail2ban: bool = True) -> dict:
+    """include_fail2ban=False lifts only this list's own entry (WAF Ella's combined list treats each source separately)."""
     n = _net(target)
     s = _state()
     before = len(s["bans"])
@@ -341,7 +342,7 @@ def unban(target: str) -> dict:
         _del_elem("ban", n)
     if len(s["bans"]) != before:
         _save(s)
-    if n.num_addresses == 1:
+    if include_fail2ban and n.num_addresses == 1:
         _unban_f2b(str(n.network_address))
     return {"ok": True}
 

@@ -119,6 +119,9 @@ Ubuntu or Debian server or VPS with systemd and Python 3.10+, under any user nam
 PostgreSQL, WordPress, the WAF, DNS, FTP, Docker, fail2ban, WireGuard and email work. Fedora has no Rspamd package, so
 email uses SpamAssassin for spam filtering and OpenDKIM for signing, and greylisting isn't available. Only one PHP
 version can be installed at a time.
+
+**Nginx websites**: Domains > Nginx Websites creates and runs PHP, static and reverse proxy sites on Nginx. The Domains
+page, the App Installer and the WAF Firewall work with Apache, so use Apache if you rely on them.
 A fresh server doesn't need anything else first: pages that need Apache, PHP,
 MariaDB, an FTP server and so on offer to install them in one click, with a
 progress bar.
