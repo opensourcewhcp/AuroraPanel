@@ -171,3 +171,18 @@ def test_installing_into_a_site_removes_only_the_starter_page(tmp_path, monkeypa
     dest, url, created = apps._resolve_target({"mode": "existing", "site": "a.example", "subfolder": sub}, lambda *_: None, dry=dry)
     assert (tmp_path / "index.html").exists() is kept
     assert created is False and url.startswith("http://a.example")
+
+
+def test_vpn_ping_waits_for_a_new_tunnel_and_reports_real_loss(monkeypatch):
+    from backend import vpncommon
+    outputs = ["3 packets transmitted, 1 received, +2 errors, 66.6667% packet loss", "3 packets transmitted, 3 received, 0% packet loss"]
+    monkeypatch.setattr(vpncommon.shutil, "which", lambda *a, **k: "/usr/bin/ping")
+    monkeypatch.setattr(vpncommon.time, "sleep", lambda s: None)
+    monkeypatch.setattr(vpncommon, "ns_exec", lambda argv, timeout=0: subprocess.CompletedProcess(argv, 0, outputs.pop(0), ""))
+    lines = []
+    assert vpncommon.ns_ping(lines.append, "10.9.0.1", "Tunnel") is True
+    assert lines == ["✔ Tunnel (ping 10.9.0.1, 0% loss)"]
+    monkeypatch.setattr(vpncommon, "ns_exec", lambda argv, timeout=0: subprocess.CompletedProcess(argv, 1, "3 packets transmitted, 0 received, 100% packet loss", ""))
+    assert vpncommon.ns_ping(lines.append, "1.1.1.1", "Internet") is False and lines[-1] == "✖ Internet (ping 1.1.1.1, 100% loss)"
+    monkeypatch.setattr(vpncommon, "ns_exec", lambda argv, timeout=0: subprocess.CompletedProcess(argv, 0, "3 packets transmitted, 1 received, +2 errors, 66.6667% packet loss", ""))
+    assert vpncommon.ns_ping(lines.append, "1.1.1.1", "Flaky") is False and "66.6667% loss" in lines[-1]

@@ -30,6 +30,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from . import distro
 from . import jobs, problems
 from .vpncommon import (
     STATE_DIR, VPNError, control as _control, default_route, dns_servers, enable_forwarding,
@@ -47,6 +48,8 @@ CRL = SRV_DIR / f"{NAME}-crl.pem"
 STATUS_FILE = Path(f"/run/openvpn-server/status-{NAME}.log")
 UNIT = f"openvpn-server@{NAME}"
 EASYRSA = Path("/usr/share/easy-rsa/easyrsa")
+# Whom the server drops to. Fedora's /etc/openvpn/server only lets its own "openvpn" group in, and has no "nogroup".
+RUN_USER, RUN_GROUP = ("openvpn", "openvpn") if distro.is_dnf() else ("nobody", "nogroup")
 STATE = STATE_DIR / "openvpn.json"
 PKGS = ["openvpn", "easy-rsa", "nftables", "iproute2", "iputils-ping"]
 SELFTEST_PREFIX = "aurora-selftest-"
@@ -144,7 +147,7 @@ def _save_db(db: dict):
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(db, f, indent=2)
     try:
-        os.chown(tmp, 0, grp.getgrnam("nogroup").gr_gid)
+        os.chown(tmp, 0, grp.getgrnam(RUN_GROUP).gr_gid)
     except (AttributeError, KeyError, PermissionError):
         pass
     os.chmod(tmp, 0o640)
@@ -227,8 +230,8 @@ def _render(s: dict):
     lines += [
         "keepalive 10 120",
         f"data-ciphers {CIPHERS}",
-        "user nobody",
-        "group nogroup",
+        f"user {RUN_USER}",
+        f"group {RUN_GROUP}",
         "persist-key",
         "persist-tun",
         f"status {STATUS_FILE} 10",

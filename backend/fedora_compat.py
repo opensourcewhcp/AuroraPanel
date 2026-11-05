@@ -564,6 +564,16 @@ def setup_mail():
     once("mail-selinux", lambda: label(("type", "mail_spool_t", "/var/vmail"), ("type", "cert_t", "/etc/aurora-mail/tls")))
 
 
+def setup_openvpn():
+    """easy-rsa sits one folder deeper on Fedora, and OpenVPN's login check is a script SELinux must allow it to run."""
+    real = Path("/usr/share/easy-rsa/3")
+    if not (real / "easyrsa").exists():
+        return
+    for name in ("easyrsa", "openssl-easyrsa.cnf", "x509-types"):
+        link(real.parent / name, f"3/{name}")
+    once("openvpn-selinux", lambda: booleans("openvpn_run_unconfined"))
+
+
 def setup_vsftpd():
     if Path("/etc/vsftpd/vsftpd.conf").exists():
         link("/etc/vsftpd.conf", "/etc/vsftpd/vsftpd.conf")
@@ -578,7 +588,7 @@ def setup_panel_state():
 
 
 def setup():
-    for step in (setup_panel_state, setup_apache, setup_php, setup_waf, setup_phpmyadmin, setup_mariadb, setup_postgres, setup_bind, setup_strongswan, setup_roundcube, setup_mail, setup_vsftpd):
+    for step in (setup_panel_state, setup_apache, setup_php, setup_waf, setup_phpmyadmin, setup_mariadb, setup_postgres, setup_bind, setup_strongswan, setup_openvpn, setup_roundcube, setup_mail, setup_vsftpd):
         try:
             step()
         except OSError as e:

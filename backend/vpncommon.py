@@ -11,6 +11,7 @@ import platform
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 from . import distro
@@ -307,6 +308,9 @@ def ns_exec(argv: list[str], timeout: int = 20) -> subprocess.CompletedProcess:
     return run(["ip", "netns", "exec", TEST_NS, *argv], timeout=timeout, check=False)
 
 
+PING_ATTEMPTS, PING_RETRY_SECONDS = 5, 3
+
+
 def ns_ping(log, target: str, what: str) -> bool:
     if not shutil.which("ping", path=APT_ENV["PATH"]):
         # Minimal cloud images ship without ping; without it the test can't tell anything.
@@ -315,9 +319,15 @@ def ns_ping(log, target: str, what: str) -> bool:
         if not shutil.which("ping", path=APT_ENV["PATH"]):
             log(f"✖ {what}: the ping tool isn't installed (apt install iputils-ping)")
             return False
-    r = ns_exec(["ping", "-c", "3", "-W", "2", target], timeout=15)
-    ok = r.returncode == 0
-    m = re.search(r"(\d+)% packet loss", r.stdout)
+    # A tunnel device that has just appeared can drop packets for a few seconds, so give it several chances.
+    for attempt in range(PING_ATTEMPTS):
+        if attempt:
+            time.sleep(PING_RETRY_SECONDS)
+        r = ns_exec(["ping", "-c", "3", "-W", "2", target], timeout=15)
+        ok = r.returncode == 0 and " 0% packet loss" in r.stdout
+        if ok:
+            break
+    m = re.search(r"([\d.]+)% packet loss", r.stdout)
     log(f"{'✔' if ok else '✖'} {what} (ping {target}{', ' + m.group(1) + '% loss' if m else ''})")
     return ok
 
