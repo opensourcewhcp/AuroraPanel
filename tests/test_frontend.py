@@ -207,6 +207,12 @@ def test_wordpress_toolkit_can_uninstall_a_site():
     assert "Also delete its database and database user" in ops
 
 
+def test_nginx_waf_card_says_when_nothing_is_protecting():
+    js = (FRONT / "js" / "nginx.js").read_text(encoding="utf-8")
+    assert "API.nginxWaf()" in js and "API.nginxWafInstall()" in js and "API.nginxWafMode(m)" in js
+    assert "so don't assume these sites are protected" in js and "nothing is checking requests" in js
+
+
 def test_nginx_page_is_wired_and_never_builds_html():
     js = (FRONT / "js" / "nginx.js").read_text(encoding="utf-8")
     app_js = (FRONT / "js" / "app.js").read_text(encoding="utf-8")

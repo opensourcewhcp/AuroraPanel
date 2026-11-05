@@ -323,10 +323,25 @@ def status() -> dict:
     active = _active("nginx")
     other = [p.name for p in CONF_DIR.glob("*.conf") if not p.name.startswith(PREFIX) and p != DEFAULT_CONF]
     return {"installed": True, "active": active, "version": (v.stderr or v.stdout).strip().split("/")[-1][:30], "apache_active": _active(_apache_unit()), "config": test_config(),
-            "php_socket": php_socket(), "default_site": DEFAULT_CONF.exists(), "other_default": _other_default_server(), "sites": list_sites(probe=active), "other_configs": sorted(other)}
+            "php_socket": php_socket(), "default_site": DEFAULT_CONF.exists(), "other_default": _other_default_server(), "sites": list_sites(probe=active), "other_configs": sorted(other), "proxy_blocked": proxy_blocked()}
 
 
 # ----------------------------------------------------------------------------- changing
+def proxy_blocked() -> bool:
+    """SELinux keeps web servers from connecting out unless told otherwise, and uninstalling some packages turns it back off."""
+    if not shutil.which("getsebool", path=distro.BASE_PATH) or _run(["selinuxenabled"], 10).returncode != 0:
+        return False
+    return "--> off" in _run(["getsebool", "httpd_can_network_connect"], 15).stdout
+
+
+def allow_proxy() -> dict:
+    if proxy_blocked():
+        r = _run(["setsebool", "-P", "httpd_can_network_connect=on"], 120)
+        if r.returncode != 0:
+            raise NginxError("SELinux wouldn't allow Nginx to reach the app: " + (r.stderr or r.stdout).strip()[-300:])
+    return {"ok": True, "blocked": proxy_blocked()}
+
+
 def _open_firewall(https: bool) -> None:
     from . import firewall
     firewall.open_ports("80/tcp", *(["443/tcp"] if https else []))
@@ -347,6 +362,8 @@ def create(settings: dict) -> dict:
     _ensure_docroot(s)
     _ensure_cert(s)
     ensure_default()
+    if s["mode"] == "proxy":
+        allow_proxy()
     _apply({_conf(s["server_name"]): text})
     _open_firewall(s["https"] != "none")
     return {"ok": True, "site": s, "answer": _probe(s["server_name"]) if _active("nginx") else None}
@@ -362,6 +379,8 @@ def update(name: str, settings: dict) -> dict:
     text = render(s, php_socket())
     _ensure_docroot(s)
     _ensure_cert(s)
+    if s["mode"] == "proxy":
+        allow_proxy()
     _apply({_conf(s["server_name"], enabled): text})
     _open_firewall(s["https"] != "none")
     return {"ok": True, "site": s}

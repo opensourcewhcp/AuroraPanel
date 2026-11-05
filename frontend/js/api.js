@@ -307,6 +307,10 @@ const API = (() => {
     fail2banEventsDelete: (keys) => request("POST", "/api/fail2ban/events/delete", { keys }),
     // bans & trusted addresses
     nginxStatus: () => request("GET", "/api/nginx"),
+    nginxAllowProxy: () => request("POST", "/api/nginx/allow-proxy", {}),
+    nginxWaf: () => request("GET", "/api/nginx/waf"),
+    nginxWafMode: (mode) => request("POST", "/api/nginx/waf", { mode }),
+    nginxWafInstall: () => request("POST", "/api/nginx/waf/install", {}),
     nginxSiteCreate: (body) => request("POST", "/api/nginx/sites", body),
     nginxSiteSave: (name, body) => request("PUT", `/api/nginx/sites/${encodeURIComponent(name)}`, body),
     nginxSiteEnable: (name, on) => request("POST", `/api/nginx/sites/${encodeURIComponent(name)}/enabled`, { on }),

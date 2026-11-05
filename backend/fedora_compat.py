@@ -36,7 +36,7 @@ PACKAGES = {
     "mariadb-client": ["mariadb"], "default-mysql-server": ["mariadb-server"], "mysql-server": ["mariadb-server"],
     "postgresql": ["postgresql-server", "postgresql-contrib"],
     "bind9": ["bind"], "bind9-utils": ["bind-utils"], "dnsutils": ["bind-utils"],
-    "cron": ["cronie"], "libapache2-mod-security2": ["mod_security"], "modsecurity-crs": ["mod_security_crs"],
+    "cron": ["cronie"], "libnginx-mod-http-modsecurity": ["nginx-mod-modsecurity"], "libapache2-mod-security2": ["mod_security"], "modsecurity-crs": ["mod_security_crs"],
     "testssl.sh": ["testssl"], "ufw": ["firewalld"],
     "dovecot-core": ["dovecot"], "dovecot-imapd": [], "dovecot-pop3d": [], "dovecot-lmtpd": [],
     "dovecot-sieve": ["dovecot-pigeonhole"], "dovecot-managesieved": ["dovecot-pigeonhole"],

@@ -43,6 +43,19 @@ HTTP/3 (QUIC): `ss -K` can't close UDP sessions. New datagrams are still dropped
 Bans come back after a reboot through `aurora-ella.service` (`ella-cli restore`), before the network is up. If the
 database can't be read then, the table comes up empty and the panel restores the bans when it starts.
 
+## Other web servers
+
+Nginx has its own WAF (`backend/nginxwaf.py`): ModSecurity 3 and the Core Rule Set. Events reach WAF Ella from
+`/var/log/nginx/modsec_audit.log`. It follows the WAF Firewall page's settings except for its own on/detect/off mode.
+
+With it on, SELinux logs an `execmem` refusal for nginx: its regex engine asks for executable memory, most likely for
+PCRE's JIT, and rules still work. `httpd_execmem` would allow it for every web process, so it stays off. The rules add about
+141 MB across Nginx's processes on a 4-core test VM, which matters on small boards.
+
+Caddy, Lighttpd and other HTTP servers: listen on 127.0.0.1 and add a reverse proxy site on Nginx. A server that also
+listens on a public address can be reached around the WAF. The Coraza plugin for Caddy isn't used: Fedora and Debian have no
+package for it, so it would mean building Caddy with Go or running an unsigned download in place of the packaged binary.
+
 ## Secrets check
 
 Once a day the worker looks through newly stored events for anything masking missed (JWTs, bearer tokens, long hex

@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import sqlite3
+import re
 import subprocess
 import sys
 import time
@@ -34,6 +35,20 @@ store = Store()
 adapter = EllaSystemAdapter(store.dir / "adapter.log")
 engine = Engine(store, adapter)
 registry = Registry(engine)
+
+
+STARTED = time.time()
+
+
+def new_denials() -> str:
+    """SELinux refusals since this run began, apart from execmem (see docs/waf-ella.md). Older ones aren't this run's."""
+    out = subprocess.run("ausearch --input-logs -m avc -ts recent </dev/null 2>/dev/null", shell=True, capture_output=True, text=True).stdout
+    found = []
+    for line in out.splitlines():
+        m = re.search(r"audit\((\d+\.\d+):", line)
+        if m and float(m.group(1)) >= STARTED and "denied" in line and "execmem" not in line:
+            found.append(re.sub(r"^.*avc: *denied *", "", line)[:170])
+    return "\n".join(sorted(set(found)))
 
 
 def sh(cmd: str, timeout: int = 60) -> subprocess.CompletedProcess:
@@ -249,8 +264,8 @@ def t_leak_scan_and_avc() -> None:
     from backend.ella import leaks
     r = leaks.scan(store)
     check("secrets check finds nothing in the new sources' events", r["total"] == 0, json.dumps({k: r[k] for k in ("scanned", "total", "counts")}) + " " + str(r["findings"][:3]))
-    a = sh("ausearch --input-logs -m avc -ts recent -i </dev/null 2>/dev/null | grep denied | sed -E 's/.*avc: *denied *//;s/pid=[0-9]+ //;s/ino=[0-9]+ //' | cut -c1-170 | sort | uniq -c | head")
-    check("no SELinux denials during the run", not a.stdout.strip(), a.stdout.strip())
+    a = new_denials()
+    check("no SELinux denials in this run, apart from the expected execmem", not a, a)
 
 
 TESTS = [t_three_sources_one_address, t_drift, t_read_only_ufw, t_fail2ban_page, t_sources_reach_events, t_real_history_imports_as_history, t_custom_source_and_copytruncate, t_restart_no_duplicate_journal_events, t_leak_scan_and_avc]

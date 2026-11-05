@@ -94,6 +94,45 @@ def test_audit_record_is_normalized_with_evidence_and_no_secrets():
     assert "authorization" not in json.loads(e["headers"]) and "cookie" not in json.loads(e["headers"])
 
 
+V3_LINE = json.dumps({"transaction": {
+    "client_ip": "203.0.113.5", "time_stamp": "Wed Nov  4 23:11:22 2026", "unique_id": "abc",
+    "producer": {"secrules_engine": "Enabled"},
+    "request": {"method": "GET", "uri": "/a/b?password=hunter2&q=1", "headers": {"Host": "Shop.Example:443", "User-Agent": "evil/1.0", "Authorization": "Bearer SECRET", "Cookie": "sid=SECRET"}},
+    "response": {"http_code": 403},
+    "messages": [
+        {"message": "XSS", "details": {"ruleId": "941100", "severity": "2", "data": "Matched Data: <script> found within ARGS:q: eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.abc", "match": "Matched \"Operator `Rx' with parameter `x' against variable `ARGS:q' (Value: `hunter2')"}},
+        {"message": "SQLi", "details": {"ruleId": "942100", "severity": "3", "data": "hunter2", "match": "Matched \"Operator `DetectSQLi' with parameter `' against variable `ARGS:password' (Value: `hunter2')"}},
+        {"message": "Inbound Anomaly Score Exceeded (Total Score: 10)", "details": {"ruleId": "949110", "severity": "2", "data": ""}}]}}).encode()
+
+
+def test_modsecurity_3_record_is_normalized_with_no_secrets():
+    e = collector.PARSERS["modsec3_audit"].parse(V3_LINE, {"path": "/l", "inode": 1, "offset": 0})
+    assert (e["client_ip"], e["domain"], e["url"], e["status"], e["action"], e["anomaly_score"], e["rule_id"]) == ("203.0.113.5", "shop.example", "/a/b", 403, "blocked", 10, "941100")
+    by = {r["rule_id"]: r for r in e["evidence"]}
+    assert set(by) == {"941100", "942100"} and by["941100"]["matched_var_name"] == "ARGS:q" and by["941100"]["operator"] == "Rx" and "[jwt]" in by["941100"]["matched_data"]
+    assert by["942100"]["matched_data"] == "[masked]" and by["942100"]["severity"] == "ERROR"
+    text = json.dumps(e)
+    for secret in ("hunter2", "SECRET", "eyJhbGci"):
+        assert secret not in text
+
+
+def test_modsecurity_3_finds_the_variable_in_libinjection_matches():
+    d = json.loads(V3_LINE)
+    d["transaction"]["messages"] = [{"message": "XSS", "details": {"ruleId": "941100", "severity": "2", "match": "detected XSS using libinjection.", "data": "Matched Data: XSS data found within ARGS:q: <script>"}}]
+    e = collector.PARSERS["modsec3_audit"].parse(json.dumps(d).encode(), {"path": "/l", "inode": 1, "offset": 0})
+    assert e["evidence"][0]["matched_var_name"] == "ARGS:q"
+
+
+def test_modsecurity_3_detection_only_and_junk():
+    d = json.loads(V3_LINE)
+    d["transaction"]["producer"]["secrules_engine"] = "DetectionOnly"
+    d["transaction"]["response"]["http_code"] = 200
+    assert collector.PARSERS["modsec3_audit"].parse(json.dumps(d).encode(), {"path": "/l", "inode": 1, "offset": 0})["action"] == "detected"
+    assert collector.PARSERS["modsec3_audit"].parse(b"not json", {"path": "/l", "inode": 1, "offset": 0}) is None
+    d["transaction"]["messages"] = []
+    assert collector.PARSERS["modsec3_audit"].parse(json.dumps(d).encode(), {"path": "/l", "inode": 1, "offset": 0}) == {"skip": True}
+
+
 def test_missing_fields_are_named_and_null():
     line = json.dumps({"transaction": {"time": "04/Nov/2026:18:58:38 --0500", "remote_address": "203.0.113.5"}, "request": {"request_line": "GET / HTTP/1.1", "headers": {}},
                        "audit_data": {"messages": ['Warning. x at ARGS:q. [file "f"] [id "941100"] [severity "ERROR"]']}}).encode()

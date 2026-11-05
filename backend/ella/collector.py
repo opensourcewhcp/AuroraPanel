@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
-MAX_LINE = {"modsec_audit": 512_000}
+MAX_LINE = {"modsec_audit": 512_000, "modsec3_audit": 512_000}
 DEFAULT_MAX_LINE = 16_000
 READ_CHUNK = 4_000_000
 JOURNAL_SECONDS = 2
@@ -182,6 +182,62 @@ class ApacheAccess:
             "method": clean(parts[0], 16) or None, "url": path, "query_keys": json.dumps(keys), "status": int(m.group(4)),
             "response_size": int(size) if size.isdigit() else None, "user_agent": ua, "headers": json.dumps({"referer": ref} if ref else {}),
             "confidence": "n/a", "action": "logged", "tags": "[]", "raw_ref": f"{ctx['path']}@{ctx['inode']}:{ctx['offset']}", "evidence": []}, self.wanted)
+
+
+# ----------------------------------------------------------------------------- ModSecurity 3 (Nginx) JSON audit log
+_V3_VAR = re.compile(r"against variable `([^`']*)")
+_V3_OP = re.compile(r"Operator `(\w+)'")
+_V3_SCORE = re.compile(r"Total Score: (\d+)|blocking=(\d+)")
+_V3_SEVERITY = {"0": "CRITICAL", "1": "CRITICAL", "2": "CRITICAL", "3": "ERROR", "4": "WARNING", "5": "NOTICE"}
+
+
+class Modsec3Audit:
+    """A different shape from ModSecurity 2's log, with the same fields worth keeping. The match text, which holds the
+    raw value that matched, is never stored: only the variable's name and the masked data."""
+    kind = "modsec3_audit"
+    wanted = ModsecAudit.wanted
+
+    def parse(self, line: bytes, ctx: dict) -> dict | None:
+        try:
+            tr = json.loads(line)["transaction"]
+            rq, rs = tr.get("request") or {}, tr.get("response") or {}
+            ts = datetime.strptime(re.sub(r"\s+", " ", str(tr["time_stamp"])).strip(), "%a %b %d %H:%M:%S %Y").timestamp()
+        except (ValueError, KeyError, TypeError, AttributeError):
+            return None
+        rules, score = [], None
+        for msg in tr.get("messages") or []:
+            if not isinstance(msg, dict):
+                continue
+            d = msg.get("details") or {}
+            for a, b in _V3_SCORE.findall(str(msg.get("message", "")) + " " + str(d.get("data", ""))):
+                score = max(score or 0, int(a or b))
+            rid = str(d.get("ruleId") or "")
+            if not rid or rid in SUMMARY_RULES:
+                continue
+            match = str(d.get("match") or "")
+            v = _V3_VAR.search(match)
+            o = _V3_OP.search(match)
+            # libinjection's matches don't name a variable in "match", but the rule's data does.
+            within = _M_WITHIN.search(str(d.get("data") or "")) if not v else None
+            var = clean(v.group(1), 128) if v else clean(within.group(1), 128) if within else None
+            rules.append({"rule_id": rid, "matched_var_name": var, "operator": clean(o.group(1), 64) if o else None, "severity": _V3_SEVERITY.get(str(d.get("severity"))),
+                          "msg": clean(msg.get("message"), 256), "matched_data": "[masked]" if var and SECRET_NAME.search(var) else mask(d.get("data"))})
+        if not rules:
+            return {"skip": True}
+        path, keys = split_url(str(rq.get("uri") or ""))
+        heads = {str(k).lower(): clean(mask(str(v), 512), 512) for k, v in (rq.get("headers") or {}).items() if str(k).lower() in HEADER_ALLOW}
+        if heads.get("referer"):
+            heads["referer"] = heads["referer"].split("?", 1)[0]
+        host = (heads.get("host") or "").split(":")[0].lower() or None
+        top = max(rules, key=lambda r: SEVERITY_RANK.get(r["severity"] or "", 0))
+        code = rs.get("http_code") if isinstance(rs.get("http_code"), int) else None
+        detection = "detection" in str((tr.get("producer") or {}).get("secrules_engine", "")).lower()
+        ip = clean(tr.get("client_ip"), 64)
+        return _finish({
+            "ts_event": ts, "domain": host, "peer_ip": ip, "client_ip": ip, "client_ip_source": "peer", "method": clean(rq.get("method"), 16), "url": path, "query_keys": json.dumps(keys),
+            "status": code, "user_agent": heads.get("user-agent"), "headers": json.dumps(heads), "rule_id": top["rule_id"], "severity": top["severity"], "confidence": "medium", "anomaly_score": score,
+            "action": "blocked" if code == 403 and not detection else "detected", "tags": json.dumps(sorted({r["rule_id"][:3] for r in rules})),
+            "raw_ref": f"{ctx['path']}#{clean(tr.get('unique_id'), 64)}", "evidence": rules}, self.wanted)
 
 
 class NginxAccess(ApacheAccess):
@@ -372,11 +428,11 @@ class CustomSource:
         return _finish(e, self.wanted)
 
 
-PARSERS = {"modsec_audit": ModsecAudit(), "apache_access": ApacheAccess(), "nginx_access": NginxAccess(), "apache_error": ApacheError(), "nginx_error": NginxError(),
+PARSERS = {"modsec3_audit": Modsec3Audit(), "modsec_audit": ModsecAudit(), "apache_access": ApacheAccess(), "nginx_access": NginxAccess(), "apache_error": ApacheError(), "nginx_error": NginxError(),
            "fail2ban_log": Fail2banLog(), "panel_audit": PanelAudit(), "php_error": PhpError(), "vsftpd_log": VsftpdLog()}
 _ROTATED = re.compile(r"(\.\d+|-\d{8}(-\d+)?|\.gz|\.xz|\.old)$")
 # Logs outside Apache's folder that this server may have. Absent ones are listed as not found, not hidden.
-SYSTEM_FILES = [("/var/log/nginx/access.log", "nginx_access"), ("/var/log/nginx/error.log", "nginx_error"), ("/var/log/fail2ban.log", "fail2ban_log"), ("/var/lib/aurora/audit.jsonl", "panel_audit"),
+SYSTEM_FILES = [("/var/log/nginx/modsec_audit.log", "modsec3_audit"), ("/var/log/nginx/access.log", "nginx_access"), ("/var/log/nginx/error.log", "nginx_error"), ("/var/log/fail2ban.log", "fail2ban_log"), ("/var/lib/aurora/audit.jsonl", "panel_audit"),
                 ("/var/log/php-fpm/error.log", "php_error"), ("/var/log/vsftpd.log", "vsftpd_log")]
 
 
@@ -428,7 +484,7 @@ def _journal_cron(msg: str) -> tuple | None:
 
 JOURNAL_SOURCES = {"sshd": _journal_sshd, "postfix": _journal_postfix, "dovecot": _journal_dovecot, "firewall": _journal_firewall, "cron": _journal_cron}
 SOURCE_INFO = {
-    "modsec_audit": ("JSON", "client, request, status, rules, matched data"), "apache_access": ("combined", "client, request, status, size, User-Agent"),
+    "modsec3_audit": ("JSON", "client, request, status, rules, matched data"), "modsec_audit": ("JSON", "client, request, status, rules, matched data"), "apache_access": ("combined", "client, request, status, size, User-Agent"),
     "nginx_access": ("combined", "client, request, status, size, User-Agent"), "apache_error": ("text", "client, severity, message"), "nginx_error": ("text", "client, domain, severity, message"),
     "fail2ban_log": ("text", "client, jail, ban and unban"), "panel_audit": ("JSON", "client, panel user, action, status"), "php_error": ("text", "severity, message"),
     "vsftpd_log": ("text", "client, user, login result"), "custom": ("set by you", "the fields you mapped"), "journal:sshd": ("journald", "client, user, login result"),

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 import shutil
+import re
+import time
 import subprocess
 import sys
 from pathlib import Path
@@ -20,6 +22,20 @@ from backend import nginxsites as N  # noqa: E402
 
 PHP, STATIC, PROXY, TLS = (f"{x}.nginx-test.example" for x in ("php", "static", "proxy", "tls"))
 results: list[tuple[str, bool, str]] = []
+
+
+STARTED = time.time()
+
+
+def new_denials() -> str:
+    """SELinux refusals since this run began, apart from execmem (see docs/waf-ella.md). Older ones aren't this run's."""
+    out = subprocess.run("ausearch --input-logs -m avc -ts recent </dev/null 2>/dev/null", shell=True, capture_output=True, text=True).stdout
+    found = []
+    for line in out.splitlines():
+        m = re.search(r"audit\((\d+\.\d+):", line)
+        if m and float(m.group(1)) >= STARTED and "denied" in line and "execmem" not in line:
+            found.append(re.sub(r"^.*avc: *denied *", "", line)[:170])
+    return "\n".join(sorted(set(found)))
 
 
 def check(name: str, ok: bool, detail: str = "") -> bool:
@@ -120,8 +136,8 @@ def main() -> int:
         listed = {s["server_name"]: s for s in N.status()["sites"]}
         check("the list shows real answers", listed[STATIC]["answer"] == "200" and set(listed) >= {PHP, STATIC, PROXY, TLS}, str({k: v["answer"] for k, v in listed.items()}))
         check("no config errors at the end", N.test_config()["ok"])
-        avc = subprocess.run("ausearch --input-logs -m avc -ts recent -i </dev/null 2>/dev/null | grep denied | grep -E 'nginx|httpd' | sed -E 's/.*avc: *denied *//;s/pid=[0-9]+ //;s/ino=[0-9]+ //' | cut -c1-170 | sort | uniq -c | head -5", shell=True, capture_output=True, text=True).stdout
-        check("no SELinux denials for the web server", not avc.strip(), avc.strip())
+        avc = new_denials()
+        check("no SELinux denials in this run, apart from the expected execmem", not avc, avc)
     finally:
         if backend:
             backend.terminate()

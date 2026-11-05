@@ -166,6 +166,15 @@ def _ensure_main() -> None:
     MAIN.write_text(text)
 
 
+def _refresh_nginx() -> None:
+    """Nginx's WAF uses these same settings. A problem there mustn't undo what Apache just accepted."""
+    try:
+        from . import nginxwaf
+        nginxwaf.refresh()
+    except Exception as exc:  # noqa: BLE001
+        problems.record("WAF for Nginx", exc, hint="Nginx kept its previous WAF settings. Open Nginx Websites to see why.")
+
+
 def apply(s: dict | None = None) -> dict:
     s = s or load()
     if not installed():
@@ -188,6 +197,7 @@ def apply(s: dict | None = None) -> dict:
         raise WafError("Apache rejected the WAF settings, nothing changed:\n" + t.stderr.strip()[-500:])
     _run(["systemctl", "reload", "apache2"])
     _save(s)
+    _refresh_nginx()
     return {"ok": True}
 
 

@@ -74,6 +74,37 @@ window.AuroraNginx = (ui) => {
       load();
     }, cls);
 
+    function wafCard(w) {
+      if (!w) return el("p", { class: "dm-note warn", text: "Couldn't read the WAF's state, so don't assume these sites are protected." });
+      const pills = { block: ["blocking attacks", "good"], detect: ["watching only, not blocking", "warn"], off: ["off", "bad"] };
+      const [text, tone] = pills[w.mode];
+      const kids = [el("h3", { text: "WAF for Nginx" })];
+      if (!w.installed) {
+        kids.push(el("p", { class: "dm-note warn", text: "Not installed, so nothing is checking requests to these sites for attacks. Fail2ban and bans still apply." }),
+          btn("Install and turn on", async () => {
+            try {
+              const r = await API.nginxWafInstall();
+              toast("Installing. This takes a minute.", "good");
+              const poll = setInterval(async () => {
+                let j;
+                try { j = await API.job(r.job); } catch (e) { clearInterval(poll); return; }
+                if (j.status !== "running") {
+                  clearInterval(poll);
+                  toast(j.status === "done" ? "The WAF is on" : `The install failed: ${(j.lines || []).slice(-1)[0] || ""}`, j.status === "done" ? "good" : "bad");
+                  load();
+                }
+              }, 3000);
+            } catch (e) { toast(e.message, "bad"); }
+          }, "btn-primary"));
+      } else {
+        kids.push(el("div", { class: "toolbar" }, [pill(text, tone), el("span", { class: "muted", text: `OWASP Core Rule Set, ${w.rule_files} rule files` }),
+          ...["block", "detect", "off"].filter((m) => m !== w.mode).map((m) => act({ block: "Block attacks", detect: "Only watch", off: "Turn off" }[m], async () => { await API.nginxWafMode(m); toast("Changed and checked", "good"); })),
+          btn("See events", () => navigate("ella"), "btn-ghost")]),
+          el("p", { class: "muted", text: "Paranoia level, exceptions and trusted addresses come from the WAF Firewall page. To protect Caddy, Lighttpd or a Docker app, make it listen on 127.0.0.1 and add a Reverse proxy site here: its requests then pass through this WAF." }));
+      }
+      return el("div", { class: "card", style: "margin:12px 0" }, kids);
+    }
+
     async function load() {
       let d;
       try { d = await API.nginxStatus(); } catch (e) {
@@ -90,7 +121,7 @@ window.AuroraNginx = (ui) => {
           act("Switch to Nginx", async () => { await API.sysappControl("nginx", "start", true); toast("Nginx is running", "good"); }, "btn-sm btn-primary")]));
       }
       if (!d.config.ok) body.append(el("pre", { class: "dm-note warn", style: "white-space:pre-wrap", text: `The Nginx configuration has an error:\n${d.config.output}` }));
-      if (d.active) body.append(el("p", { class: "dm-note warn", text: "WAF Firewall runs inside Apache, so it isn't checking requests to Nginx sites. Fail2ban and bans still apply." }));
+      body.append(wafCard(await API.nginxWaf().catch(() => null)));
       body.append(el("div", { class: "toolbar" }, [
         pill(d.active ? "running" : "stopped", d.active ? "good" : "bad"), el("span", { class: "muted", text: `Version ${d.version}${d.php_socket ? ", PHP ready" : ", PHP-FPM not found"}` }),
         btn("New website", () => siteForm(null, load), "btn-primary"),
@@ -103,6 +134,8 @@ window.AuroraNginx = (ui) => {
       ]));
       if (!d.default_site && !d.other_default) body.append(el("div", { class: "dm-note warn", style: "margin:10px 0" }, [icon("error", 15), el("span", { text: "Requests by IP address or an unknown name get Nginx's sample page, not /var/www/html, so folder sites aren't visible." }),
         act("Serve /var/www/html", async () => { await API.nginxDefault(); toast("Done", "good"); }, "btn-sm btn-primary")]));
+      if (d.proxy_blocked && d.sites.some((s) => s.mode === "proxy")) body.append(el("div", { class: "dm-note warn", style: "margin:10px 0" }, [icon("error", 15),
+        el("span", { text: "SELinux is stopping Nginx from reaching your reverse proxy apps, so visitors get a 502 error." }), act("Allow it", async () => { await API.nginxAllowProxy(); toast("Allowed", "good"); }, "btn-sm btn-primary")]));
       if (!d.sites.length) {
         body.append(el("p", { class: "empty", text: "No websites on Nginx yet. Create one, or copy your Apache sites." }));
         return;

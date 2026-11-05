@@ -72,7 +72,7 @@ class _GZipFrontend(GZipMiddleware):
 
 
 app.add_middleware(_GZipFrontend, minimum_size=1024)
-from . import nginxsites  # noqa: E402
+from . import nginxsites, nginxwaf  # noqa: E402
 from .ella import routes as ella_routes, service as ella_service  # noqa: E402
 
 app.include_router(ella_routes.router)
@@ -148,6 +148,37 @@ def api_nginx_control(body: NginxControlBody, user: str = auth.CurrentUser):
 @app.post("/api/nginx/default-site")
 def api_nginx_default(user: str = auth.CurrentUser):
     return _nginx_call(lambda: {"ok": nginxsites.ensure_default()})
+
+
+class NginxWafBody(BaseModel):
+    mode: str
+
+
+def _nginx_waf_call(fn):
+    try:
+        return fn()
+    except (nginxwaf.NginxWafError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/nginx/waf")
+def api_nginx_waf(user: str = auth.CurrentUser):
+    return nginxwaf.status()
+
+
+@app.post("/api/nginx/waf")
+def api_nginx_waf_mode(body: NginxWafBody, user: str = auth.CurrentUser):
+    return _nginx_waf_call(lambda: nginxwaf.set_mode(body.mode))
+
+
+@app.post("/api/nginx/waf/install")
+def api_nginx_waf_install(user: str = auth.CurrentUser):
+    return _nginx_waf_call(lambda: {"job": nginxwaf.install().id})
+
+
+@app.post("/api/nginx/allow-proxy")
+def api_nginx_allow_proxy(user: str = auth.CurrentUser):
+    return _nginx_call(nginxsites.allow_proxy)
 
 
 @app.post("/api/nginx/import-apache")

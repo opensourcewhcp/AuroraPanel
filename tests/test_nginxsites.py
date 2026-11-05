@@ -122,6 +122,30 @@ def test_names_cannot_be_taken_twice(box):
         N.update("b.example", {"aliases": ["www.a.example"]})
 
 
+def test_a_proxy_site_gets_selinux_permission_and_others_do_not(box, monkeypatch):
+    real = N._run
+    state = {"bool": "off"}
+
+    def run(argv, timeout=60):
+        if argv[0] == "getsebool":
+            return subprocess.CompletedProcess(argv, 0, f"httpd_can_network_connect --> {state['bool']}", "")
+        if argv[0] == "setsebool":
+            state["bool"] = "on"
+        return real(argv, timeout)
+    monkeypatch.setattr(N, "_run", run)
+    monkeypatch.setattr(N.shutil, "which", lambda name, path=None: f"/usr/sbin/{name}")
+    assert N.proxy_blocked() is True
+    N.create(_site(box, mode="static"))
+    assert state["bool"] == "off"
+    N.create(_site(box, "b.example", mode="proxy", proxy="http://127.0.0.1:3000"))
+    assert state["bool"] == "on" and N.proxy_blocked() is False
+
+
+def test_no_selinux_means_nothing_to_allow(box, monkeypatch):
+    monkeypatch.setattr(N.shutil, "which", lambda name, path=None: None)
+    assert N.proxy_blocked() is False and N.allow_proxy() == {"ok": True, "blocked": False}
+
+
 def test_turning_a_site_off_and_on(box):
     N.create(_site(box))
     assert N.set_enabled("a.example", False)["enabled"] is False
