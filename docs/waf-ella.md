@@ -49,8 +49,10 @@ Nginx has its own WAF (`backend/nginxwaf.py`): ModSecurity 3 and the Core Rule S
 `/var/log/nginx/modsec_audit.log`. It follows the WAF Firewall page's settings except for its own on/detect/off mode.
 
 With it on, SELinux logs an `execmem` refusal for nginx: its regex engine asks for executable memory, most likely for
-PCRE's JIT, and rules still work. `httpd_execmem` would allow it for every web process, so it stays off. The rules add about
-141 MB across Nginx's processes on a 4-core test VM, which matters on small boards.
+PCRE's JIT, and rules still work. `httpd_execmem` would allow it for every web process, so it stays off.
+
+Memory: at paranoia level 1 with one Nginx worker, measured as PSS (which counts shared memory once), Nginx went from 5 MB to
+37 MB. Nearly all of it is the compiled rule set and its word lists, loaded at startup and shared between workers.
 
 Caddy, Lighttpd and other HTTP servers: listen on 127.0.0.1 and add a reverse proxy site on Nginx. A server that also
 listens on a public address can be reached around the WAF. The Coraza plugin for Caddy isn't used: Fedora and Debian have no

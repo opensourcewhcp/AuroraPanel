@@ -213,6 +213,15 @@ def test_nginx_waf_card_says_when_nothing_is_protecting():
     assert "so don't assume these sites are protected" in js and "nothing is checking requests" in js
 
 
+def test_caddy_page_is_wired_and_never_builds_html():
+    js = (FRONT / "js" / "caddy.js").read_text(encoding="utf-8")
+    assert '{ label: "Caddy Websites", icon: "globe", view: "caddy" }' in (FRONT / "js" / "app.js").read_text(encoding="utf-8")
+    assert (FRONT / "index.html").read_text(encoding="utf-8").index("/js/caddy.js") < (FRONT / "index.html").read_text(encoding="utf-8").index("/js/app.js")
+    assert "Nothing is checking requests to these sites" in js
+    for unsafe in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "html:"):
+        assert unsafe not in js, unsafe
+
+
 def test_nginx_page_is_wired_and_never_builds_html():
     js = (FRONT / "js" / "nginx.js").read_text(encoding="utf-8")
     app_js = (FRONT / "js" / "app.js").read_text(encoding="utf-8")

@@ -240,6 +240,25 @@ class Modsec3Audit:
             "raw_ref": f"{ctx['path']}#{clean(tr.get('unique_id'), 64)}", "evidence": rules}, self.wanted)
 
 
+class CaddyAccess:
+    kind = "caddy_access"
+    wanted = ("client_ip", "domain", "method", "url", "status", "response_size", "user_agent")
+
+    def parse(self, line: bytes, ctx: dict) -> dict | None:
+        try:
+            d = json.loads(line)
+            rq = d["request"]
+            ts = float(d["ts"])
+        except (ValueError, KeyError, TypeError):
+            return None
+        path, keys = split_url(str(rq.get("uri") or ""))
+        ua = (rq.get("headers") or {}).get("User-Agent") or [None]
+        ip = clean(rq.get("client_ip") or rq.get("remote_ip"), 64)
+        return _finish({"ts_event": ts, "domain": clean(str(rq.get("host") or "").split(":")[0].lower(), 200) or None, "peer_ip": clean(rq.get("remote_ip"), 64), "client_ip": ip, "client_ip_source": "peer", "method": clean(rq.get("method"), 16),
+                        "url": path, "query_keys": json.dumps(keys), "status": d.get("status") if isinstance(d.get("status"), int) else None, "response_size": d.get("size") if isinstance(d.get("size"), int) else None,
+                        "user_agent": clean(mask(ua[0], 512), 512), "headers": "{}", "confidence": "n/a", "action": "logged", "tags": "[]", "raw_ref": f"{ctx['path']}@{ctx['inode']}:{ctx['offset']}", "evidence": []}, self.wanted)
+
+
 class NginxAccess(ApacheAccess):
     kind = "nginx_access"
 
@@ -428,7 +447,7 @@ class CustomSource:
         return _finish(e, self.wanted)
 
 
-PARSERS = {"modsec3_audit": Modsec3Audit(), "modsec_audit": ModsecAudit(), "apache_access": ApacheAccess(), "nginx_access": NginxAccess(), "apache_error": ApacheError(), "nginx_error": NginxError(),
+PARSERS = {"caddy_access": CaddyAccess(), "modsec3_audit": Modsec3Audit(), "modsec_audit": ModsecAudit(), "apache_access": ApacheAccess(), "nginx_access": NginxAccess(), "apache_error": ApacheError(), "nginx_error": NginxError(),
            "fail2ban_log": Fail2banLog(), "panel_audit": PanelAudit(), "php_error": PhpError(), "vsftpd_log": VsftpdLog()}
 _ROTATED = re.compile(r"(\.\d+|-\d{8}(-\d+)?|\.gz|\.xz|\.old)$")
 # Logs outside Apache's folder that this server may have. Absent ones are listed as not found, not hidden.
@@ -484,7 +503,7 @@ def _journal_cron(msg: str) -> tuple | None:
 
 JOURNAL_SOURCES = {"sshd": _journal_sshd, "postfix": _journal_postfix, "dovecot": _journal_dovecot, "firewall": _journal_firewall, "cron": _journal_cron}
 SOURCE_INFO = {
-    "modsec3_audit": ("JSON", "client, request, status, rules, matched data"), "modsec_audit": ("JSON", "client, request, status, rules, matched data"), "apache_access": ("combined", "client, request, status, size, User-Agent"),
+    "caddy_access": ("JSON", "client, domain, request, status, size, User-Agent"), "modsec3_audit": ("JSON", "client, request, status, rules, matched data"), "modsec_audit": ("JSON", "client, request, status, rules, matched data"), "apache_access": ("combined", "client, request, status, size, User-Agent"),
     "nginx_access": ("combined", "client, request, status, size, User-Agent"), "apache_error": ("text", "client, severity, message"), "nginx_error": ("text", "client, domain, severity, message"),
     "fail2ban_log": ("text", "client, jail, ban and unban"), "panel_audit": ("JSON", "client, panel user, action, status"), "php_error": ("text", "severity, message"),
     "vsftpd_log": ("text", "client, user, login result"), "custom": ("set by you", "the fields you mapped"), "journal:sshd": ("journald", "client, user, login result"),
@@ -612,7 +631,7 @@ class Collector:
         if self.system:
             found += [(p, k) for p, k in SYSTEM_FILES if os.path.exists(p)]
             # Each Nginx website keeps its own logs.
-            for pattern, kind in (("/var/log/nginx/*-access.log", "nginx_access"), ("/var/log/nginx/*-error.log", "nginx_error")):
+            for pattern, kind in (("/var/log/nginx/*-access.log", "nginx_access"), ("/var/log/nginx/*-error.log", "nginx_error"), ("/var/log/caddy/*-access.log", "caddy_access")):
                 found += [(p, kind) for p in sorted(glob.glob(pattern))]
         found += [(s["path"], "custom") for s in (self.store.setting("custom_sources") or []) if os.path.exists(s["path"])]
         return found

@@ -274,7 +274,7 @@
     vhosts: "globe", redirects: "redirect", revproxy: "redirect", zones: "zone", dmarc: "at", dyndns: "refresh", ddnshosts: "refresh",
     activity: "t_activity", isolation: "t_isolate", dockerapps: "t_docker", servers: "t_servers", mysites: "globe", panelusers: "t_usergear", wptoolkit: "t_wptool", migrate: "t_migrate", alerts: "t_bell", schedbackups: "t_cloudup", updates: "t_update", autossl: "t_autossl",
     visitors: "visitors", errors: "errors", bandwidth: "gauge", rawaccess: "rawlog", analytics: "chart", resources: "dashboard",
-    ssh: "key", nginx: "globe", ella: "shield", ipblocker: "ban", ssl: "lock", panelhttps: "lock", tokens: "token", hotlink: "link", secreport: "listing",
+    ssh: "key", caddy: "globe", nginx: "globe", ella: "shield", ipblocker: "ban", ssl: "lock", panelhttps: "lock", tokens: "token", hotlink: "link", secreport: "listing",
     leech: "trap", modsec: "shield", instaban: "trap", security: "phone", fixperms: "home", virus: "virus", globalsec: "shield",
     files: "folder", shadow: "shadow", disk: "disk", backups: "backup", cron: "cron", indexes: "indexes",
     errorpages: "error", handlers: "handler", mime: "mime", dns: "dns",
@@ -862,7 +862,7 @@
     backups: "Backups", network: "Interfaces & Wi-Fi", firewall: "Firewall", users: "Users", security: "Security", panelhttps: "Panel HTTPS",
     indexes: "Indexes", mime: "MIME Types", errorpages: "Error Pages", handlers: "Apache Handlers",
     virus: "Virus Scanner", dns: "Track DNS",
-    ssh: "SSH Access", nginx: "Nginx Websites", ella: "WAF Ella", ipblocker: "IP Blocker & Trust", ssl: "SSL/TLS Certificates", tokens: "Manage API Tokens",
+    ssh: "SSH Access", caddy: "Caddy Websites", nginx: "Nginx Websites", ella: "WAF Ella", ipblocker: "IP Blocker & Trust", ssl: "SSL/TLS Certificates", tokens: "Manage API Tokens",
     hotlink: "Hotlink Protection", redirects: "Redirects", modsec: "WAF Firewall", instaban: "InstaBan", globalsec: "Global Security", secreport: "Security Report", activity: "Activity Log", isolation: "Site Isolation", dockerapps: "Docker", servers: "Servers", mysites: "My Websites", panelusers: "Panel Users", wptoolkit: "WordPress Toolkit", migrate: "Move from cPanel", alerts: "Alerts", schedbackups: "Scheduled Backups", updates: "Updates", autossl: "AutoSSL", ddnshosts: "Dynamic DNS", visitors: "Visitors", errors: "Errors", bandwidth: "Bandwidth", rawaccess: "Raw Access", analytics: "Analytics", resources: "Resource Usage", leech: "Fail2ban",
     fixperms: "Fix Home Permissions", vhosts: "Domains", revproxy: "Reverse Proxy", dyndns: "Dynamic DNS Updater", zones: "Zone Editor", dmarc: "DMARC",
     mysql: "Manage Databases", mysqlwiz: "MariaDB Wizard", pgsql: "PostgreSQL Databases",
@@ -995,7 +995,7 @@
       git: viewGit,
       inodes: viewInodes,
       about: viewAbout,
-    }[view] || mailViews()[view] || extraViews()[view] || opsViews()[view] || cloudViews()[view] || ellaViews()[view] || nginxViews()[view] || viewDashboard);
+    }[view] || mailViews()[view] || extraViews()[view] || opsViews()[view] || cloudViews()[view] || ellaViews()[view] || nginxViews()[view] || caddyViews()[view] || viewDashboard);
     if (VIEW_NEEDS[view]) requireGate(root, view, VIEW_NEEDS[view], render);
     else render(root);
   }
@@ -1155,6 +1155,7 @@
     { name: "Domains", icon: "globe", tiles: [
       { label: "Domains", icon: "globe", view: "vhosts" },
       { label: "Nginx Websites", icon: "globe", view: "nginx" },
+      { label: "Caddy Websites", icon: "globe", view: "caddy" },
       { label: "Redirects", icon: "redirect", view: "redirects" },
       { label: "Reverse Proxy", icon: "redirect", view: "revproxy" },
       { label: "Zone Editor", icon: "zone", view: "zones" },
@@ -10234,6 +10235,12 @@
   }
 
   // ---- Cloud Apps and Third-party Apps (frontend/js/cloud.js) ----
+  let CADDYV = null;
+  function caddyViews() {
+    if (!CADDYV && window.AuroraCaddy) CADDYV = window.AuroraCaddy({ el, icon, btn, pill, field, toast, API, openModal, closeModal, navigate });
+    return CADDYV || {};
+  }
+
   let NGINXV = null;
   function nginxViews() {
     if (!NGINXV && window.AuroraNginx) NGINXV = window.AuroraNginx({ el, icon, btn, pill, field, toast, API, openModal, closeModal, navigate });

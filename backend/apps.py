@@ -300,6 +300,16 @@ def _resolve_target(opts: dict, log, dry: bool = False) -> tuple[Path, str, bool
     sub = (opts.get("subfolder") or "").strip().strip("/")
     if sub and not re.match(r"^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$", sub) or ".." in sub:
         raise AppError("Sub-folder may only contain letters, digits, . _ - and /")
+    if mode == "webroot":
+        # A folder a web server other than Apache already serves: nothing to create, no Apache rules to add.
+        base = Path(str(opts.get("path") or ""))
+        url = _norm_url(opts.get("url") or "")
+        if not str(base).startswith("/var/www/") or ".." in base.parts or not url:
+            raise AppError("Choose a site's web folder inside /var/www")
+        idx = base / "index.html"
+        if not dry and idx.exists() and "New site created by AuroraPanel" in idx.read_text(errors="replace"):
+            idx.unlink()
+        return base, url, False
     host = _host(opts)
     if mode == "ip":
         ip = (opts.get("ip") or "").strip()
@@ -734,7 +744,7 @@ def install(app_id: str, opts: dict) -> jobs.Job:
     too_old = _php_too_old(app, apache_php())
     if too_old:
         raise AppError(too_old)
-    if not shutil.which("apache2ctl"):
+    if opts.get("mode") != "webroot" and not shutil.which("apache2ctl"):
         raise AppError("Apache is not installed — install it in Software → System Applications")
     if app.get("db"):
         try:
@@ -838,8 +848,9 @@ def _work(app: dict, o: dict, log) -> dict:
             site_dir.symlink_to(pub, target_is_directory=True)
             _run(["chown", "-h", "www-data:www-data", str(site_dir)])
             log(f"• {site_dir} → {pub} (only the public folder is served)")
-        entry["apache_conf"] = _apache_conf(dest / suffix if suffix else dest,
-                                            _slug(f"{app['id']}_{url.split('://', 1)[1]}", 50), app.get("php_values") or {}, log)
+        if o.get("mode") != "webroot":
+            entry["apache_conf"] = _apache_conf(dest / suffix if suffix else dest,
+                                                _slug(f"{app['id']}_{url.split('://', 1)[1]}", 50), app.get("php_values") or {}, log)
         if ctx.data_dir:
             entry["data_dir"] = str(ctx.data_dir)
     except BaseException:

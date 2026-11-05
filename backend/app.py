@@ -72,7 +72,7 @@ class _GZipFrontend(GZipMiddleware):
 
 
 app.add_middleware(_GZipFrontend, minimum_size=1024)
-from . import nginxsites, nginxwaf  # noqa: E402
+from . import caddysites, nginxsites, nginxwaf  # noqa: E402
 from .ella import routes as ella_routes, service as ella_service  # noqa: E402
 
 app.include_router(ella_routes.router)
@@ -174,6 +174,73 @@ def api_nginx_waf_mode(body: NginxWafBody, user: str = auth.CurrentUser):
 @app.post("/api/nginx/waf/install")
 def api_nginx_waf_install(user: str = auth.CurrentUser):
     return _nginx_waf_call(lambda: {"job": nginxwaf.install().id})
+
+
+class NginxCertBody(BaseModel):
+    email: str
+    force_https: bool = True
+
+
+class NginxWordPressBody(BaseModel):
+    title: str = ""
+    admin_user: str
+    admin_email: str
+    admin_pass: str
+
+
+@app.post("/api/nginx/sites/{name}/letsencrypt")
+def api_nginx_le(name: str, body: NginxCertBody, user: str = auth.CurrentUser):
+    return _nginx_call(lambda: {"job": nginxsites.letsencrypt(name, body.email, body.force_https).id})
+
+
+@app.post("/api/nginx/sites/{name}/wordpress")
+def api_nginx_wp(name: str, body: NginxWordPressBody, user: str = auth.CurrentUser):
+    return _nginx_call(lambda: {"job": nginxsites.wordpress(name, body.model_dump()).id})
+
+
+class CaddySiteBody(BaseModel):
+    server_name: str = ""
+    aliases: list[str] = []
+    mode: str = "php"
+    docroot: str = ""
+    proxy: str = ""
+    https: str = "none"
+    custom: str = ""
+
+
+@app.get("/api/caddy")
+def api_caddy(user: str = auth.CurrentUser):
+    return caddysites.status()
+
+
+@app.post("/api/caddy/sites")
+def api_caddy_create(body: CaddySiteBody, user: str = auth.CurrentUser):
+    return _nginx_call(lambda: caddysites.create(body.model_dump()))
+
+
+@app.put("/api/caddy/sites/{name}")
+def api_caddy_update(name: str, body: CaddySiteBody, user: str = auth.CurrentUser):
+    return _nginx_call(lambda: caddysites.update(name, body.model_dump()))
+
+
+@app.post("/api/caddy/sites/{name}/enabled")
+def api_caddy_enabled(name: str, body: NginxEnableBody, user: str = auth.CurrentUser):
+    return _nginx_call(lambda: caddysites.set_enabled(name, body.on))
+
+
+@app.delete("/api/caddy/sites/{name}")
+def api_caddy_delete(name: str, delete_files: bool = False, user: str = auth.CurrentUser):
+    return _nginx_call(lambda: caddysites.delete(name, delete_files))
+
+
+@app.get("/api/caddy/sites/{name}/logs")
+def api_caddy_logs(name: str, lines: int = 200, user: str = auth.CurrentUser):
+    return _nginx_call(lambda: caddysites.logs(name, lines))
+
+
+@app.post("/api/caddy/control")
+def api_caddy_control(body: NginxControlBody, user: str = auth.CurrentUser):
+    return _nginx_call(lambda: caddysites.control(body.action))
 
 
 @app.post("/api/nginx/allow-proxy")

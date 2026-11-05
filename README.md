@@ -120,8 +120,9 @@ PostgreSQL, WordPress, the WAF, DNS, FTP, Docker, fail2ban, WireGuard and email 
 email uses SpamAssassin for spam filtering and OpenDKIM for signing, and greylisting isn't available. Only one PHP
 version can be installed at a time.
 
-**Nginx websites**: Domains > Nginx Websites creates and runs PHP, static and reverse proxy sites on Nginx. The Domains
-page and the App Installer work with Apache, so use Apache if you rely on them. Nginx has its own WAF (ModSecurity 3 and the
+**Nginx and Caddy websites**: Domains > Nginx Websites and Caddy Websites create and run PHP, static and reverse proxy
+sites. Nginx sites can get Let's Encrypt certificates and WordPress; Caddy gets certificates on its own. The Domains page and
+the rest of the App Installer work with Apache. Nginx has its own WAF (ModSecurity 3 and the
 OWASP Core Rule Set), switched on from that page. Caddy, Lighttpd and Docker apps get the same WAF by listening on 127.0.0.1
 behind a reverse proxy site. They have no WAF built in here.
 A fresh server doesn't need anything else first: pages that need Apache, PHP,

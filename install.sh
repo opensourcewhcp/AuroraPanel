@@ -134,6 +134,13 @@ if [ $UNINSTALL = 1 ]; then
   fi
   command -v semanage >/dev/null && semanage fcontext -d "${APP_DIR}/\.venv/bin(/.*)?" 2>/dev/null || true
   rm -rf /usr/local/lib/aurora
+  # The panel's WAF hook for Nginx goes; websites on Nginx and Caddy are kept, like Apache's.
+  if [ -e /etc/nginx/conf.d/aurora-waf.conf ]; then
+    rm -f /etc/nginx/conf.d/aurora-waf.conf
+    rm -rf /etc/nginx/aurora-waf
+    if nginx -t >/dev/null 2>&1; then systemctl reload nginx 2>/dev/null || true; fi
+    ok "The WAF for Nginx is off (its packages stay installed)"
+  fi
   systemctl disable aurora-ella.service 2>/dev/null || true
   rm -f /usr/local/sbin/ella-cli /etc/systemd/system/aurora-ella.service
   command -v nft >/dev/null && nft delete table inet aurora_ella 2>/dev/null || true

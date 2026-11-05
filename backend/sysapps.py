@@ -413,6 +413,11 @@ def control(app_id: str, action: str, switch: bool = False) -> dict:
     cmds = [["systemctl", action, svc]]
     if action == "start":
         cmds.append(["systemctl", "enable", svc])  # a switched-to server should survive a reboot
+        if CATALOG[app_id]["group"] == "web":
+            # Only one can have port 80. Left enabled, another would race this one for it at every boot.
+            for other in WEB_SERVERS:
+                if other != app_id and _dpkg_status([CATALOG[other]["pkg"]]).get(CATALOG[other]["pkg"]):
+                    subprocess.run(["systemctl", "disable", CATALOG[other]["service"]], capture_output=True, text=True, timeout=60)
     for cmd in cmds:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         if out.returncode != 0:

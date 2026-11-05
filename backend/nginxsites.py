@@ -31,7 +31,10 @@ PREFIX = "aurora-site-"
 HEADER = "# Written by AuroraPanel (Nginx Websites). Edit there: changes here are overwritten.\n"
 META = re.compile(r"(?m)^# aurora-site: (\{.*\})$")
 MODES = ("php", "static", "proxy")
-HTTPS = ("none", "selfsigned")
+HTTPS = ("none", "selfsigned", "letsencrypt")
+LE_LIVE = Path("/etc/letsencrypt/live")
+_EMAIL = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$")
+_NOT_PUBLIC = re.compile(r"(^|\.)(local|localhost|internal|lan|home|test|example|invalid)$|^[0-9.]+$")
 _HOST = re.compile(r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _DOCROOT = re.compile(r"^/var/www/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$")
 _PROXY = re.compile(r"^https?://[A-Za-z0-9.\[\]:-]+(?::\d{1,5})?(?:/[A-Za-z0-9._~/-]*)?$")
@@ -105,7 +108,9 @@ def clean(settings: dict) -> dict:
         raise NginxError("Enter the address to forward to, such as http://127.0.0.1:3000")
     https = s.get("https") or "none"
     if https not in HTTPS:
-        raise NginxError("HTTPS must be off or self-signed")
+        raise NginxError("HTTPS must be off, self-signed or Let's Encrypt")
+    if https == "letsencrypt" and not (LE_LIVE / name / "fullchain.pem").exists():
+        raise NginxError("This site has no Let's Encrypt certificate yet. Use Get certificate first.")
     try:
         body = int(s.get("max_body_mb") if s.get("max_body_mb") is not None else 64)
     except (TypeError, ValueError):
@@ -157,13 +162,15 @@ def render(s: dict, socket: str | None = None) -> str:
     else:
         out += ["server {", "    listen 80;", "    listen [::]:80;", f"    server_name {names};", *body, "}"]
     if s["https"] != "none":
-        crt, key = _cert_paths(s["server_name"])
+        crt, key = _cert_paths(s["server_name"], s["https"])
         out += ["server {", "    listen 443 ssl;", "    listen [::]:443 ssl;", f"    server_name {names};", f"    ssl_certificate {crt.as_posix()};", f"    ssl_certificate_key {key.as_posix()};",
                 "    ssl_protocols TLSv1.2 TLSv1.3;", *body, "}"]
     return "\n".join(out) + "\n"
 
 
-def _cert_paths(name: str) -> tuple[Path, Path]:
+def _cert_paths(name: str, https: str = "selfsigned") -> tuple[Path, Path]:
+    if https == "letsencrypt":
+        return LE_LIVE / name / "fullchain.pem", LE_LIVE / name / "privkey.pem"
     return SSL_DIR / f"{_slug(name)}.crt", SSL_DIR / f"{_slug(name)}.key"
 
 
@@ -181,9 +188,11 @@ def _ensure_cert(s: dict) -> None:
 
 
 def _ensure_docroot(s: dict) -> None:
-    if s["mode"] == "proxy":
-        return
     root = Path(s["docroot"])
+    if s["mode"] == "proxy":  # nothing to serve, but certificate checks need a folder to answer from
+        root.mkdir(parents=True, exist_ok=True)
+        _run(["restorecon", "-R", str(root)])
+        return
     fresh = not root.exists()
     root.mkdir(parents=True, exist_ok=True)
     if fresh:
@@ -301,7 +310,7 @@ def list_sites(probe: bool = True) -> list[dict]:
         if not s:
             continue
         enabled = path.suffix == ".conf"
-        out.append({**s, "enabled": enabled, "answer": _probe(s["server_name"]) if probe and enabled else None})
+        out.append({**s, "enabled": enabled, "answer": _probe(s["server_name"]) if probe and enabled else None, "le_ready": (LE_LIVE / s["server_name"] / "fullchain.pem").exists()})
     return out
 
 
@@ -436,6 +445,64 @@ def logs(name: str, kind: str = "error", lines: int = 200) -> dict:
     except OSError:
         return {"path": str(path), "lines": []}
     return {"path": str(path), "lines": text.splitlines()[-lines:]}
+
+
+def _certbot_argv(s: dict, email: str) -> list[str]:
+    names = [x for n in [s["server_name"], *s["aliases"]] for x in ("-d", n)]
+    return ["certbot", "certonly", "--webroot", "-w", s["docroot"], *names, "--non-interactive", "--agree-tos", "-m", email, "--keep-until-expiring",
+            "--deploy-hook", "systemctl reload nginx"]
+
+
+def letsencrypt(name: str, email: str, force_https: bool = True):
+    """A free certificate. Let's Encrypt calls this server over port 80 to check the domain, so it must point here."""
+    from . import jobs
+    s, enabled = _get(name)
+    if not enabled:
+        raise NginxError("Turn the site on first: Let's Encrypt has to reach it")
+    email = str(email or "").strip()
+    if not _EMAIL.match(email):
+        raise NginxError("Enter a valid email address: Let's Encrypt writes to it about certificates that are expiring")
+    bad = [n for n in [s["server_name"], *s["aliases"]] if _NOT_PUBLIC.search(n) or "." not in n]
+    if bad:
+        raise NginxError(f"Let's Encrypt only certifies public domain names, not {', '.join(bad)}")
+    if not _active("nginx"):
+        raise NginxError("Nginx isn't running, so Let's Encrypt couldn't reach this site")
+
+    def fn(log):
+        if not shutil.which("certbot", path=distro.BASE_PATH):
+            log.progress(5, "Installing certbot")
+            if log.apt(["install", "certbot"], (5, 40)) != 0:
+                raise NginxError("Couldn't install certbot")
+        _ensure_docroot(s)
+        log.progress(45, "Asking Let's Encrypt")
+        r = _run(_certbot_argv(s, email), 300)
+        log((r.stdout or "").strip()[-1500:])
+        if r.returncode != 0:
+            raise NginxError("Let's Encrypt refused. Check that the domain points to this server and port 80 is reachable from the internet.\n" + (r.stderr or "").strip()[-800:])
+        log.progress(85, "Switching the site to HTTPS")
+        update(s["server_name"], {"https": "letsencrypt", "force_https": bool(force_https)})
+        for timer in ("certbot-renew.timer", "certbot.timer"):
+            if _run(["systemctl", "enable", "--now", timer], 30).returncode == 0:
+                log(f"• Renewal is on ({timer})")
+                break
+        log.progress(100, "HTTPS is on")
+        return {"ok": True}
+    return jobs.launch_fn(f"certificate for {s['server_name']}", fn, meta={"area": "nginx"})
+
+
+def wordpress(name: str, opts: dict):
+    """WordPress into a PHP site on Nginx. Uninstall it from the App Installer's list."""
+    from . import apps
+    s, enabled = _get(name)
+    if s["mode"] != "php":
+        raise NginxError("WordPress needs a PHP site")
+    if not enabled:
+        raise NginxError("Turn the site on first")
+    scheme = "https" if s["https"] != "none" else "http"
+    try:
+        return apps.install_wordpress({**(opts or {}), "mode": "webroot", "path": s["docroot"], "url": f"{scheme}://{s['server_name']}"})
+    except apps.AppError as exc:
+        raise NginxError(str(exc)) from exc
 
 
 def import_apache() -> dict:

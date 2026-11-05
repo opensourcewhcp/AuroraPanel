@@ -13,7 +13,7 @@ window.AuroraNginx = (ui) => {
     mode.value = s.mode;
     const docroot = el("input", { type: "text", value: s.docroot || "", placeholder: "Leave empty for /var/www/<name>" });
     const proxy = el("input", { type: "text", value: s.proxy || "", placeholder: "http://127.0.0.1:3000" });
-    const https = el("select", {}, [el("option", { value: "none", text: "Off" }), el("option", { value: "selfsigned", text: "Self-signed certificate" })]);
+    const https = el("select", {}, [el("option", { value: "none", text: "Off" }), el("option", { value: "selfsigned", text: "Self-signed certificate" }), ...(s.le_ready || s.https === "letsencrypt" ? [el("option", { value: "letsencrypt", text: "Let's Encrypt" })] : [])]);
     https.value = s.https;
     const force = el("input", { type: "checkbox" });
     force.checked = !!s.force_https;
@@ -40,6 +40,44 @@ window.AuroraNginx = (ui) => {
       el("label", { style: "display:flex;gap:8px;align-items:center;margin:8px 0" }, [force, el("span", { text: "Send visitors from HTTP to HTTPS" })]),
       field("Upload limit (MB)", body), field("Extra settings", custom), notice,
     ]), [btn("Cancel", closeModal, "btn-ghost"), save]);
+  }
+
+  function watchJob(jobId, okText, after) {
+    const poll = setInterval(async () => {
+      let j;
+      try { j = await API.job(jobId); } catch (e) { clearInterval(poll); return; }
+      if (j.status === "running") return;
+      clearInterval(poll);
+      const lines = j.lines || [];
+      toast(j.status === "done" ? okText : `It failed: ${String(lines[lines.length - 1] || "").slice(0, 300)}`, j.status === "done" ? "good" : "bad");
+      after();
+    }, 3000);
+  }
+
+  function certDialog(s, after) {
+    const email = el("input", { type: "email", placeholder: "you@example.com" });
+    const force = el("input", { type: "checkbox" });
+    force.checked = true;
+    const notice = el("div");
+    openModal(`Let's Encrypt: ${s.server_name}`, el("div", {}, [
+      el("p", { class: "muted", text: "A free certificate browsers trust, renewed automatically. The domain must already point to this server, and port 80 must be reachable from the internet. Continuing accepts the Let's Encrypt Subscriber Agreement." }),
+      field("Email for expiry notices", email), el("label", { style: "display:flex;gap:8px;align-items:center;margin:8px 0" }, [force, el("span", { text: "Send visitors from HTTP to HTTPS" })]), notice,
+    ]), [btn("Cancel", closeModal, "btn-ghost"), btn("Get certificate", async () => {
+      try { const r = await API.nginxCert(s.server_name, email.value.trim(), force.checked); closeModal(); toast("Asking Let's Encrypt…", "good"); watchJob(r.job, "HTTPS is on", after); }
+      catch (e) { notice.replaceChildren(el("p", { class: "dm-note warn", text: e.message })); }
+    }, "btn-primary")]);
+  }
+
+  function wordpressDialog(s, after) {
+    const title = el("input", { type: "text", placeholder: "My site" }), user = el("input", { type: "text", autocomplete: "off" }), mail = el("input", { type: "email" }), pass = el("input", { type: "password", autocomplete: "new-password" });
+    const notice = el("div");
+    openModal(`WordPress on ${s.server_name}`, el("div", {}, [
+      el("p", { class: "muted", text: `Downloads the latest WordPress into ${s.docroot} and creates its database. The folder must hold nothing but the starter page.` }),
+      field("Site title", title), field("Admin username (not \"admin\")", user), field("Admin email", mail), field("Admin password (12 characters or more)", pass), notice,
+    ]), [btn("Cancel", closeModal, "btn-ghost"), btn("Install WordPress", async () => {
+      try { const r = await API.nginxWordPress(s.server_name, { title: title.value.trim(), admin_user: user.value.trim(), admin_email: mail.value.trim(), admin_pass: pass.value }); closeModal(); toast("Installing WordPress…", "good"); watchJob(r.job, "WordPress is installed", after); }
+      catch (e) { notice.replaceChildren(el("p", { class: "dm-note warn", text: e.message })); }
+    }, "btn-primary")]);
   }
 
   function logsDialog(s) {
@@ -144,9 +182,10 @@ window.AuroraNginx = (ui) => {
         el("thead", {}, el("tr", {}, ["Site", "Type", "Folder or target", "HTTPS", "State", "Answers", ""].map((c) => el("th", { text: c })))),
         el("tbody", {}, d.sites.map((s) => el("tr", {}, [
           el("td", {}, [el("a", { href: `http://${s.server_name}/`, target: "_blank", rel: "noopener", text: s.server_name }), s.aliases.length ? el("div", { class: "muted", text: s.aliases.join(", ") }) : ""]),
-          el("td", { text: s.mode }), el("td", { text: s.mode === "proxy" ? s.proxy : s.docroot }), el("td", { text: s.https === "none" ? "off" : s.force_https ? "self-signed, forced" : "self-signed" }),
+          el("td", { text: s.mode }), el("td", { text: s.mode === "proxy" ? s.proxy : s.docroot }), el("td", { text: s.https === "none" ? "off" : `${s.https === "letsencrypt" ? "Let's Encrypt" : "self-signed"}${s.force_https ? ", forced" : ""}` }),
           el("td", {}, pill(s.enabled ? "on" : "off", s.enabled ? "good" : "dim")), el("td", { text: s.answer === null || s.answer === undefined ? "" : s.answer }),
           el("td", {}, el("div", { class: "toolbar" }, [btn("Edit", () => siteForm(s, load), "btn-sm btn-ghost"), act(s.enabled ? "Turn off" : "Turn on", () => API.nginxSiteEnable(s.server_name, !s.enabled), "btn-sm btn-ghost"),
+            ...(s.https !== "letsencrypt" ? [btn("Get certificate", () => certDialog(s, load), "btn-sm btn-ghost")] : []), ...(s.mode === "php" ? [btn("Install WordPress", () => wordpressDialog(s, load), "btn-sm btn-ghost")] : []),
             btn("Logs", () => logsDialog(s), "btn-sm btn-ghost"), btn("Remove", () => deleteDialog(s, load), "btn-sm btn-danger")])),
         ]))),
       ])));
