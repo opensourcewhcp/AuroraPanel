@@ -11,6 +11,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from . import distro
 from . import jobs
 
 IS_LINUX = platform.system() == "Linux"
@@ -712,5 +713,5 @@ def overview() -> dict:
 def install_pkg(pkg: str) -> jobs.Job:
     if pkg not in ("phppgadmin", "phpmyadmin", "postgresql", "mariadb-server"):
         raise DatabaseError("Unsupported package")
-    env = {"DEBIAN_FRONTEND": "noninteractive", "PATH": "/usr/sbin:/usr/bin:/sbin:/bin"}
+    env = {"DEBIAN_FRONTEND": "noninteractive", "PATH": distro.PATH}
     return jobs.launch(f"install {pkg}", ["apt-get", "-y", "install", pkg], env=env)

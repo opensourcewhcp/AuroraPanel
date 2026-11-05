@@ -389,6 +389,9 @@ def _resolve_target(opts: dict, log, dry: bool = False) -> tuple[Path, str, bool
             scheme, server = (_own_scheme() if d["has_http"] else "https"), host  # the built-in site answers on this Pi's address
         else:
             scheme, server = ("https" if s["ssl"] != "none" else "http"), s["server_name"]
+        idx = base / "index.html"
+        if not dry and not sub and idx.exists() and "New site created by AuroraPanel" in idx.read_text(errors="replace"):
+            idx.unlink()  # the starter page would shadow index.php; a page of the owner's own stays
         return (base / sub if sub else base), f"{scheme}://{server}" + (f"/{sub}" if sub else ""), False
     if mode == "folder":
         p = (opts.get("path") or "").strip().rstrip("/")

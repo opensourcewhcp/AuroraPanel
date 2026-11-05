@@ -26,9 +26,10 @@ import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from . import distro
 from . import problems
 
-PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
+PATH = distro.PATH
 TIMEOUT = 5.0
 SSHD_CONFIG = Path("/etc/ssh/sshd_config")
 SSH_DROPIN = Path("/etc/ssh/sshd_config.d/00-aurora-crypto.conf")
@@ -637,6 +638,12 @@ def port_lan_fix(arg: str) -> dict:
     from . import firewall
     if port in [p.split("/")[0] for p in firewall.guard_ports()]:
         raise SecNetError("That's the port for SSH or this panel, it stays open so you can't lock yourself out")
+    if firewall._firewalld():
+        try:
+            firewall.lan_only(port, proto, list(PRIVATE_NETS))
+        except firewall.FirewallError as e:
+            raise SecNetError(str(e)) from e
+        return {"changed": True, "message": f"Port {port}/{proto} is now reachable only from your local network"}
     ufw = which("ufw")
     if not ufw:
         raise SecNetError("ufw isn't installed")

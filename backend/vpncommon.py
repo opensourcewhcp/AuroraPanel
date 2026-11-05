@@ -13,6 +13,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from . import distro
 from . import jobs
 
 IS_LINUX = platform.system() == "Linux"
@@ -21,7 +22,7 @@ SETTINGS = Path("/var/lib/aurora/network.json")
 NAT_FILE = STATE_DIR / "nat.nft"
 NAT_UNIT = Path("/etc/systemd/system/aurora-vpn-nat.service")
 SYSCTL_FILE = Path("/etc/sysctl.d/99-aurora-vpn.conf")
-APT_ENV = {"DEBIAN_FRONTEND": "noninteractive", "PATH": "/usr/sbin:/usr/bin:/sbin:/bin"}
+APT_ENV = {"DEBIAN_FRONTEND": "noninteractive", "PATH": distro.PATH}
 APT = ["apt-get", "-o", "DPkg::Lock::Timeout=600", "-y"]
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$")
 
@@ -259,6 +260,12 @@ def nat_active(subnet: str) -> bool:
 
 # ---- ufw (only touched when installed) ----
 def ufw_open(port: int, proto: str, subnet: str | None = None):
+    from . import firewall
+    if firewall._firewalld():
+        firewall.open_ports(f"{port}/{proto}")
+        if subnet:
+            firewall.trust_subnet(subnet)
+        return
     ufw = shutil.which("ufw", path=APT_ENV["PATH"])
     if not ufw:
         return
@@ -272,6 +279,12 @@ def ufw_open(port: int, proto: str, subnet: str | None = None):
 
 
 def ufw_close(port: int, proto: str, subnet: str | None = None):
+    from . import firewall
+    if firewall._firewalld():
+        firewall.close_ports(f"{port}/{proto}")
+        if subnet:
+            firewall.trust_subnet(subnet, False)
+        return
     ufw = shutil.which("ufw", path=APT_ENV["PATH"])
     if not ufw:
         return

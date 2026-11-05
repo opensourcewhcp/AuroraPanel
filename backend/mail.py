@@ -2,7 +2,7 @@
 mailing lists, delivery tracking, deliverability (SPF/DKIM/DMARC/PTR) and more.
 
 The stack: Postfix (SMTP, virtual domains) → Rspamd milter (spam score, DKIM
-signing) → Dovecot 2.4 over LMTP (IMAP/POP3, quota, Sieve). Everything the
+signing; on Fedora, which has no Rspamd package: SpamAssassin and OpenDKIM milters) → Dovecot 2.4 over LMTP (IMAP/POP3, quota, Sieve). Everything the
 panel manages lives in one state file (STATE); apply() renders it into the
 Postfix lookup tables, the Dovecot users file, one Sieve script per mailbox
 and Rspamd's maps, then reloads only what changed. Hand edits to those
@@ -31,11 +31,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
+from . import distro
 from . import jobs
 from . import problems
 
 IS_LINUX = platform.system() == "Linux"
-PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
+PATH = distro.PATH
 
 STATE = Path("/var/lib/aurora/mail/state.json")
 PF_DIR = Path("/etc/postfix/aurora")
@@ -46,7 +47,15 @@ SIEVE_GLOBAL = SIEVE_DIR / "aurora-before.sieve"
 VMAIL = Path("/var/vmail")
 RSPAMD_LOCAL = Path("/etc/rspamd/local.d")
 RSPAMD_MAPS = Path("/etc/rspamd/aurora")
-DKIM_DIR = Path("/var/lib/rspamd/dkim")
+DKIM_DIR = Path("/etc/opendkim/keys") if distro.is_dnf() else Path("/var/lib/rspamd/dkim")
+SA_CONF = Path("/etc/mail/spamassassin/aurora.cf")
+SA_SYSCONFIG = Path("/etc/sysconfig/spamass-milter")
+OPENDKIM_CONF = Path("/etc/opendkim.conf")
+OPENDKIM_KEYTABLE = Path("/etc/opendkim/KeyTable")
+OPENDKIM_SIGNING = Path("/etc/opendkim/SigningTable")
+OPENDKIM_TRUSTED = Path("/etc/opendkim/TrustedHosts")
+OPENDKIM_PORT = 8891
+SA_MILTER_SOCKET = "/run/spamass-milter/postfix/sock"
 LIB_DIR = Path("/usr/local/lib/aurora-mail")
 AUTOCONFIG_DIR = Path("/usr/local/share/aurora-mail/autoconfig")
 LIST_CONF = Path("/etc/aurora-mail/lists.json")
@@ -56,7 +65,7 @@ SELECTOR = "aurora"
 HEADER = "# Written by AuroraPanel (Email). Edit in the panel — changes here are overwritten.\n"
 
 PACKAGES = ["postfix", "postfix-pcre", "dovecot-core", "dovecot-imapd", "dovecot-pop3d", "dovecot-lmtpd",
-            "dovecot-sieve", "dovecot-managesieved", "rspamd", "redis-server"]
+            "dovecot-sieve", "dovecot-managesieved", *(["opendkim", "spamassassin", "spamass-milter-postfix"] if distro.is_dnf() else ["rspamd", "redis-server"])]
 MAIL_PORTS = ["25/tcp", "465/tcp", "587/tcp", "993/tcp", "995/tcp", "143/tcp", "110/tcp"]
 
 _DOMAIN = re.compile(r"^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$")
@@ -189,7 +198,7 @@ def save(s: dict) -> None:
 
 def installed() -> bool:
     return IS_LINUX and shutil.which("postfix", path=PATH) is not None and shutil.which("doveadm", path=PATH) is not None \
-        and Path("/etc/rspamd").is_dir()
+        and (Path("/etc/rspamd").is_dir() or Path("/etc/opendkim").is_dir())
 
 
 def configured() -> bool:
@@ -1071,7 +1080,7 @@ def get_spam(owner: str = "global") -> dict:
     s = load()
     if owner == "global":
         return {"owner": "global", **s["spam"], "per_user": sorted(s["spam"]["per_user"]), "accounts": sorted(s["accounts"]),
-                "rspamd": _active("rspamd"), "stats": _rspamd_stats()}
+                "rspamd": _spam_filter_active(), "stats": _rspamd_stats(), "greylist_supported": not distro.is_dnf()}
     a = _addr(owner)
     return {"owner": a, **_spam_for(s, a), "custom": a in s["spam"]["per_user"]}
 
@@ -1117,7 +1126,24 @@ def set_spam(owner: str, data: dict) -> dict:
     return {"ok": True}
 
 
+def _spam_units() -> list[str]:
+    return ["opendkim", "spamassassin", "spamass-milter"] if distro.is_dnf() else ["redis-server", "rspamd"]
+
+
+def _spam_filter_active() -> bool:
+    return _active("spamass-milter") if distro.is_dnf() else _active("rspamd")
+
+
+def _sa_stats() -> dict:
+    """What spamd logged: SpamAssassin keeps no counters of its own."""
+    text = _run(["journalctl", "-u", "spamassassin", "-q", "--no-pager", "-o", "cat", "--since", "-30d"], 20).stdout or ""
+    spam, ham = len(re.findall(r"identified spam", text)), len(re.findall(r"clean message", text))
+    return {"scanned": spam + ham, "spam": spam, "rejected": 0, "ham": ham, "learned": 0}
+
+
 def _rspamd_stats() -> dict:
+    if distro.is_dnf():
+        return _sa_stats()
     r = _run(["rspamc", "stat"], 10)
     out = {}
     for k, rx in (("scanned", r"Messages scanned: (\d+)"), ("spam", r"Messages with action add header: (\d+)"),
@@ -1297,6 +1323,61 @@ AURORA_BLOCK_DOMAIN {{ type = "from"; filter = "email:domain"; map = "{RSPAMD_MA
     }
 
 
+def render_spamassassin(s: dict) -> str:
+    """SpamAssassin's settings. X-Spam-Level carries one star per point, which the Sieve rules read, as with Rspamd."""
+    sp = s["spam"]
+    ok = lambda x: re.fullmatch(r"[A-Za-z0-9.@_+*-]+", x or "")
+    who = lambda x: x if "@" in x else f"*@{x}"
+    lines = [HEADER.rstrip(), f"required_score {max(1, int(sp['threshold']))}", "report_safe 0", "add_header all Level _STARS(*)_",
+             "add_header all Status _YESNO_, score=_SCORE_ required=_REQD_ tests=_TESTS_"]
+    lines += [f"welcomelist_from {who(x)}" for x in sp.get("allow", []) if ok(x)]
+    lines += [f"blocklist_from {who(x)}" for x in sp.get("block", []) if ok(x)]
+    return "\n".join(lines) + "\n"
+
+
+def render_opendkim_conf() -> str:
+    return HEADER + f"""PidFile /run/opendkim/opendkim.pid
+Mode sv
+Syslog yes
+SyslogSuccess yes
+UserID opendkim:opendkim
+Socket inet:{OPENDKIM_PORT}@127.0.0.1
+Umask 002
+Canonicalization relaxed/simple
+MinimumKeyBits 1024
+OversignHeaders From
+KeyTable {OPENDKIM_KEYTABLE}
+SigningTable refile:{OPENDKIM_SIGNING}
+InternalHosts refile:{OPENDKIM_TRUSTED}
+ExternalIgnoreList refile:{OPENDKIM_TRUSTED}
+MTA ORIGINATING
+"""
+
+
+def _write_opendkim_tables(s: dict) -> bool:
+    """One line per domain that has a key. True when something changed."""
+    doms = sorted(d for d in s["domains"] if not is_local(d) and _dkim_key(d).exists())
+    keys = "".join(f"{SELECTOR}._domainkey.{d} {d}:{SELECTOR}:{_dkim_key(d)}\n" for d in doms)
+    sign = "".join(f"*@{d} {SELECTOR}._domainkey.{d}\n" for d in doms)
+    changed = _write(OPENDKIM_KEYTABLE, HEADER + keys, 0o644)
+    changed = _write(OPENDKIM_SIGNING, HEADER + sign, 0o644) or changed
+    return _write(OPENDKIM_TRUSTED, HEADER + "127.0.0.1\n::1\n", 0o644) or changed
+
+
+def _setup_fedora_spam(s: dict) -> None:
+    if OPENDKIM_CONF.exists() and not OPENDKIM_CONF.read_text(errors="replace").startswith(HEADER):
+        shutil.copy2(OPENDKIM_CONF, OPENDKIM_CONF.with_name("opendkim.conf.dist"))
+    _write(OPENDKIM_CONF, render_opendkim_conf(), 0o644)
+    DKIM_DIR.mkdir(parents=True, exist_ok=True)
+    shutil.chown(DKIM_DIR, "opendkim", "opendkim")
+    # Skip mail from logged-in users (their own mail isn't scanned with Rspamd either), add headers rather than
+    # rewrite the subject, and refuse only what is certainly spam, the same limit as Rspamd's reject action.
+    t = SA_SYSCONFIG.read_text(errors="replace") if SA_SYSCONFIG.exists() else ""
+    flags = 'EXTRA_FLAGS="-a -m -r 15"'
+    t = re.sub(r"(?m)^#?\s*EXTRA_FLAGS=.*$", flags, t) if re.search(r"(?m)^#?\s*EXTRA_FLAGS=", t) else t + flags + "\n"
+    SA_SYSCONFIG.write_text(t)
+
+
 def render_lists(s: dict) -> str:
     return json.dumps({k: v for k, v in s["lists"].items()}, indent=1)
 
@@ -1351,9 +1432,15 @@ def apply(s: dict | None = None) -> dict:
             active.unlink(missing_ok=True)
             active.symlink_to("sieve/aurora.sieve")
             os.lchown(active, uid, gid)
-    for name, text in render_rspamd(s).items():
-        if _write(Path("/etc/rspamd") / name, text, 0o644):
-            changed.add("rspamd-conf" if name.startswith("local.d") else "rspamd-maps")
+    if distro.is_dnf():
+        if _write(SA_CONF, render_spamassassin(s), 0o644):
+            changed.add("spamassassin")
+        if _write_opendkim_tables(s):
+            changed.add("opendkim")
+    else:
+        for name, text in render_rspamd(s).items():
+            if _write(Path("/etc/rspamd") / name, text, 0o644):
+                changed.add("rspamd-conf" if name.startswith("local.d") else "rspamd-maps")
     _write(LIST_CONF, render_lists(s), 0o640, "root", "vmail")
     sync_dav(s)
     if "postfix-maps" in changed:
@@ -1364,6 +1451,9 @@ def apply(s: dict | None = None) -> dict:
         _run(["doveadm", "reload"], 30)
     if "rspamd-conf" in changed:
         _run(["systemctl", "reload-or-restart", "rspamd"], 60)
+    for unit in ("spamassassin", "opendkim"):
+        if unit in changed:
+            _run(["systemctl", "try-restart", unit], 60)
     return {"ok": True, "changed": sorted(changed)}
 
 
@@ -1398,7 +1488,7 @@ def status() -> dict:
           "hostname_mode": s.get("hostname_mode", "auto"),
           "ip": _public_ip(), "domains": len(s["domains"]), "accounts": len(s["accounts"]),
           "forwarders": len(s["forwarders"]), "lists": len(s["lists"]),
-          "services": {u: _active(u) for u in ("postfix", "dovecot", "rspamd", "redis-server")} if inst else {},
+          "services": {u: _active(u) for u in ("postfix", "dovecot", *_spam_units())} if inst else {},
           "webmail": webmail_url(), "webmail_installed": webmail_installed(), "dav_installed": dav_installed()}
     if inst and configured():
         st["queue"] = len(_queue())
@@ -1442,7 +1532,7 @@ def setup(log, host: str | None = None) -> dict:
     VMAIL.mkdir(parents=True, exist_ok=True)
     os.chown(VMAIL, uid, gid)
     os.chmod(VMAIL, 0o750)
-    for d in (PF_DIR, SIEVE_DIR, RSPAMD_MAPS, LIB_DIR, LIST_CONF.parent, TLS_DIR):
+    for d in (PF_DIR, SIEVE_DIR, *([] if distro.is_dnf() else [RSPAMD_MAPS]), LIB_DIR, LIST_CONF.parent, TLS_DIR):
         d.mkdir(parents=True, exist_ok=True)
     shutil.chown(LIST_CONF.parent, "root", "vmail")
     os.chmod(LIST_CONF.parent, 0o750)
@@ -1479,11 +1569,15 @@ def setup(log, host: str | None = None) -> dict:
     # Autoconfig for Thunderbird & co.
     _write(AUTOCONFIG_DIR / "config-v1.1.xml", AUTOCONFIG_XML.format(host=host), 0o644)
     _apache_autoconfig()
-    # Rspamd: allow/block maps must exist before rspamd reads multimap.
-    for n in ("allow_addr", "allow_domain", "block_addr", "block_domain"):
-        (RSPAMD_MAPS / f"{n}.map").touch()
-    DKIM_DIR.mkdir(parents=True, exist_ok=True)
-    shutil.chown(DKIM_DIR, "_rspamd" if _user_exists("_rspamd") else "root", None)
+    if distro.is_dnf():
+        _setup_fedora_spam(s)
+        _run(["restorecon", "-R", str(VMAIL), str(TLS_DIR)], 120)  # these folders were just created with the wrong label
+    else:
+        # Rspamd: allow/block maps must exist before rspamd reads multimap.
+        for n in ("allow_addr", "allow_domain", "block_addr", "block_domain"):
+            (RSPAMD_MAPS / f"{n}.map").touch()
+        DKIM_DIR.mkdir(parents=True, exist_ok=True)
+        shutil.chown(DKIM_DIR, "_rspamd" if _user_exists("_rspamd") else "root", None)
     # Mail works from the first minute, domain or not: you@<hostname>.local for alerts,
     # apps and webmail on this server (unless it was turned off on purpose).
     if not s.get("local_off"):
@@ -1492,7 +1586,7 @@ def setup(log, host: str | None = None) -> dict:
         log(f"• Local mail is on: addresses like info@{local_domain_name()} work on this server")
     apply(s)
     log("• Starting services")
-    for u in ("redis-server", "rspamd", "dovecot", "postfix"):
+    for u in (*_spam_units(), "dovecot", "postfix"):
         _run(["systemctl", "enable", u], 60)
         r = _run(["systemctl", "restart", u], 120)
         log(f"  {u}: {'running' if r.returncode == 0 and _active(u) else 'FAILED — ' + _run(['systemctl', 'status', u, '--no-pager', '-n', '8']).stdout[-600:]}")
@@ -1518,6 +1612,9 @@ def _user_exists(u: str) -> bool:
 
 
 def _ufw_allow() -> None:
+    from . import firewall
+    if firewall.open_ports(*MAIL_PORTS):
+        return
     if "Status: active" in _run(["ufw", "status"]).stdout:
         for p in MAIL_PORTS:
             _run(["ufw", "allow", p])
@@ -1703,7 +1800,8 @@ def postfix_settings(host: str, cert: str, key: str) -> dict:
         # master.cf -o values can't contain spaces, so the submission ports reference this.
         "aurora_submission_sender": f"reject_sender_login_mismatch,check_sasl_access {m}/sasl_access",
         "smtp_address_preference": "ipv4",
-        "smtpd_milters": "inet:127.0.0.1:11332", "non_smtpd_milters": "inet:127.0.0.1:11332",
+        "smtpd_milters": f"inet:127.0.0.1:{OPENDKIM_PORT},unix:{SA_MILTER_SOCKET}" if distro.is_dnf() else "inet:127.0.0.1:11332",
+        "non_smtpd_milters": f"inet:127.0.0.1:{OPENDKIM_PORT}" if distro.is_dnf() else "inet:127.0.0.1:11332",
         "milter_default_action": "accept", "milter_protocol": "6",
         "milter_mail_macros": "i {mail_addr} {client_addr} {client_name} {auth_authen}",
         "message_size_limit": "52428800", "mailbox_size_limit": "0", "biff": "no",
@@ -1721,9 +1819,11 @@ def postfix_services() -> list[tuple[str, str, list[str]]]:
            "smtpd_sender_restrictions=$aurora_submission_sender",
            "smtpd_recipient_restrictions=permit_sasl_authenticated,reject",
            "smtpd_relay_restrictions=permit_sasl_authenticated,reject", "milter_macro_daemon_name=ORIGINATING"]
+    # Fedora's Postfix runs nothing chrooted: its sockets (the spam filter's, for one) don't exist inside /var/spool/postfix.
+    chroot = "n" if distro.is_dnf() else "y"
     return [
-        ("submission/inet", "submission inet n - y - - smtpd", ["syslog_name=postfix/submission", *sub]),
-        ("submissions/inet", "submissions inet n - y - - smtpd",
+        ("submission/inet", f"submission inet n - {chroot} - - smtpd", ["syslog_name=postfix/submission", *sub]),
+        ("submissions/inet", f"submissions inet n - {chroot} - - smtpd",
          ["syslog_name=postfix/submissions", "smtpd_tls_wrappermode=yes", *sub]),
         ("auroralist/unix", f"auroralist unix - n n - - pipe flags=Rq user=vmail argv=/usr/bin/python3 {LIB_DIR}/list.py ${{recipient}} ${{sender}}", []),
     ]
@@ -1940,7 +2040,13 @@ def ensure_dkim(d: str) -> str | None:
         if r.returncode != 0:
             return None
         os.chmod(key, 0o640)
-        shutil.chown(key, "root", "_rspamd" if _user_exists("_rspamd") else None)
+        if distro.is_dnf():
+            shutil.chown(key, "root", "opendkim")
+            _run(["restorecon", str(key)])
+            if _write_opendkim_tables(load()):
+                _run(["systemctl", "try-restart", "opendkim"], 60)
+        else:
+            shutil.chown(key, "root", "_rspamd" if _user_exists("_rspamd") else None)
     return dkim_record(d)
 
 
@@ -2597,6 +2703,10 @@ RedirectMatch 301 ^/\\.well-known/(caldav|carddav)$ /dav/
     ProxyPassReverse http://127.0.0.1:5232/
     ProxyPreserveHost On
     RequestHeader set X-Script-Name /dav
+    # The WAF's rule set refuses PROPFIND and REPORT, the methods calendar apps run on. Radicale asks for a login itself.
+    <IfModule security2_module>
+        SecRuleEngine Off
+    </IfModule>
 </Location>
 """)
     out = []

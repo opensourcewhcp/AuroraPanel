@@ -17,6 +17,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from . import distro
 from . import jobs
 from . import problems
 
@@ -26,7 +27,7 @@ except ImportError:  # pragma: no cover
     pwd = None
 
 STATE = Path("/var/lib/aurora/isolation.json")
-PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
+PATH = distro.PATH
 SESS_BASE = Path("/var/lib/php/aurora-sessions")
 TMP_BASE = Path("/var/lib/php/aurora-tmp")
 

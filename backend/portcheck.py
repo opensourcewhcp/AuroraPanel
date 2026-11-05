@@ -58,6 +58,11 @@ def _listener(port: int, proto: str) -> dict:
 
 
 def _ufw(port: int, proto: str) -> dict:
+    from . import firewall
+    if firewall._firewalld():
+        st = firewall.status()
+        allowed = any(re.match(rf"(?:\S*,)?{port}(/{proto})?\b.*ALLOW", r["rule"]) for r in st["rules"])
+        return {"installed": True, "active": st["active"], "allowed": allowed}
     ufw = shutil.which("ufw", path=APT_ENV["PATH"])
     if not ufw:
         return {"installed": False, "active": False, "allowed": None}

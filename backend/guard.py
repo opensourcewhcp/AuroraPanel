@@ -24,6 +24,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from . import distro
 from . import problems
 from .vpncommon import default_route, load_json, save_json, write_secret
 
@@ -40,7 +41,7 @@ class GuardError(RuntimeError):
 
 
 def _nft() -> str:
-    n = shutil.which("nft", path="/usr/sbin:/usr/bin:/sbin:/bin")
+    n = shutil.which("nft", path=distro.PATH)
     if not n:
         raise GuardError("nftables is not installed (apt install nftables)")
     return n

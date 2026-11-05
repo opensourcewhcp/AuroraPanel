@@ -26,11 +26,12 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from . import distro
 from . import problems
 
 STATE = Path("/var/lib/aurora/autossl.json")
 LE_LIVE = Path("/etc/letsencrypt/live")
-PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
+PATH = distro.PATH
 RENEW_DAYS = 20
 RETRY_HOURS = 23
 

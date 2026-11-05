@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AuroraPanel installer — Raspberry Pi OS / Debian / Ubuntu.
+# AuroraPanel installer — Raspberry Pi OS / Debian / Ubuntu / Fedora.
 #
 #   sudo bash install.sh                 # interactive: asks which port
 #   sudo bash install.sh --port 9000     # non-interactive
@@ -127,6 +127,13 @@ if [ $UNINSTALL = 1 ]; then
   if [ -n "$OLD_PORT" ] && command -v ufw >/dev/null && ufw status 2>/dev/null | grep -qE "^${OLD_PORT}/tcp"; then
     ufw delete allow "${OLD_PORT}/tcp" >/dev/null && ok "Removed the ufw rule for ${OLD_PORT}/tcp"
   fi
+  if [ -n "$OLD_PORT" ] && command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1 \
+     && firewall-cmd --permanent --query-port="${OLD_PORT}/tcp" >/dev/null 2>&1; then
+    firewall-cmd --quiet --permanent --remove-port="${OLD_PORT}/tcp" && firewall-cmd --quiet --reload \
+      && ok "Removed the firewalld rule for ${OLD_PORT}/tcp"
+  fi
+  command -v semanage >/dev/null && semanage fcontext -d "${APP_DIR}/\.venv/bin(/.*)?" 2>/dev/null || true
+  rm -rf /usr/local/lib/aurora
   ok "Service removed"
 
   say "Removing helpers"
@@ -290,10 +297,24 @@ command -v ss >/dev/null || NEED+=(iproute2)
 command -v curl >/dev/null || NEED+=(curl)
 command -v openssl >/dev/null || NEED+=(openssl)
 if [ ${#NEED[@]} -gt 0 ]; then
-  command -v apt-get >/dev/null || die "Missing: ${NEED[*]} — install them and re-run."
   say "Installing: ${NEED[*]}"
-  DEBIAN_FRONTEND=noninteractive apt-get update -qq
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${NEED[@]}" >/dev/null
+  if command -v apt-get >/dev/null; then
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${NEED[@]}" >/dev/null
+  elif command -v dnf >/dev/null; then
+    # Fedora's names: venv ships inside python3 itself, and iproute2 is "iproute".
+    DNF_NEED=()
+    for p in "${NEED[@]}"; do
+      case "$p" in
+        python3-venv) DNF_NEED+=(python3) ;;
+        iproute2)     DNF_NEED+=(iproute) ;;
+        *)            DNF_NEED+=("$p") ;;
+      esac
+    done
+    dnf install -y -q "${DNF_NEED[@]}" >/dev/null
+  else
+    die "Missing: ${NEED[*]} — install them and re-run."
+  fi
 fi
 PYV="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
 python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' || die "Python 3.10+ required (found $PYV)."
@@ -308,12 +329,44 @@ fi
 .venv/bin/python -m pip install --quiet --upgrade pip
 if ! .venv/bin/python -m pip install --quiet -r requirements.txt; then
   # No prebuilt wheel for this Pi (e.g. 32-bit / older OS) — build from source.
-  command -v apt-get >/dev/null || die "pip install failed."
+  command -v apt-get >/dev/null || command -v dnf >/dev/null || die "pip install failed."
   warn "Prebuilt packages unavailable — installing build tools and retrying (this can take a while on older Pis)"
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential python3-dev libffi-dev >/dev/null
+  if command -v apt-get >/dev/null; then
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential python3-dev libffi-dev >/dev/null
+  else
+    dnf install -y -q gcc make python3-devel libffi-devel rust cargo >/dev/null
+  fi
   .venv/bin/python -m pip install --quiet -r requirements.txt || die "pip install failed — see errors above."
 fi
 ok "Dependencies installed"
+
+# --- SELinux (Fedora) ---------------------------------------------------------
+# With SELinux enforcing, systemd may not start a program labelled as a home-folder file,
+# and the service fails with 203/EXEC "Permission denied". Label the venv's programs as
+# ordinary executables. They then run unconfined, as a service started from /usr/bin does.
+if command -v getenforce >/dev/null && [ "$(getenforce 2>/dev/null)" != "Disabled" ]; then
+  VENV_BIN="${APP_DIR}/.venv/bin"
+  if command -v semanage >/dev/null && command -v restorecon >/dev/null; then
+    semanage fcontext -a -t bin_t "${VENV_BIN}(/.*)?" 2>/dev/null \
+      || semanage fcontext -m -t bin_t "${VENV_BIN}(/.*)?" \
+      || warn "Could not save the SELinux label rule for ${VENV_BIN}"
+    restorecon -R "$VENV_BIN"
+  else
+    chcon -R -h -t bin_t "$VENV_BIN"
+    warn "semanage is missing, so the SELinux label lasts until a full relabel (dnf install policycoreutils-python-utils, then re-run)"
+  fi
+  ok "SELinux: labelled the panel's programs"
+fi
+
+# --- Fedora: Debian-named commands for the panel ------------------------------
+# Only the panel's own PATH reaches this folder. See backend/fedora_compat.py.
+COMPAT_DIR=/usr/local/lib/aurora/compat
+UNIT_PATH=""
+if ! command -v apt-get >/dev/null && command -v dnf >/dev/null; then
+  /usr/bin/python3 "$APP_DIR/backend/fedora_compat.py" install || die "Could not set up the Fedora compatibility commands."
+  UNIT_PATH="Environment=PATH=${COMPAT_DIR}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  ok "Fedora compatibility commands ready"
+fi
 
 # --- leftovers from earlier installs ----------------------------------------
 # A Panel HTTPS drop-in whose certificate is gone or broken would stop the panel
@@ -376,6 +429,7 @@ User=root
 WorkingDirectory=${APP_DIR}
 Environment=HOST=0.0.0.0
 Environment=PORT=${PORT}
+${UNIT_PATH}
 ${PANEL_USER:+Environment=AURORA_USER=${PANEL_USER}}
 ${EXTRA_ENV}
 ExecStart=${APP_DIR}/.venv/bin/python -m backend.serve backend.app:app --host 0.0.0.0 --port ${PORT}
@@ -403,6 +457,13 @@ if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active
   ok "ufw is active — allowed ${PORT}/tcp"
   if [ -n "$CURRENT_PORT" ] && [ "$CURRENT_PORT" != "$PORT" ]; then
     warn "The old panel port ${CURRENT_PORT}/tcp is still allowed in ufw (remove it with: sudo ufw delete allow ${CURRENT_PORT}/tcp)"
+  fi
+elif command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1; then
+  firewall-cmd --quiet --permanent --add-port="${PORT}/tcp" && firewall-cmd --quiet --reload \
+    || warn "Could not open ${PORT}/tcp in firewalld, so the panel may not be reachable from other computers"
+  ok "firewalld is active — allowed ${PORT}/tcp"
+  if [ -n "$CURRENT_PORT" ] && [ "$CURRENT_PORT" != "$PORT" ]; then
+    warn "The old panel port ${CURRENT_PORT}/tcp is still allowed in firewalld (remove it with: sudo firewall-cmd --permanent --remove-port=${CURRENT_PORT}/tcp && sudo firewall-cmd --reload)"
   fi
 fi
 

@@ -20,11 +20,12 @@ import subprocess
 import time
 from pathlib import Path
 
+from . import distro
 from . import jobs
 from . import problems
 
 BASE = Path("/opt/aurora-apps")
-PATH = "/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bin"
+PATH = distro.PATH + ":/usr/local/bin"
 _NAME = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
 
 
@@ -564,6 +565,14 @@ def _tls_pair(name: str) -> tuple[str, str]:
 
 
 def _ufw(args: list[str]) -> None:
+    from . import firewall
+    if firewall._firewalld():
+        # Only "allow <port>/<proto>" and "delete allow <port>/<proto>" have a plain firewalld twin.
+        if args[:1] == ["allow"] and len(args) == 2:
+            firewall.open_ports(args[1])
+        elif args[:2] == ["delete", "allow"] and len(args) == 3:
+            firewall.close_ports(args[2])
+        return
     # "Status: inactive" contains "active" too, so match the whole status word.
     if shutil.which("ufw", path=PATH) and re.search(r"(?im)^Status:\s*active\b", _run(["ufw", "status"], 20).stdout or ""):
         _run(["ufw"] + args, 60)

@@ -37,11 +37,12 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from . import distro
 from . import jobs
 from . import problems
 
 BASE = Path("/var/lib/aurora/connectors")
-PATH = "/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bin"
+PATH = distro.PATH + ":/usr/local/bin"
 AUTH_PORT = 53682
 AUTH_TIMEOUT = 600  # a sign-in left open longer than this is dropped
 

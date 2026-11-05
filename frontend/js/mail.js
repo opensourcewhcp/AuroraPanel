@@ -143,7 +143,8 @@ window.AuroraMail = (ui) => {
         el("span", { class: "em-hero-ico" }, icon("mail", 30)),
         el("div", {}, [
           el("h2", { text: "Your mail server" }),
-          el("div", { class: "em-svcs" }, [svc("Postfix", st.services.postfix), svc("Dovecot", st.services.dovecot), svc("Rspamd", st.services.rspamd), svc("Redis", st.services["redis-server"])]),
+          el("div", { class: "em-svcs" }, [svc("Postfix", st.services.postfix), svc("Dovecot", st.services.dovecot), ...(st.services.spamassassin !== undefined ? [svc("SpamAssassin", st.services.spamassassin), svc("OpenDKIM", st.services.opendkim)]
+            : [svc("Rspamd", st.services.rspamd), svc("Redis", st.services["redis-server"])])]),
           el("p", { class: "muted", html: `Server name <b>${esc(st.hostname)}</b> · IP <b>${esc(st.ip || "?")}</b> · ${st.queue ? `<b>${st.queue}</b> message(s) waiting in the queue` : "queue empty"}` }),
         ]),
       ]),
@@ -1081,7 +1082,7 @@ window.AuroraMail = (ui) => {
   async function viewSpam(root) {
     let accs = [];
     try { accs = (await API.mailAccounts()).accounts.map((a) => a.address); } catch (e) {}
-    root.append(pageHead("Spam Filters", "Rspamd scores every incoming message. Decide what happens to the ones it marks as spam."));
+    root.append(pageHead("Spam Filters", "The spam filter scores every incoming message. Decide what happens to the ones it marks as spam."));
     const sel = el("select", {}, [el("option", { value: "global", text: "All accounts (server default)" }), ...accs.map((a) => el("option", { value: a, text: a }))]);
     sel.value = state.mailOwner && accs.includes(state.mailOwner) ? state.mailOwner : "global";
     const body = el("div");
@@ -1107,11 +1108,11 @@ window.AuroraMail = (ui) => {
       if (!g) body.append(el("div", { class: `dm-note ${d.custom ? "" : "good"}` }, [icon("info", 15), el("span", { text: d.custom ? "This account has its own spam settings." : "This account follows the server default, saving here gives it its own settings." }),
         d.custom ? btn("Use server default", () => call(() => API.mailSpamSave(sel.value, { reset: true }), "Back to the server default", draw), "btn-ghost") : null].filter(Boolean)));
       body.append(el("div", { class: "card" }, [
-        toggle("enabled", "Process new mail and act on spam", "Rspamd marks suspicious messages with a score; the rules below decide what happens."),
+        toggle("enabled", "Process new mail and act on spam", "The spam filter marks suspicious messages with a score; the rules below decide what happens."),
         el("div", { class: "em-sp-thr" }, [el("span", { class: "em-sub", text: "Spam threshold score" }), el("div", { class: "em-range-row" }, [thr, el("div", { class: "em-levels" }, LEVELS.map(([n, l]) => el("button", { type: "button", class: "em-tag", text: l, onclick: () => { thr.value = n; desc(); } })))]), thrTxt]),
         toggle("junk", "Move spam to the Junk folder (Spam Box)", "Recommended, nothing is lost; check Junk now and then."),
         toggle("autodelete", "Automatically delete obvious spam", "Permanently deletes messages scoring at or above:", el("div", { class: "toolbar" }, [del, el("span", { class: "muted", text: "Keep it well above the threshold." })])),
-        g ? toggle("greylist", "Greylisting", "Ask unknown senders to retry a few minutes later, spam robots usually don't. Delays the first mail from new senders.") : null,
+        g && d.greylist_supported !== false ? toggle("greylist", "Greylisting", "Ask unknown senders to retry a few minutes later, spam robots usually don't. Delays the first mail from new senders.") : null,
         el("div", { class: "em-grid2" }, [field("Always allow (whitelist)", listEd("allow", "friend@example.com\ntrusted-company.com"), "Addresses or whole domains, one per line."),
           field("Always block (blacklist)", listEd("block", "spammer@example.com\nbad-domain.biz"), "Mail from these is rejected or dropped.")]),
         el("div", { class: "toolbar" }, [btn("Save", () => call(() => API.mailSpamSave(sel.value, v), "Spam settings saved", draw), "btn-primary")]),

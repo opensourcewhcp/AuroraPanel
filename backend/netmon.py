@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 from .vpncommon import VPNError, default_route, run, unit_state
+from . import distro
 from . import problems
 
 MON_FILE = Path("/var/lib/aurora/netmon.nft")
@@ -52,7 +53,7 @@ def _service_names() -> dict[int, str]:
 
 # ---- enable / disable the connection log ----
 def set_logging(on: bool) -> dict:
-    nft = shutil.which("nft", path="/usr/sbin:/usr/bin:/sbin:/bin")
+    nft = shutil.which("nft", path=distro.PATH)
     if not nft:
         raise VPNError("nftables is not installed (install any VPN, or `apt install nftables`)")
     if on:
@@ -262,7 +263,7 @@ def summary(hours: int = 24, scope: str = "all") -> dict:
         e["status"] = marks.get(e.get("ip"))
     return {
         "logging": unit_state("aurora-netmon.service")["active"],
-        "nft": bool(shutil.which("nft", path="/usr/sbin:/usr/bin:/sbin:/bin")),
+        "nft": bool(shutil.which("nft", path=distro.PATH)),
         "hours": hours, "scope": scope, "lan": lan, "total": sum(d["count"] for d in by_ip.values()),
         "sources": sources, "ports": ports, "events": events, "recent": recent,
         "failed_logins": sum(1 for e in events if e["kind"] == "login" and e["outcome"] == "fail"),

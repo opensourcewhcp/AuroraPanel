@@ -16,10 +16,11 @@ import subprocess
 import time
 from pathlib import Path
 
+from . import distro
 from . import jobs
 
 IS_LINUX = platform.system() == "Linux"
-_APT_ENV = {"DEBIAN_FRONTEND": "noninteractive", "PATH": "/usr/sbin:/usr/bin:/sbin:/bin"}
+_APT_ENV = {"DEBIAN_FRONTEND": "noninteractive", "PATH": distro.PATH}
 # Wait for a background apt/unattended-upgrades run instead of failing on the lock.
 _APT = ["apt-get", "-o", "DPkg::Lock::Timeout=600", "-y"]
 
@@ -80,7 +81,7 @@ WEB_SERVERS = [k for k, v in CATALOG.items() if v["group"] == "web"]
 # Server software the panel installs on demand (requires.COMPONENTS) — listed here too so it can be
 # started, stopped and configured in one place. "view" is the panel page that configures it.
 SERVER_APPS: dict[str, dict] = {
-    "mail": {"units": ["postfix", "dovecot", "rspamd", "redis-server"], "procs": ("master", "smtpd", "qmgr", "pickup", "dovecot", "imap", "pop3", "lmtp", "auth", "rspamd", "redis-server"),
+    "mail": {"units": ["postfix", "dovecot", *(["opendkim", "spamassassin", "spamass-milter"] if distro.is_dnf() else ["rspamd", "redis-server"])], "procs": ("master", "smtpd", "qmgr", "pickup", "dovecot", "imap", "pop3", "lmtp", "auth", "rspamd", "opendkim", "spamd", "spamass-milter", "redis-server"),
              "view": "email", "ram": "~120–200 MB"},
     "webmail": {"units": [], "procs": (), "view": "mailaccounts", "ram": "runs inside Apache/PHP", "ext": "/webmail/", "name": "Webmail"},
     "dav": {"units": ["radicale"], "procs": ("radicale",), "view": "calendars", "ram": "~20–30 MB", "name": "Calendars & Contacts"},
@@ -369,7 +370,7 @@ def install(app_id: str, switch: bool = False) -> jobs.Job:
 def uninstall(app_id: str) -> jobs.Job:
     _require_linux()
     v = _app(app_id)
-    if app_id == "redis":
+    if app_id == "redis" and not distro.is_dnf():  # Fedora's spam filter doesn't use Redis
         from . import requires
         if requires.installed("mail"):
             raise SysAppError("Email's spam filter (Rspamd) uses Redis, so it stays while Email is installed")

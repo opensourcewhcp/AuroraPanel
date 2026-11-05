@@ -1645,7 +1645,7 @@
   function renderFwCard(c, f) {
     const avail = f && f.available, active = avail && f.active;
     c.classList.toggle("is-off", !active);
-    c.innerHTML = `${bcHead("lock", avail ? (active ? "Active" : "Inactive") : "Not installed", "Firewall · ufw")}
+    c.innerHTML = `${bcHead("lock", avail ? (active ? "Active" : "Inactive") : "Not installed", `Firewall · ${(f && f.backend) || "ufw"}`)}
       <div class="lock-ring">${I("lock", 22)}</div>
       <button class="slide-btn" data-go="firewall"><span class="slide-knob">${I("chevron", 14)}</span>${avail ? `${f.rules.length} rule${f.rules.length === 1 ? "" : "s"} · manage` : "Set up"}</button>`;
   }
@@ -3147,7 +3147,7 @@
       el("button", { class: "btn btn-sm btn-primary", text: "⬆ Upgrade all", onclick: () => confirmInline("Upgrade all upgradable packages?") && runPkgJob(API.pkgUpgrade(), "apt upgrade") }),
     ]);
     const searchBar = el("div", { class: "toolbar" }, [
-      el("input", { id: "pkg-q", type: "text", placeholder: "Search apt packages…", style: "max-width:320px",
+      el("input", { id: "pkg-q", type: "text", placeholder: "Search packages…", style: "max-width:320px",
         onkeydown: (e) => { if (e.key === "Enter") doSearch(); } }),
       el("button", { class: "btn btn-sm", text: "Search", onclick: () => doSearch() }),
     ]);
@@ -4580,7 +4580,7 @@
         const data = await API.firewall();
         body.innerHTML = "";
         if (!data.available) {
-          body.append(el("p", { class: "empty", text: "ufw is not installed. Install it from the Packages section to manage the firewall." }));
+          body.append(el("p", { class: "empty", text: "No firewall is installed (ufw or firewalld). Install one from the Packages section to manage it." }));
           return;
         }
         const head = el("div", { class: "card", style: "margin-bottom:16px" }, [
@@ -8800,7 +8800,7 @@
       await guardedLoad(async () => {
         const d = await API.sysapps();
         body.innerHTML = "";
-        if (!d.supported) { body.append(el("p", { class: "empty", text: "apt/systemd not available on this host." })); return; }
+        if (!d.supported) { body.append(el("p", { class: "empty", text: "One-click install is not available on this system yet." })); return; }
         body.append(
           el("h3", { text: "Web servers" }), grid(d.apps.filter((a) => a.group === "web")),
           el("h3", { text: "Databases" }), grid(d.apps.filter((a) => a.group === "db")),
@@ -9421,7 +9421,7 @@
         catch (e) { card.innerHTML = ""; card.append(srvHead("Server updates", "packages"), el("p", { class: "muted", text: e.message })); return; }
         card.innerHTML = "";
         card.classList.remove("good", "warn", "bad");
-        if (!d.supported) { card.append(srvHead("Server updates", "packages"), el("p", { class: "muted", text: "This system has no apt, so the panel can't check its packages." })); return; }
+        if (!d.supported) { card.append(srvHead("Server updates", "packages"), el("p", { class: "muted", text: "This system has no supported package manager, so the panel can't check its packages." })); return; }
         const sec = (d.packages || []).filter((p) => p.security);
         const n = (k, w) => `${k} ${w}${k === 1 ? "" : "s"}`;
         const names = (l) => l.slice(0, 4).map((p) => p.name).join(", ") + (l.length > 4 ? ` and ${l.length - 4} more` : "");

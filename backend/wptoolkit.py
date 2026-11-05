@@ -17,6 +17,7 @@ import time
 import urllib.request
 from pathlib import Path
 
+from . import distro
 from . import jobs
 
 try:
@@ -26,7 +27,7 @@ except ImportError:  # pragma: no cover
 
 PHAR = Path("/usr/local/lib/aurora/wp-cli.phar")
 PHAR_URL = "https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar"
-PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
+PATH = distro.PATH
 
 
 class WPError(RuntimeError):

@@ -16,13 +16,14 @@ import time
 import urllib.request
 from datetime import datetime
 from pathlib import Path
+from . import distro
 from . import problems
 
 STATE = Path("/var/lib/aurora/alerts.json")
 SNOOZE = Path("/var/lib/aurora/alerts-snooze.json")  # own file: written from Slack buttons in the panel process
-PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
+PATH = distro.PATH
 LEVELS = {"critical": 3, "warning": 2, "info": 1}
-WATCH_DEFAULT = ["apache2", "nginx", "mariadb", "postgresql", "postfix", "dovecot", "rspamd", "named", "fail2ban", "vsftpd",
+WATCH_DEFAULT = ["apache2", "nginx", "mariadb", "postgresql", "postfix", "dovecot", "rspamd", "spamassassin", "opendkim", "named", "fail2ban", "vsftpd",
                  "wg-quick@wg0", "openvpn-server@server", "docker", "php*-fpm"]
 
 

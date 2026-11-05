@@ -6,6 +6,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from . import distro
 from . import jobs
 
 IS_LINUX = platform.system() == "Linux"
@@ -42,5 +43,5 @@ def set_enabled(enabled: bool) -> dict:
 
 
 def install() -> jobs.Job:
-    env = {"DEBIAN_FRONTEND": "noninteractive", "PATH": "/usr/sbin:/usr/bin:/sbin:/bin"}
+    env = {"DEBIAN_FRONTEND": "noninteractive", "PATH": distro.PATH}
     return jobs.launch("install ModSecurity", ["apt-get", "-y", "install", "libapache2-mod-security2"], env=env)

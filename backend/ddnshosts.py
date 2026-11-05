@@ -22,6 +22,7 @@ import threading
 import time
 from pathlib import Path
 
+from . import distro
 from . import dnszones
 
 STATE = Path("/var/lib/aurora/ddns-hosts.json")
@@ -290,7 +291,7 @@ def ensure_proxy() -> bool:
         return True
     old = APACHE.read_text() if APACHE.exists() else None
     APACHE.write_text(text)
-    env = {**os.environ, "PATH": "/usr/sbin:/usr/bin:/sbin:/bin"}
+    env = {**os.environ, "PATH": distro.PATH}
     mods = ["proxy", "proxy_http"] + (["ssl"] if "SSLProxyEngine" in text else [])
     subprocess.run(["a2enmod", "-q", *mods], capture_output=True, env=env, timeout=30)
     subprocess.run(["a2enconf", "-q", "zz-aurora-ddns"], capture_output=True, env=env, timeout=30)

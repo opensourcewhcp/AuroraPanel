@@ -19,6 +19,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from . import distro
 from . import jobs
 from . import problems
 
@@ -26,7 +27,7 @@ IS_LINUX = platform.system() == "Linux"
 LOCAL = Path("/etc/fail2ban/jail.d/zz-aurora.local")
 ACTION = Path("/etc/fail2ban/action.d/aurora-guard.conf")
 FILTERS = Path("/etc/fail2ban/filter.d")
-APT_ENV = {"DEBIAN_FRONTEND": "noninteractive", "PATH": "/usr/sbin:/usr/bin:/sbin:/bin"}
+APT_ENV = {"DEBIAN_FRONTEND": "noninteractive", "PATH": distro.PATH}
 
 _CUSTOM_FILTERS = {
     "aurora-panel": """[INCLUDES]

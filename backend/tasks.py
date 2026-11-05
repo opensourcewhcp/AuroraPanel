@@ -17,6 +17,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from . import distro
+
 STATE = Path("/var/lib/aurora/tasks.json")
 LOCK = Path("/run/aurora-tasks.lock")
 UNIT = Path("/etc/systemd/system/aurora-tasks.service")
@@ -118,7 +120,7 @@ def ensure_timer() -> bool:
             pass
         p.write_text(text)
         changed = True
-    env = {**os.environ, "PATH": "/usr/sbin:/usr/bin:/sbin:/bin"}
+    env = {**os.environ, "PATH": distro.PATH}
     if changed:
         subprocess.run(["systemctl", "daemon-reload"], capture_output=True, env=env, timeout=60)
     active = subprocess.run(["systemctl", "is-active", "aurora-tasks.timer"], capture_output=True, text=True, env=env, timeout=30).stdout.strip()
@@ -129,7 +131,7 @@ def ensure_timer() -> bool:
 
 def status() -> dict:
     s = _load()
-    env = {**os.environ, "PATH": "/usr/sbin:/usr/bin:/sbin:/bin"}
+    env = {**os.environ, "PATH": distro.PATH}
     active = subprocess.run(["systemctl", "is-active", "aurora-tasks.timer"], capture_output=True, text=True, env=env, timeout=30).stdout.strip()
     return {"timer": active, "last_run": s.get("last_run"), "last": s.get("last", {})}
 

@@ -25,6 +25,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from . import distro
 from . import backups
 from . import problems
 
@@ -33,7 +34,7 @@ RCLONE_CONF = Path("/var/lib/aurora/rclone.conf")
 KEYS = Path("/var/lib/aurora/backup-keys")
 RUN_LOGS = Path("/var/lib/aurora/backup-runs")
 LOCAL_BASE = backups.BACKUP_DIR / "scheduled"
-PATH = "/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bin"
+PATH = distro.PATH + ":/usr/local/bin"
 FREQS = {"hourly": 3600, "daily": 86400, "weekly": 7 * 86400, "monthly": 30 * 86400}
 DEST_TYPES = ("local", "s3", "b2", "sftp", "webdav", "rclone")
 S3_PROVIDERS = {"AWS": "Amazon S3", "Cloudflare": "Cloudflare R2", "Wasabi": "Wasabi", "DigitalOcean": "DigitalOcean Spaces",
@@ -348,7 +349,7 @@ def _what_paths(what: dict) -> tuple[list[str], list[str], list[str]]:
         from . import files
         paths.append(str(files._default_user_home()))
     if what.get("mail"):
-        paths += [p for p in ("/var/vmail", "/var/lib/aurora/mail", "/var/lib/rspamd/dkim", "/var/lib/radicale") if Path(p).exists()]
+        paths += [p for p in ("/var/vmail", "/var/lib/aurora/mail", "/var/lib/rspamd/dkim", "/etc/opendkim/keys", "/var/lib/radicale") if Path(p).exists()]
     if what.get("panel"):
         from . import config
         paths += [p for p in (str(config.CONFIG_PATH), "/var/lib/aurora", "/etc/apache2", "/etc/postfix", "/etc/dovecot", "/etc/bind",

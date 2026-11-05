@@ -8,6 +8,7 @@ import socket
 import subprocess
 from pathlib import Path
 
+from . import distro
 from . import jobs
 from . import problems
 
@@ -248,7 +249,7 @@ def dyndns_status() -> dict:
 
 
 def dyndns_install() -> jobs.Job:
-    env = {"DEBIAN_FRONTEND": "noninteractive", "PATH": "/usr/sbin:/usr/bin:/sbin:/bin"}
+    env = {"DEBIAN_FRONTEND": "noninteractive", "PATH": distro.PATH}
     return jobs.launch("install ddclient", ["apt-get", "-y", "install", "ddclient"], env=env)
 
 
@@ -286,5 +287,5 @@ def zone_content(name: str) -> dict:
 
 
 def bind_install() -> jobs.Job:
-    env = {"DEBIAN_FRONTEND": "noninteractive", "PATH": "/usr/sbin:/usr/bin:/sbin:/bin"}
+    env = {"DEBIAN_FRONTEND": "noninteractive", "PATH": distro.PATH}
     return jobs.launch("install BIND9", ["apt-get", "-y", "install", "bind9"], env=env)

@@ -27,11 +27,12 @@ import subprocess
 import time
 from pathlib import Path
 
+from . import distro
 from . import jobs
 from . import problems
 
 BASE = Path("/var/lib/aurora/cloud")
-PATH = "/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bin"
+PATH = distro.PATH + ":/usr/local/bin"
 
 PROVIDERS = {
     "aws": {"name": "Amazon Web Services", "short": "AWS", "cli": "aws", "component": "awscli",

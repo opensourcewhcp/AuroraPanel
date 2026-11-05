@@ -58,7 +58,8 @@ sudo bash install.sh
 ```
 
 Open `https://<pi-ip>:8088`, create your admin account and you are in. Works on
-Raspberry Pi OS Bookworm or newer and on any Debian or Ubuntu server with systemd.
+Raspberry Pi OS Bookworm or newer and on any Debian or Ubuntu server with systemd. Fedora Server also works
+(see [Installing](#installing-on-a-raspberry-pi-or-an-ubuntudebian-server)).
 Details and options are in [Installing](#installing-on-a-raspberry-pi-or-an-ubuntudebian-server).
 
 To update, open **Preferences → About & Updates → Check for updates** in the panel (it only contacts
@@ -110,6 +111,11 @@ The scripts create a `.venv`, install `requirements.txt`, and start Uvicorn.
 
 Works on any Raspberry Pi running Raspberry Pi OS Bookworm or newer, and on any
 Ubuntu or Debian server or VPS with systemd and Python 3.10+, under any user name.
+
+**Fedora Server** (tested on Fedora 45 with SELinux enforcing and firewalld): the panel, websites, PHP, MariaDB,
+PostgreSQL, WordPress, the WAF, DNS, FTP, Docker, fail2ban, WireGuard and email work. Fedora has no Rspamd package, so
+email uses SpamAssassin for spam filtering and OpenDKIM for signing, and greylisting isn't available. Only one PHP
+version can be installed at a time.
 A fresh server doesn't need anything else first: pages that need Apache, PHP,
 MariaDB, an FTP server and so on offer to install them in one click, with a
 progress bar.

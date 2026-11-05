@@ -16,9 +16,10 @@ import socket
 import subprocess
 from pathlib import Path
 
+from . import distro
 from . import jobs, sysapps
 
-PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
+PATH = distro.PATH
 PHP_PKGS = ["libapache2-mod-php", "php-cli", "php-mysql", "php-curl", "php-gd", "php-mbstring",
             "php-xml", "php-zip", "php-intl", "php-bcmath"]
 
@@ -47,6 +48,10 @@ def _apache_php() -> bool:
 
 def _ufw_allow(*ports: str) -> list[str]:
     """Open ports in ufw when it's active, so a new server is reachable from outside."""
+    from . import firewall
+    opened = firewall.open_ports(*ports)
+    if opened:
+        return [f"• Firewall (firewalld): allowed {', '.join(opened)}"]
     ufw = shutil.which("ufw", path=PATH)
     if not ufw or "Status: active" not in _run([ufw, "status"]).stdout:
         return []
@@ -162,6 +167,14 @@ GCLOUD_LIST = Path("/etc/apt/sources.list.d/google-cloud-sdk.list")
 
 def _gcloud_repo() -> list[str]:
     """Google ships the Google Cloud CLI from its own apt repository (Debian has no package)."""
+    if distro.is_dnf():
+        repo = Path("/etc/yum.repos.d/google-cloud-sdk.repo")
+        if not repo.exists():
+            repo.write_text("[google-cloud-cli]\nname=Google Cloud CLI\n"
+                            f"baseurl=https://packages.cloud.google.com/yum/repos/cloud-sdk-el9-{os.uname().machine}\n"
+                            "enabled=1\ngpgcheck=1\nrepo_gpgcheck=0\n"
+                            "gpgkey=https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg\n")
+        return ["• Added Google's package source for the Google Cloud CLI"]
     if GCLOUD_LIST.exists() and GCLOUD_KEYRING.exists():
         return []
     key = _run(["curl", "-fsSL", "--max-time", "60", "https://packages.cloud.google.com/apt/doc/apt-key.gpg"], 90)
@@ -335,7 +348,7 @@ COMPONENTS: dict[str, dict] = {
         "name": "Firewall (ufw)", "icon": "firewall", "size": "about 1 MB",
         "desc": "A simple firewall: choose which ports the outside world may reach. Installing it doesn't turn it on.",
         "pkgs": ["ufw"],
-        "check": lambda: shutil.which("ufw", path=PATH) is not None,
+        "check": lambda: shutil.which("ufw", path=PATH) is not None or shutil.which("firewall-cmd", path=PATH) is not None,
     },
     "fail2ban": {
         "name": "Fail2ban", "icon": "trap", "size": "about 2 MB",
@@ -346,9 +359,10 @@ COMPONENTS: dict[str, dict] = {
     },
     "mail": {
         "name": "Mail server", "icon": "mail", "size": "about 60 MB",
-        "desc": "Postfix (sending & receiving), Dovecot (IMAP/POP3, quotas, filters) and Rspamd (spam filtering, DKIM signing).",
-        "pkgs": ["postfix", "postfix-pcre", "dovecot-core", "dovecot-imapd", "dovecot-pop3d", "dovecot-lmtpd",
-                 "dovecot-sieve", "dovecot-managesieved", "rspamd", "redis-server", "openssl"],
+        "desc": ("Postfix (sending & receiving), Dovecot (IMAP/POP3, quotas, filters), SpamAssassin (spam filtering) and OpenDKIM (DKIM signing)."
+                 if distro.is_dnf() else "Postfix (sending & receiving), Dovecot (IMAP/POP3, quotas, filters) and Rspamd (spam filtering, DKIM signing)."),
+        "pkgs": ["postfix", "postfix-pcre", "dovecot-core", "dovecot-imapd", "dovecot-pop3d", "dovecot-lmtpd", "dovecot-sieve", "dovecot-managesieved",
+                 *(["opendkim", "spamassassin", "spamass-milter-postfix"] if distro.is_dnf() else ["rspamd", "redis-server"]), "openssl"],
         "check": lambda: _mail().installed() and _mail().configured(),
         "precheck": lambda: _mail().dovecot_ok(),
         "pre": lambda: _preseed("postfix postfix/main_mailer_type select Internet Site",
@@ -484,6 +498,11 @@ def install(cid: str) -> jobs.Job:
             ok, why = chk()
             if not ok:
                 raise RequiresError(why)
+    if distro.is_dnf():
+        # Say so up front when Fedora doesn't carry something. The Google Cloud repository is only added by the job.
+        absent = [p for n in plan if n != "gcloud" for p in _pkgs(COMPONENTS[n]) if not _candidate(p)]
+        if absent:
+            raise RequiresError(f"Fedora's package repositories don't have: {', '.join(absent)}")
 
     def fn(log):
         pkgs = [p for n in plan for p in _pkgs(COMPONENTS[n])]

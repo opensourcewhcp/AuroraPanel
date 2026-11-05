@@ -44,6 +44,8 @@ async def run(websocket, argv: list[str] | None = None) -> None:
             if argv:
                 os.environ["PATH"] = os.environ.get("PATH", "") + ":/usr/local/bin:/usr/bin:/bin"
                 os.execvp(argv[0], list(argv))
+            # The owner's own shell gets the real commands, not the panel's Fedora compatibility names.
+            os.environ["PATH"] = ":".join(d for d in os.environ.get("PATH", "").split(":") if d != "/usr/local/lib/aurora/compat")
             os.execvp(shell, [shell, "-l"])
         except OSError:
             os._exit(1)

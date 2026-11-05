@@ -50,6 +50,9 @@ def block(ip: str, client_ip: str | None = None) -> dict:
                 raise IPBlockError(f"Refusing to block {ip} — it covers {p} and you'd lock yourself out")
         except ValueError:
             pass
+    if firewall._firewalld():
+        firewall.deny_source(ip)
+        return {"ok": True, "blocked": ip, "note": None if st_active() else "Firewall is inactive, so the block takes effect once you enable it."}
     ufw = firewall._ufw()  # raises if ufw missing
     out = subprocess.run([ufw, "deny", "from", ip], capture_output=True, text=True, timeout=15)
     if out.returncode != 0:

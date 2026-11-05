@@ -23,6 +23,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from . import distro
 from . import jobs, sslcerts
 from . import problems
 
@@ -1038,7 +1039,7 @@ def _remove_site_conf(conf: Path, name: str) -> dict:
 # Let's Encrypt
 # --------------------------------------------------------------------------- #
 def certbot_install() -> jobs.Job:
-    env = {"DEBIAN_FRONTEND": "noninteractive", "PATH": "/usr/sbin:/usr/bin:/sbin:/bin"}
+    env = {"DEBIAN_FRONTEND": "noninteractive", "PATH": distro.PATH}
     return jobs.launch("install certbot", ["apt-get", "-y", "install", "certbot"], env=env)
 
 

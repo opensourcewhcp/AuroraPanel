@@ -22,10 +22,11 @@ import time
 import urllib.request
 from pathlib import Path
 
+from . import distro
 from . import jobs
 from . import problems
 
-PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
+PATH = distro.PATH
 
 
 class MigrateError(RuntimeError):

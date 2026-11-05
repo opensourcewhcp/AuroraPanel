@@ -14,6 +14,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from . import distro
 from . import jobs
 from . import problems
 
@@ -23,7 +24,7 @@ OVERRIDE = "99-aurora.ini"
 SAPIS = {"apache2": "Apache (mod_php)", "fpm": "PHP-FPM (Nginx / Lighttpd / Caddy)", "cli": "Command line & cron"}
 _VER = re.compile(r"^\d+\.\d+$")
 _SIZE = re.compile(r"^(-1|\d+[KMG]?)$", re.I)
-APT_ENV = {"DEBIAN_FRONTEND": "noninteractive", "PATH": "/usr/sbin:/usr/bin:/sbin:/bin"}
+APT_ENV = {"DEBIAN_FRONTEND": "noninteractive", "PATH": distro.PATH}
 APT = ["apt-get", "-o", "DPkg::Lock::Timeout=600", "-y"]
 
 # key, label, type, help, extra

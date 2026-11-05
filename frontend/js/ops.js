@@ -463,7 +463,7 @@ window.AuroraOps = (ui) => {
     }
     function draw() {
       body.innerHTML = "";
-      if (!d.supported) { body.append(el("p", { class: "empty", text: "This system has no apt." })); return; }
+      if (!d.supported) { body.append(el("p", { class: "empty", text: "This system has no supported package manager." })); return; }
       const rb = d.reboot;
       body.append(el("div", { class: `card mx-hero ${d.security ? "bad" : d.total ? "warn" : "good"}` }, [
         el("div", { class: "mx-hero-ico" }, icon(d.total ? "packages" : "check", 28)),
@@ -1577,7 +1577,7 @@ window.AuroraOps = (ui) => {
         status: () => !S.av ? null : (S.av.available ? on("ready") : off("not installed")) },
       { view: "activity", icon: "t_activity", title: "Activity Log", desc: "Who changed what in this panel, from where, plus every login.", status: () => null },
       { view: "fixperms", icon: "home", title: "Fix Permissions", desc: "Reset a website's file ownership and permissions to safe values.", status: () => null },
-      { view: "firewall", icon: "firewall", title: "Firewall (ufw)", desc: "Which ports are open to the internet.", core: true,
+      { view: "firewall", icon: "firewall", title: "Firewall", desc: "Which ports are open to the internet.", core: true,
         status: () => !S.fw ? null : (!S.fw.available ? off("not installed") : (S.fw.active ? on("active") : warn("inactive"))) },
       { view: "alerts", icon: "t_bell", title: "Alerts & Slack", desc: "Be told about attacks, failures and problems, by email, Telegram, webhook or Slack.",
         status: () => (S.slack && S.slack.enabled) ? on("Slack on") : null },

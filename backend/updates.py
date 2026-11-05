@@ -3,6 +3,7 @@
 refresh() runs `apt-get update` (daily from the task runner, or on demand) and caches the list of
 upgradable packages, marking the ones from a -security pocket. Automatic updates are Debian's own
 unattended-upgrades, configured here (security only, or everything; optional restart at a set time).
+On Fedora the same features run on dnf: `dnf check-upgrade`, security advisories, and dnf5-automatic.
 """
 from __future__ import annotations
 
@@ -14,13 +15,16 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import jobs
+from . import distro, jobs, packages
 
 CACHE = Path("/var/lib/aurora/updates.json")
 AUTO_CONF = Path("/etc/apt/apt.conf.d/20auto-upgrades")
 UU_CONF = Path("/etc/apt/apt.conf.d/52aurora-unattended")
-PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
+PATH = distro.PATH
 ENV = {"DEBIAN_FRONTEND": "noninteractive", "PATH": PATH, "LC_ALL": "C"}
+DNF_AUTO_CONF = Path("/etc/dnf/automatic.conf")
+DNF_AUTO_TIMER = "dnf5-automatic.timer"
+DNF_AUTO_PKG = "dnf5-plugin-automatic"
 
 
 class UpdateError(RuntimeError):
@@ -32,6 +36,26 @@ def _run(argv, timeout=600) -> subprocess.CompletedProcess:
         return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env={**os.environ, **ENV})
     except (OSError, subprocess.TimeoutExpired) as e:
         return subprocess.CompletedProcess(argv, 1, "", str(e))
+
+
+def _dnf_security_packages() -> set[str]:
+    """Names of the packages that have a security advisory waiting."""
+    names = set()
+    for line in _run(["dnf", "-q", "advisory", "list", "--updates", "--security"], 180).stdout.splitlines():
+        # ID  security  Severity  name-version-release.arch  date time
+        parts = line.split()
+        if len(parts) >= 4 and parts[1] == "security":
+            names.add(parts[3].rsplit("-", 2)[0])
+    return names
+
+
+def _dnf_upgradable() -> list[dict]:
+    rows = packages.parse_check_upgrade(_run(["dnf", "-q", "check-upgrade"], 300).stdout)
+    current = dict(l.split("\t", 1) for l in _run(["rpm", "-qa", "--qf", "%{NAME}\t%{VERSION}-%{RELEASE}\n"], 60).stdout.splitlines() if "\t" in l)
+    security = _dnf_security_packages() if rows else set()
+    pkgs = [{"name": n, "origin": repo, "to": ver, "from": current.get(n, ""), "arch": arch, "security": n in security}
+            for n, arch, ver, repo in rows]
+    return sorted(pkgs, key=lambda p: (not p["security"], p["name"]))
 
 
 def _parse_upgradable() -> list[dict]:
@@ -48,16 +72,21 @@ def _parse_upgradable() -> list[dict]:
 
 
 def refresh(update_lists: bool = True) -> dict:
-    if not shutil.which("apt-get", path=PATH):
+    dnf = distro.is_dnf()
+    if not shutil.which("apt-get", path=PATH) and not dnf:
         return {"supported": False}
     err = ""
-    if update_lists:
+    if update_lists and dnf:
+        r = _run(["dnf", "-q", "makecache", "--refresh"], 900)
+        if r.returncode != 0:
+            err = (r.stderr or r.stdout).strip()[-400:]
+    elif update_lists:
         r = _run(["apt-get", "-o", "DPkg::Lock::Timeout=120", "-q", "update"], 900)
         if r.returncode != 0:
             err = (r.stderr or r.stdout).strip()[-400:]
             if "Could not get lock" in err:
                 err = ""  # another apt run (e.g. the nightly one) is refreshing the same lists right now
-    pkgs = _parse_upgradable()
+    pkgs = _dnf_upgradable() if dnf else _parse_upgradable()
     data = {"checked": int(time.time()), "packages": pkgs, "total": len(pkgs), "security": sum(p["security"] for p in pkgs),
             "error": err}
     CACHE.parent.mkdir(parents=True, exist_ok=True)
@@ -74,6 +103,9 @@ def cached() -> dict:
 
 def reboot_info() -> dict:
     need = Path("/var/run/reboot-required").exists()
+    if distro.is_dnf():
+        # Exit code 1 means a restart is needed. Cache only: this runs on every page load.
+        need = _run(["dnf", "-q", "-C", "needs-restarting", "-r"], 60).returncode == 1
     pkgs = []
     if need:
         try:
@@ -89,7 +121,24 @@ def reboot_info() -> dict:
     return {"required": need, "packages": pkgs, "kernel": running, "boot": boot}
 
 
+def _dnf_auto_status() -> dict:
+    installed = DNF_AUTO_CONF.exists()
+    on = _run(["systemctl", "is-enabled", DNF_AUTO_TIMER], 15).stdout.strip() == "enabled"
+    mode, reboot, reboot_time = "security", False, "04:00"
+    try:
+        t = DNF_AUTO_CONF.read_text()
+        mode = "all" if re.search(r"(?m)^upgrade_type\s*=\s*default", t) else "security"
+        reboot = bool(re.search(r"(?m)^reboot\s*=\s*when-needed", t))
+        m = re.search(r"(?m)^# AURORA-REBOOT-TIME (\d\d:\d\d)", t)
+        reboot_time = m.group(1) if m else "04:00"
+    except OSError:
+        pass
+    return {"installed": installed, "enabled": installed and on, "mode": mode, "reboot": reboot, "reboot_time": reboot_time, "last": ""}
+
+
 def auto_status() -> dict:
+    if distro.is_dnf():
+        return _dnf_auto_status()
     installed = shutil.which("unattended-upgrade", path=PATH) is not None
     on = False
     try:
@@ -116,8 +165,43 @@ def auto_status() -> dict:
 
 def status() -> dict:
     c = cached()
-    return {"supported": shutil.which("apt-get", path=PATH) is not None, **c, "reboot": reboot_info(), "auto": auto_status(),
+    return {"supported": distro.pkg_manager() is not None, **c, "reboot": reboot_info(), "auto": auto_status(),
             "running": next((j.id for j in jobs.find(updates="install") if j.status == "running"), None)}
+
+
+def _dnf_set_auto(enabled: bool, mode: str, reboot: bool, reboot_time: str) -> jobs.Job | dict:
+    def write():
+        DNF_AUTO_CONF.parent.mkdir(parents=True, exist_ok=True)
+        DNF_AUTO_CONF.write_text("# Written by AuroraPanel (System > Updates)\n"
+                                 f"# AURORA-REBOOT-TIME {reboot_time}\n"
+                                 "[commands]\n"
+                                 f"upgrade_type = {'default' if mode == 'all' else 'security'}\n"
+                                 "download_updates = yes\n"
+                                 "apply_updates = yes\n"
+                                 f"reboot = {'when-needed' if reboot else 'never'}\n"
+                                 f'reboot_command = "shutdown -r {reboot_time} Restart after automatic updates"\n'
+                                 "[emitters]\n"
+                                 "emit_via = stdio\n", encoding="utf-8")
+        r = _run(["systemctl", "enable" if enabled else "disable", "--now", DNF_AUTO_TIMER], 60)
+        if r.returncode != 0:
+            raise UpdateError(r.stderr.strip() or f"Could not change {DNF_AUTO_TIMER}")
+
+    if enabled and not DNF_AUTO_CONF.exists():
+        def fn(log):
+            log.progress(5, f"Installing {DNF_AUTO_PKG}")
+            r = _run(["dnf", "-y", "install", DNF_AUTO_PKG], 900)
+            log((r.stdout or r.stderr).strip()[-2000:])
+            if r.returncode != 0:
+                raise UpdateError(f"dnf install {DNF_AUTO_PKG} failed")
+            write()
+            log.progress(100, "Automatic updates on")
+            log("✓ Automatic updates are on")
+            return {"ok": True}
+        return jobs.launch_fn("turn on automatic updates", fn, meta={"updates": "auto"})
+    if not enabled and not DNF_AUTO_CONF.exists():
+        return {"ok": True, **auto_status()}
+    write()
+    return {"ok": True, **auto_status()}
 
 
 def set_auto(enabled: bool, mode: str = "security", reboot: bool = False, reboot_time: str = "04:00") -> jobs.Job | dict:
@@ -125,6 +209,8 @@ def set_auto(enabled: bool, mode: str = "security", reboot: bool = False, reboot
         raise UpdateError("Choose security or all")
     if not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", reboot_time):
         raise UpdateError("Time must look like 04:00")
+    if distro.is_dnf():
+        return _dnf_set_auto(enabled, mode, reboot, reboot_time)
 
     def write():
         AUTO_CONF.write_text('// Written by AuroraPanel (System → Updates)\n'
@@ -169,6 +255,19 @@ def install(names: list[str] | None = None) -> jobs.Job:
             return j
     pkgs = [n for n in (names or []) if re.fullmatch(r"[a-z0-9][a-z0-9+.-]{0,100}", n)]
 
+    def dnf_fn(log):
+        log.progress(5, "Downloading and installing updates")
+        log(f"• Upgrading {len(pkgs)} package(s)" if pkgs else "• Upgrading every package that has a new version")
+        r = _run(["dnf", "-y", "upgrade", *pkgs], 7200)
+        log((r.stdout or "").strip()[-4000:])
+        if r.returncode != 0:
+            raise UpdateError(f"dnf failed (exit {r.returncode}): {(r.stderr or '').strip()[-300:]}")
+        data = refresh(update_lists=False)
+        info = reboot_info()
+        log.progress(100, "Up to date" if not data["total"] else f"{data['total']} left")
+        log("✓ Updates installed" + (", restart to finish (new kernel or system libraries)" if info["required"] else ""))
+        return {"ok": True, "left": data["total"], "reboot": info["required"]}
+
     def fn(log):
         log.progress(1, "Checking what's new")
         log.apt(["update"], (1, 10))
@@ -188,7 +287,7 @@ def install(names: list[str] | None = None) -> jobs.Job:
         log("✓ Updates installed" + (" — restart to finish (new kernel or system libraries)" if r["required"] else ""))
         return {"ok": True, "left": data["total"], "reboot": r["required"]}
 
-    return jobs.launch_fn("install updates", fn, meta={"updates": "install"})
+    return jobs.launch_fn("install updates", dnf_fn if distro.is_dnf() else fn, meta={"updates": "install"})
 
 
 def reboot(delay_min: int = 1) -> dict:

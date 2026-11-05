@@ -7,7 +7,3 @@ deploy/
 *.tmp
 aurora_config.json
 frontend/vendor/
-
-# .gitignore hides .claude/ from git; still allow @-search and codebase index.
-!.claude/
-!.claude/**

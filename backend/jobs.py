@@ -13,6 +13,8 @@ import uuid
 from collections import deque
 from typing import Sequence
 
+from . import distro
+
 _jobs: dict[str, "Job"] = {}
 _lock = threading.Lock()
 _MAX_JOBS = 50
@@ -154,7 +156,7 @@ class _Log:
         """Run apt-get (args after "apt-get"), streaming its output into the log and its
         progress into the span [lo, hi] of this job's bar. Returns the exit code."""
         argv = _with_apt_progress(["apt-get", "-y", *args])
-        env = {"DEBIAN_FRONTEND": "noninteractive", "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
+        env = {"DEBIAN_FRONTEND": "noninteractive", "PATH": distro.PATH,
                "LANG": "C.UTF-8", **(env or {})}
         proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
         assert proc.stdout is not None

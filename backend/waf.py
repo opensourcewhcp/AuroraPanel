@@ -20,6 +20,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from . import distro
 from . import problems
 
 STATE = Path("/var/lib/aurora/waf.json")
@@ -30,7 +31,7 @@ POST = Path("/etc/apache2/conf-available/zz-aurora-waf.conf")
 AUDIT = Path("/var/log/apache2/modsec_audit.log")
 CRS_LOAD = Path("/usr/share/modsecurity-crs/owasp-crs.load")
 HEADER = "# Written by AuroraPanel (Security → WAF Firewall). Edit there — changes here are overwritten.\n"
-PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
+PATH = distro.PATH
 APPS = {"wordpress": "WordPress", "nextcloud": "Nextcloud", "drupal": "Drupal", "dokuwiki": "DokuWiki",
         "phpmyadmin": "phpMyAdmin", "phpbb": "phpBB", "xenforo": "XenForo", "roundcube": "Webmail (Roundcube)"}
 # Webmail is never blocked by the WAF. Roundcube has its own sign-in, CSRF tokens and HTML sanitiser, and

@@ -15,6 +15,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from . import distro
 from . import jobs
 
 STATE = Path("/var/lib/aurora/git.json")
@@ -65,7 +66,7 @@ def _key_path(owner_home: str, name: str) -> Path:
 
 
 def _env(repo: dict) -> dict:
-    env = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "HOME": repo["home"], "GIT_TERMINAL_PROMPT": "0"}
+    env = {"PATH": distro.PATH, "HOME": repo["home"], "GIT_TERMINAL_PROMPT": "0"}
     if repo.get("key"):
         env["GIT_SSH_COMMAND"] = f"ssh -i {repo['key']} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
     return env

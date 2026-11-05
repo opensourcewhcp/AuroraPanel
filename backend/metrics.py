@@ -22,6 +22,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
+from . import distro
 from . import problems
 
 LOG_DIR = Path("/var/log/apache2")
@@ -33,7 +34,7 @@ LOGROTATE = Path("/etc/logrotate.d/apache2")
 VSFTPD_LOG = Path("/var/log/vsftpd.log")
 PROTOS = ("http", "imap", "pop3", "smtp", "ftp")
 MAX_READ = 64 * 1024 * 1024  # never read more than this from one log in one go
-PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
+PATH = distro.PATH
 
 
 class MetricsError(RuntimeError):
@@ -411,7 +412,7 @@ def _apache_errors(paths: list[str], since: float) -> list[dict]:
     return out
 
 
-_UNITS = {"mail": ["postfix@-.service", "postfix.service", "dovecot.service", "rspamd.service"],
+_UNITS = {"mail": ["postfix@-.service", "postfix.service", "dovecot.service", "rspamd.service", "spamassassin.service", "opendkim.service"],
           "database": ["mariadb.service", "mysql.service", "postgresql@*.service"],
           "dns": ["named.service", "bind9.service"], "panel": ["aurorapanel.service"], "php_fpm": ["php*-fpm.service"]}
 
