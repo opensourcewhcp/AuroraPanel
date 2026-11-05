@@ -12,18 +12,21 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import socket
 import time
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
+from .proxies import client_from
+
 MAX_LINE = {"modsec_audit": 512_000, "modsec3_audit": 512_000}
 DEFAULT_MAX_LINE = 16_000
 READ_CHUNK = 4_000_000
 JOURNAL_SECONDS = 2
 DRAIN_SECONDS = 60  # Apache children keep writing to a rotated file until a graceful reload reaches them
-HEADER_ALLOW = {"host", "user-agent", "referer", "origin", "content-type", "x-forwarded-for"}
+HEADER_ALLOW = {"host", "user-agent", "referer", "origin", "content-type", "x-forwarded-for", "cf-connecting-ip", "x-real-ip"}
 SECRET_NAME = re.compile(r"pass(word|wd)?|token|secret|api[_-]?key|cvv|card|authorization|cookie", re.I)
 SECRET_VALUE = [(re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*"), "[jwt]"),
                 (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{6,}"), "Bearer [masked]"),
@@ -554,6 +557,58 @@ def _find_rotated(path: str, inode: int) -> str | None:
     return None
 
 
+_tester_key: bytes | None = None
+
+
+def tester_key() -> bytes:
+    """The Rule Tester's secret. Made once, readable by root alone."""
+    global _tester_key
+    if _tester_key is None:
+        from .db import ella_dir
+        path = ella_dir() / "tester.key"
+        try:
+            _tester_key = path.read_bytes().strip()
+        except OSError:
+            _tester_key = b""
+        if not _tester_key:
+            _tester_key = secrets.token_hex(24).encode()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "wb") as f:
+                f.write(_tester_key)
+    return _tester_key
+
+
+def classify(ev: dict, trusted: list | None = None, threshold: int = 5) -> dict:
+    """What can be said about one event on its own: who the client really is, and whether this looks like a breach.
+
+    Inbound score at the blocking level, and yet the request got a 2xx or 5xx: nothing stopped it. Or a response rule fired
+    on an answer that went out. These are suspicions, and the tag says so."""
+    heads = ev.get("headers")
+    if trusted and ev.get("peer_ip"):
+        try:
+            parsed = json.loads(heads) if isinstance(heads, str) else heads or {}
+        except ValueError:
+            parsed = {}
+        ev["client_ip"], ev["client_ip_source"] = client_from(ev["peer_ip"], parsed, trusted)
+    rules = [r.get("rule_id") or "" for r in ev.get("evidence") or []]
+    tags = json.loads(ev.get("tags") or "[]")
+    if any(r.startswith("1190") for r in rules):
+        tags.append("honeypot")
+        ev["confidence"] = "high"
+    if any(r.startswith("11") and len(r) == 7 for r in rules):
+        tags.append("ella-rule")
+    if rules:
+        status, score = ev.get("status"), ev.get("anomaly_score")
+        answered = isinstance(status, int) and (200 <= status < 300 or status >= 500)
+        leak = any(r.startswith("95") for r in rules) and isinstance(status, int) and status != 403
+        if (answered and isinstance(score, int) and score >= threshold) or leak:
+            tags.append("possible-breach")
+            ev["severity"], ev["confidence"] = "CRITICAL", "medium"
+    ev["tags"] = json.dumps(sorted(set(tags)))
+    return ev
+
+
 class Collector:
     def __init__(self, store, log_dir: str = "/var/log/apache2", server: str | None = None, adapter=None, system: bool = False, instaban_state: str = "/var/lib/aurora/instaban.json"):
         self.store = store
@@ -597,10 +652,14 @@ class Collector:
                 return [], offset + len(data), 0, 1, []
             return [], offset, 0, 0, []
         pos, now = 0, time.time()
+        trusted = self.store.setting("trusted_proxies") or []
+        skip_key = tester_key() if kind in ("modsec_audit", "modsec3_audit") else None
         for raw in data[:end].split(b"\n")[:-1]:
             at = offset + pos
             pos += len(raw) + 1
             lines += 1
+            if skip_key and skip_key in raw:
+                continue  # the Rule Tester's own request
             if following is not None and events and following.match(raw):
                 # One event over several lines (a stack trace): it belongs to the event before it.
                 tags = json.loads(events[-1].get("tags") or "[]")
@@ -617,6 +676,7 @@ class Collector:
             if ev.get("skip"):
                 continue
             ev.update(hash=_record_hash(kind, inode, at, raw), ts_received=now, server=self.server, source=kind, historical=0)
+            classify(ev, trusted)
             events.append(ev)
         return events, offset + end, lines, unparsed, samples
 

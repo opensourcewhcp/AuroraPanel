@@ -17,7 +17,7 @@ import time
 
 from . import config
 
-ROLES = {"admin": "Administrator", "viewer": "Viewer (read-only)", "site": "Website manager"}
+ROLES = {"admin": "Administrator", "viewer": "Viewer (read-only)", "site": "Website manager", "soc_operator": "Security operator (WAF Ella only)"}
 _NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._@-]{1,63}$")
 
 

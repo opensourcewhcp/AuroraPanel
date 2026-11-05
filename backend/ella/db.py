@@ -39,6 +39,28 @@ CREATE TABLE IF NOT EXISTS audit (
   detail TEXT NOT NULL, operation_id TEXT NOT NULL DEFAULT '', prev_hash TEXT NOT NULL, hash TEXT NOT NULL);
 CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END;
+CREATE TABLE IF NOT EXISTS rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'custom', domains TEXT NOT NULL DEFAULT '[]', path TEXT NOT NULL DEFAULT '', tree TEXT, raw TEXT,
+  action TEXT NOT NULL DEFAULT 'block', status INTEGER NOT NULL DEFAULT 403, mode TEXT NOT NULL DEFAULT 'off', priority INTEGER NOT NULL DEFAULT 100, author TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '',
+  version INTEGER NOT NULL DEFAULT 1, locked INTEGER NOT NULL DEFAULT 0, expires_at REAL, detect_since REAL, cve_id TEXT, software TEXT, versions TEXT, source_url TEXT, created_at REAL NOT NULL, updated_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS rule_versions (rule_id INTEGER NOT NULL, version INTEGER NOT NULL, snapshot TEXT NOT NULL, actor TEXT NOT NULL, ts REAL NOT NULL, PRIMARY KEY (rule_id, version));
+CREATE TABLE IF NOT EXISTS exceptions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, rule_id TEXT NOT NULL, var TEXT, domain TEXT NOT NULL, path TEXT NOT NULL, author TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', created_at REAL NOT NULL, expires_at REAL, enabled INTEGER NOT NULL DEFAULT 1);
+CREATE TABLE IF NOT EXISTS policies (scope TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, locked INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (scope, key));
+CREATE TABLE IF NOT EXISTS incidents (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', severity TEXT NOT NULL DEFAULT 'WARNING', owner TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS incident_items (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE, kind TEXT NOT NULL, ref TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', actor TEXT NOT NULL, ts REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS inc_items ON incident_items(incident_id);
+CREATE TABLE IF NOT EXISTS alert_channels (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, name TEXT NOT NULL, config TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, min_severity TEXT NOT NULL DEFAULT 'WARNING', quiet_from INTEGER, quiet_to INTEGER, last_error TEXT NOT NULL DEFAULT '', last_sent REAL);
+CREATE TABLE IF NOT EXISTS alerts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, dedupe TEXT NOT NULL, severity TEXT NOT NULL, title TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', count INTEGER NOT NULL DEFAULT 1, first_ts REAL NOT NULL, last_ts REAL NOT NULL, delivered INTEGER NOT NULL DEFAULT 0, acked INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS alerts_dedupe ON alerts(dedupe, last_ts);
+CREATE TABLE IF NOT EXISTS ti_lists (name TEXT PRIMARY KEY, url TEXT, enabled INTEGER NOT NULL DEFAULT 0, auto_ban INTEGER NOT NULL DEFAULT 0, count INTEGER NOT NULL DEFAULT 0, fetched_at REAL, expires_at REAL, last_error TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS ti_entries (list TEXT NOT NULL REFERENCES ti_lists(name) ON DELETE CASCADE, family INTEGER NOT NULL, start BLOB NOT NULL, stop BLOB NOT NULL);
+CREATE INDEX IF NOT EXISTS ti_range ON ti_entries(family, start, stop);
+CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, secret TEXT NOT NULL, created_at REAL NOT NULL, last_seen REAL, policy_version INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT '{}', revoked INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS nonces (nonce TEXT PRIMARY KEY, ts REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS saved_queries (id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT NOT NULL, name TEXT NOT NULL, query TEXT NOT NULL);
 """
 
 EVENTS_DDL = """
@@ -68,6 +90,11 @@ DEFAULT_SETTINGS = {
     "capabilities": {},
     "custom_sources": [],
     "drift": [],
+    "honeypot": {"mode": "detect", "paths": ["/.env", "/.git/config", "/wp-config.php.bak", "/backup.zip", "/phpmyadmin/"]},
+    "under_attack": {"on": False, "until": None},
+    "kill_switch": False,
+    "response_inspection": False,
+    "body_limit_action": "Reject",
 }
 GENESIS = "0" * 64
 
@@ -187,10 +214,14 @@ class Store:
     def months(self) -> list[Path]:
         return sorted(self.dir.glob("events-[0-9][0-9][0-9][0-9][0-9][0-9].db"), reverse=True)
 
-    def search_events(self, limit: int = 100, cursor: tuple[float, int] | None = None, allowed_domains: list[str] | None = None, **filters) -> dict:
-        """Newest first, paged by cursor. allowed_domains is the caller's scope and is applied in the query itself."""
+    def search_events(self, limit: int = 100, cursor: tuple[float, int] | None = None, allowed_domains: list[str] | None = None, query: tuple[str, list] | None = None, **filters) -> dict:
+        """Newest first, paged by cursor. allowed_domains is the caller's scope and is applied in the query itself.
+        query is the (SQL, values) from query.compile_query."""
         limit = max(1, min(int(limit), 1000))
         where, args = [], []
+        if query and query[0]:
+            where.append(query[0])
+            args += list(query[1])
         for col in ("client_ip", "domain", "rule_id", "source", "action"):
             if filters.get(col):
                 where.append(f"{col} = ?")
@@ -223,6 +254,44 @@ class Store:
                 c.close()
         nxt = [out[-1]["ts_event"], out[-1]["id"]] if len(out) == limit else None
         return {"events": out, "next_cursor": nxt}
+
+    def get_event(self, ts: float, event_id: int, allowed_domains: list[str] | None = None) -> dict | None:
+        """One event, by the two values every listed event carries. The caller's scope applies here too."""
+        path = self.dir / f"events-{month_of(float(ts))}.db"
+        if not path.exists():
+            return None
+        c = sqlite3.connect(path, timeout=5)
+        c.row_factory = sqlite3.Row
+        try:
+            r = c.execute("SELECT * FROM events WHERE id = ?", (int(event_id),)).fetchone()
+            if not r or (allowed_domains is not None and r["domain"] not in allowed_domains):
+                return None
+            e = dict(r)
+            e.pop("hash", None)
+            for k in ("query_keys", "headers", "tags", "missing_fields"):
+                e[k] = json.loads(e[k]) if e[k] else None
+            e["evidence"] = [dict(x) for x in c.execute("SELECT rule_id, matched_var_name, operator, severity, msg, matched_data FROM event_evidence WHERE event_id = ?", (r["id"],))]
+            return e
+        finally:
+            c.close()
+
+    def scan_events(self, since: float, where: str = "", args: tuple = (), limit: int = 200000):
+        """Events newer than since, across the month files, newest first. For previews and reports."""
+        n = 0
+        for path in self.months():
+            if path.stem[7:] < month_of(since):
+                break
+            c = sqlite3.connect(path, timeout=5)
+            c.row_factory = sqlite3.Row
+            try:
+                sql = f"SELECT * FROM events WHERE ts_event >= ? {('AND ' + where) if where else ''} ORDER BY ts_event DESC LIMIT ?"
+                for r in c.execute(sql, (since, *args, limit - n)):
+                    n += 1
+                    yield dict(r)
+            finally:
+                c.close()
+            if n >= limit:
+                return
 
     # ------------------------------------------------------------- settings
     def setting(self, key: str):

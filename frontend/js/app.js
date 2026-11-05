@@ -339,7 +339,12 @@
     document.body.dataset.role = state.role;
     const lbl = $("#user-label");
     if (lbl && state.role !== "admin" && !document.getElementById("role-pill")) {
-      lbl.after(el("span", { id: "role-pill", class: `pill ${state.role === "viewer" ? "warn" : "dim"}`, text: state.role === "viewer" ? "read-only" : "website manager" }));
+      lbl.after(el("span", { id: "role-pill", class: `pill ${state.role === "viewer" ? "warn" : "dim"}`, text: state.role === "viewer" ? "read-only" : state.role === "soc_operator" ? "security operator" : "website manager" }));
+    }
+    if (state.role === "soc_operator") {
+      const socNav = $("#nav");
+      socNav.querySelectorAll(".nav-item").forEach((n) => { if (n.dataset.view !== "ella") n.remove(); });
+      [...socNav.querySelectorAll(".nav-group")].forEach((g) => { const n = g.nextElementSibling; if (!n || n.classList.contains("nav-group")) g.remove(); });
     }
     if (state.role !== "site") return;
     const nav = $("#nav");
@@ -801,7 +806,7 @@
   });
 
   // What a limited panel user may open (the server enforces it too, this only keeps the menus honest).
-  const SITE_VIEWS = new Set(["mysites", "files", "mailaccounts", "visitors", "analytics", "errors"]);
+  const SITE_VIEWS = new Set(["mysites", "files", "mailaccounts", "visitors", "analytics", "errors", "ella"]);
   async function enterApp(username, me) {
     $("#auth-screen").hidden = true;
     $("#app-shell").hidden = false;
@@ -910,6 +915,7 @@
   function navigate(view, opts = {}) {
     if (!TITLES[view] && view !== "dashboard") view = "dashboard";
     if (state.role === "site" && !SITE_VIEWS.has(view)) view = "mysites";
+    if (state.role === "soc_operator") view = "ella";
     const mode = opts.history || "push";
     state.viewArg = opts.arg !== undefined ? opts.arg : (mode === "push" ? null : argFromHash());
     const hash = `#/${view}${state.viewArg ? "/" + argToUrl(state.viewArg) : ""}`;
@@ -10249,7 +10255,7 @@
 
   let ELLAV = null;
   function ellaViews() {
-    if (!ELLAV && window.AuroraElla) ELLAV = window.AuroraElla({ el, icon, btn, pill, field, toast, API, openModal, closeModal });
+    if (!ELLAV && window.AuroraElla) ELLAV = window.AuroraElla({ el, icon, btn, pill, field, toast, API, openModal, closeModal, role: () => state.role });
     return ELLAV || {};
   }
 

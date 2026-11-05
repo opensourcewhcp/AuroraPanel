@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from .adapter import AdapterError, net
+from .adapter import AdapterError, AgentUnavailable, net
 
 RETRY_DELAYS = (2, 8, 30)  # seconds before attempts 2, 3 and 4; after that the operation has failed
 MIN_PREFIX = {4: 8, 6: 32}  # wider than this is never a single ban
@@ -197,7 +197,7 @@ class Engine:
         self.store.run(lambda c: c.execute("UPDATE operations SET state='pending', attempts=?, next_retry_at=NULL, updated_at=? WHERE id=?", (attempt, time.time(), op_id)))
         try:
             caps = self._apply_ban(b, op_id) if op["kind"] == "ban" else self._apply_unban(b, op_id)
-        except BlockError as exc:
+        except (BlockError, AgentUnavailable) as exc:
             self._failed_attempt(op, b, attempt, str(exc))
             return
         now = time.time()

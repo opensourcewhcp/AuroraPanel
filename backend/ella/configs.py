@@ -21,9 +21,13 @@ from pathlib import Path
 KEEP_SNAPSHOTS = 5
 ABSENT = "ABSENT"
 CONF_AVAILABLE = "/etc/apache2/conf-available"
-MANAGED = re.compile(r"^(/etc/modsecurity/zz-aurora-waf\.conf|/etc/apache2/conf-available/zz-(aurora-waf|ella[a-z0-9-]*)\.conf)$")
+MANAGED = re.compile(r"^(/etc/modsecurity/zz-(aurora-waf|ella[a-z0-9-]*)\.conf|/etc/apache2/conf-available/zz-(aurora-waf|ella[a-z0-9-]*)\.conf|/etc/nginx/aurora-waf/ella[a-z0-9-]*\.conf|/etc/nginx/conf\.d/aurora-ella-[a-z0-9-]+\.conf)$")
+# What differs between the two web servers. Everything else about a change is the same.
+SERVERS = {"apache": {"test": "apache_test", "reload": "apache_reload", "unit": "", "log": "/var/log/apache2/access.log"},
+           "nginx": {"test": "nginx_test", "reload": "nginx_reload", "unit": "nginx", "log": "/var/log/nginx/access.log"}}
 # Watchdog defaults: 5xx > 5 % over at least 20 requests, or three failed health checks in a row.
 WATCH_SECONDS, WATCH_INTERVAL, MAX_5XX, MIN_REQUESTS, MAX_HEALTH_FAILS = 90, 5, 0.05, 20, 3
+RELOAD_SETTLE = 0.6  # nginx -s reload returns before the new workers answer
 
 
 class ConfigError(RuntimeError):
@@ -106,49 +110,55 @@ class ConfigManager:
                 link.symlink_to(f"../conf-available/{target.name}")
 
     # ------------------------------------------------------------- the change itself
-    def apply(self, path: str, text: str, actor: str, host: str = "localhost", watch_seconds: int | None = WATCH_SECONDS, watch_interval: int = WATCH_INTERVAL) -> dict:
-        """Returns once Apache runs the new file. The Watchdog then keeps an eye on it in the background."""
+    def apply(self, path: str, text: str | None, actor: str, host: str = "localhost", watch_seconds: int | None = WATCH_SECONDS, watch_interval: int = WATCH_INTERVAL, server: str = "apache", reload: bool = True) -> dict:
+        """Returns once the server runs the new file. The Watchdog then keeps an eye on it in the background.
+        reload=False is for a server that isn't running: the file is still checked, and it reads it when it starts."""
         target = self._check_target(path)
+        sv = SERVERS[server]
         with self.lock:
             snap = self._snapshot(target)
             self._write_atomic(target, text)
             self._enable(target)
-            test = self.adapter.call("apache_test")
+            test = self.adapter.call(sv["test"])
             if not test["ok"]:
                 self._write_atomic(target, snap["content"])
                 self.audit(actor, "config.rejected", path, {"output": test["output"][-500:]})
-                raise ConfigError("Apache rejected the file, the previous one is back:\n" + test["output"])
-            reloaded = self.adapter.call("apache_reload")
-            ok, detail = (reloaded["ok"], reloaded.get("error", "")) if reloaded["ok"] is False else self._alive(host)
-            if not ok:
-                self._restore(target, snap)
-                self.audit(actor, "config.rolled_back", path, {"why": detail, "stage": "reload"})
-                raise ConfigError(f"Apache didn't come back after the reload ({detail}), the previous file is back")
-        self.audit(actor, "config.applied", path, {"sha256": hashlib.sha256(text.encode()).hexdigest(), "previous": snap["sha256"]})
-        if watch_seconds:
-            threading.Thread(target=self.watch, args=(path, snap, host, watch_seconds, watch_interval), daemon=True, name="ella-watchdog").start()
+                raise ConfigError(f"{'Apache' if server == 'apache' else 'Nginx'} rejected the file, the previous one is back:\n" + test["output"])
+            if reload:
+                reloaded = self.adapter.call(sv["reload"])
+                if server == "nginx":
+                    time.sleep(RELOAD_SETTLE)
+                ok, detail = (reloaded["ok"], reloaded.get("error", "")) if reloaded["ok"] is False else self._alive(host, server)
+                if not ok:
+                    self._restore(target, snap, server)
+                    self.audit(actor, "config.rolled_back", path, {"why": detail, "stage": "reload"})
+                    raise ConfigError(f"{'Apache' if server == 'apache' else 'Nginx'} didn't come back after the reload ({detail}), the previous file is back")
+        self.audit(actor, "config.applied", path, {"sha256": hashlib.sha256((text if text is not None else ABSENT).encode()).hexdigest(), "previous": snap["sha256"], "server": server, "reloaded": reload})
+        if watch_seconds and reload:
+            threading.Thread(target=self.watch, args=(path, snap, host, watch_seconds, watch_interval, server), daemon=True, name="ella-watchdog").start()
         return {"ok": True, "previous": snap["sha256"]}
 
-    def _alive(self, host: str) -> tuple[bool, str]:
-        st = self.adapter.call("service_active")
+    def _alive(self, host: str, server: str = "apache") -> tuple[bool, str]:
+        unit = SERVERS[server]["unit"]
+        st = self.adapter.call("service_active", {"unit": unit}) if unit else self.adapter.call("service_active")
         if not st.get("active"):
             return False, "the service isn't active"
         return health(host)
 
-    def _restore(self, target: Path, snap: dict) -> None:
+    def _restore(self, target: Path, snap: dict, server: str = "apache") -> None:
         self._write_atomic(target, snap["content"])
-        self.adapter.call("apache_reload")
+        self.adapter.call(SERVERS[server]["reload"])
 
     # ------------------------------------------------------------- Watchdog (Dead Man's Switch)
-    def _log_size(self) -> int:
+    def _log_size(self, log: str | None = None) -> int:
         try:
-            return os.stat(self.access_log).st_size
+            return os.stat(log or self.access_log).st_size
         except OSError:
             return 0
 
-    def _rate_5xx(self, start: int) -> tuple[int, int]:
+    def _rate_5xx(self, start: int, log: str | None = None) -> tuple[int, int]:
         try:
-            with open(self.access_log, "rb") as f:
+            with open(log or self.access_log, "rb") as f:
                 f.seek(start if start <= os.fstat(f.fileno()).st_size else 0)
                 lines = f.read(8_000_000).split(b"\n")
         except OSError:
@@ -161,16 +171,17 @@ class ConfigManager:
                 bad += m.group(1).startswith(b"5")
         return total, bad
 
-    def watch(self, path: str, snap: dict, host: str = "localhost", seconds: int = WATCH_SECONDS, interval: int = WATCH_INTERVAL) -> dict:
+    def watch(self, path: str, snap: dict, host: str = "localhost", seconds: int = WATCH_SECONDS, interval: int = WATCH_INTERVAL, server: str = "apache") -> dict:
         """Watch the server after a change. On degradation put the previous file back and raise the alarm."""
         target = self._check_target(path)
-        start, fails, deadline = self._log_size(), 0, time.time() + seconds
+        log = self.access_log if server == "apache" else SERVERS[server]["log"]
+        start, fails, deadline = self._log_size(log), 0, time.time() + seconds
         why = ""
         while time.time() < deadline:
             time.sleep(interval)
-            ok, detail = self._alive(host)
+            ok, detail = self._alive(host, server)
             fails = 0 if ok else fails + 1
-            total, bad = self._rate_5xx(start)
+            total, bad = self._rate_5xx(start, log)
             if fails >= MAX_HEALTH_FAILS:
                 why = f"health check failed {fails} times ({detail})"
             elif total >= MIN_REQUESTS and bad / total > MAX_5XX:
@@ -180,7 +191,7 @@ class ConfigManager:
         if not why:
             return {"rolled_back": False}
         with self.lock:
-            self._restore(target, snap)
+            self._restore(target, snap, server)
         self.audit("watchdog", "config.rolled_back", path, {"why": why, "restored": snap["sha256"]})
         self.on_critical("WAF Ella rolled a config back", f"{path}: {why}")
         return {"rolled_back": True, "why": why}

@@ -21,6 +21,7 @@ DIR = Path("/etc/nginx/aurora-waf")
 MAIN = DIR / "main.conf"
 PRE = DIR / "pre.conf"
 POST = DIR / "post.conf"
+ELLA = DIR / "ella.conf"  # WAF Ella's own rules, written by ella/rulebook.py
 HOOK = nginxsites.CONF_DIR / "aurora-waf.conf"
 AUDIT = nginxsites.LOG_DIR / "modsec_audit.log"
 MODES = ("block", "detect", "off")
@@ -76,7 +77,7 @@ def render_post(s: dict) -> str:
 
 
 def render_main(setup: str, rules: list[str]) -> str:
-    lines = [HEADER.rstrip(), BASE.rstrip(), f"Include {PRE.as_posix()}", f"Include {setup}", *[f"Include {r}" for r in rules], f"Include {POST.as_posix()}"]
+    lines = [HEADER.rstrip(), BASE.rstrip(), f"Include {PRE.as_posix()}", f"Include {ELLA.as_posix()}", f"Include {setup}", *[f"Include {r}" for r in rules], f"Include {POST.as_posix()}"]
     return "\n".join(lines) + "\n"
 
 
@@ -88,7 +89,7 @@ def _files(m: str) -> dict:
     if not module_installed() or not crs:
         raise NginxWafError("The WAF for Nginx isn't installed yet")
     s = waf.load()
-    return {PRE: waf.render_pre({**s, "mode": m}), POST: render_post(s), MAIN: render_main(*crs),
+    return {PRE: waf.render_pre({**s, "mode": m}), POST: render_post(s), MAIN: render_main(*crs), ELLA: ELLA.read_text(encoding="utf-8") if ELLA.exists() else HEADER,
             HOOK: f"{HEADER}modsecurity on;\nmodsecurity_rules_file {MAIN.as_posix()};\n"}
 
 

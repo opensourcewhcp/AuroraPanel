@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 BASE_PATH = "/usr/sbin:/usr/bin:/sbin:/bin"  # never the Fedora compatibility folder
-PROGRAMS = {"nft", "conntrack", "ss", "systemctl", "httpd", "apache2ctl", "systemd-run", "journalctl", "fail2ban-client", "ufw"}
+PROGRAMS = {"nft", "conntrack", "ss", "systemctl", "httpd", "apache2ctl", "systemd-run", "journalctl", "fail2ban-client", "ufw", "nginx", "chcon"}
 JOURNALS = {"sshd": ["-t", "sshd", "-t", "sshd-session"], "postfix": ["-u", "postfix", "-u", "postfix@-"], "dovecot": ["-u", "dovecot"],
             "cron": ["-u", "crond", "-u", "cron"], "firewall": ["-k", "--grep", "aurora-block: "]}
 CURSOR = re.compile(r"^[A-Za-z0-9=;_-]{1,256}$")
@@ -28,6 +28,7 @@ TABLE = ("inet", "aurora_ella")
 MAX_OUTPUT = 1_000_000
 MAX_TTL = 10 * 365 * 86400
 LOG_MAX = 5_000_000
+TESTER_ROOT = "/var/lib/aurora/ella/tester-root"
 
 TABLE_TEXT = """table inet aurora_ella {
   set ella4 { type ipv4_addr; flags interval, timeout; }
@@ -55,6 +56,10 @@ TABLE_TEXT = """table inet aurora_ella {
 
 class AdapterError(ValueError):
     """The arguments were refused before anything ran."""
+
+
+class AgentUnavailable(RuntimeError):
+    """The agent service isn't answering, and this server is set to refuse changes without it."""
 
 
 def net(value) -> ipaddress.IPv4Network | ipaddress.IPv6Network:
@@ -306,6 +311,22 @@ class EllaSystemAdapter:
     def op_apache_reload(self, operation_id: str = "") -> dict:
         r = self._exec("apache_reload", operation_id, ["systemctl", "reload", self._apache()[1]], timeout=90)
         return {"ok": r["ok"], "error": r["stderr"][-400:]}
+
+    # ------------------------------------------------------------- Nginx
+    def op_nginx_test(self, operation_id: str = "") -> dict:
+        r = self._exec("nginx_test", operation_id, ["nginx", "-t"], timeout=60)
+        return {"ok": r["ok"], "output": (r["stderr"] or r["stdout"])[-1500:]}
+
+    def op_nginx_reload(self, operation_id: str = "") -> dict:
+        r = self._exec("nginx_reload", operation_id, ["systemctl", "reload", "nginx"], timeout=90)
+        return {"ok": r["ok"], "error": r["stderr"][-400:]}
+
+    def op_label_web_folder(self, path: str, operation_id: str = "") -> dict:
+        """SELinux: let the web server read the Rule Tester's empty folder. Only that folder, and fine without SELinux."""
+        if path != TESTER_ROOT:
+            raise AdapterError(f"Won't relabel {path!r}")
+        r = self._exec("label_web_folder", operation_id, ["chcon", "-R", "-t", "httpd_sys_content_t", path], timeout=20)
+        return {"ok": True, "labelled": r["ok"]}
 
     def op_service_active(self, unit: str = "", operation_id: str = "") -> dict:
         unit = unit or self._apache()[1]

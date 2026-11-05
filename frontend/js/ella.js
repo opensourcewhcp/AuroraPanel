@@ -1,4 +1,4 @@
-/* WAF Ella: Live Events, Blocks, Fail2Ban and Sources. Loaded before app.js.
+/* WAF Ella: Live Events, Blocks, Fail2Ban and Sources, with the other pages from ella_soc.js. Loaded before app.js.
    Everything in an event came from a stranger's request or a log file: it only ever reaches the page
    through el()'s text option (textContent), never as HTML. */
 window.AuroraElla = (ui) => {
@@ -16,6 +16,8 @@ window.AuroraElla = (ui) => {
     return s.length > max ? `${s.slice(0, max)}…` : s;
   };
   const when = (ts) => el("span", { text: stamp(ts), title: utc(ts) });
+  let soc = null; // the pages in ella_soc.js, which use banDialog from here
+  let goTo = {};
   const STATE_PILL = { applied: "good", present: "good", pending: "warn", requested: "warn", failed: "bad" };
 
   function banDialog(target, after) {
@@ -27,6 +29,17 @@ window.AuroraElla = (ui) => {
     let forceable = false;
     const force = el("input", { type: "checkbox" });
     const forceRow = el("label", { style: "display:none;gap:8px;align-items:center" }, [force, el("span", { text: "I understand. Ban it anyway (recorded separately in the audit log)." })]);
+    const radius = el("div");
+    const measure = async () => {
+      const t = ip.value.trim();
+      if (!t.includes("/")) { radius.replaceChildren(); return; }
+      try {
+        const b = await API.ella("POST", "/blast", { target: t });
+        radius.replaceChildren(el("p", { class: "dm-note warn", text: `This covers ${b.addresses} addresses. In the last ${b.minutes} minutes, ${b.active_clients} of them were active${b.domains.length ? `, on ${b.domains.map(([d]) => show(d, 60)).join(", ")}` : ""}.${b.verified_bots.length ? ` That includes ${b.verified_bots.join(", ")}.` : ""}${b.safety.reasons.length ? ` Safety Lock: ${b.safety.reasons.join("; ")}.` : ""}` }));
+      } catch (e) { radius.replaceChildren(el("p", { class: "muted", text: show(e.message) })); }
+    };
+    ip.onchange = measure;
+    if (target && target.includes("/")) measure();
     const go = btn("Ban address", async () => {
       try {
         const op = await API.ellaBan({ target: ip.value.trim(), ttl: Number(ttl.value) || null, reason: reason.value.trim(), force: forceable && force.checked });
@@ -41,11 +54,12 @@ window.AuroraElla = (ui) => {
     }, "btn-danger");
     openModal("Ban an address", el("div", {}, [
       el("p", { class: "muted", text: "This blocks every connection from the address to the whole server, every site and service, at the firewall. An address isn't a person, and it may be shared." }),
-      field("Address", ip), field("For how long", ttl), field("Reason", reason), notice, forceRow,
+      field("Address", ip), radius, field("For how long", ttl), field("Reason", reason), notice, forceRow,
     ]), [btn("Cancel", closeModal, "btn-ghost"), go]);
   }
 
-  function eventDetail(e) {
+  function eventDetail(e, reload) {
+    const siteRole = ui.role && ui.role() === "site";
     const line = (k, v) => el("div", { class: "muted" }, [el("b", { text: `${k}: ` }), el("span", { text: show(v, 2000) })]);
     const missing = e.missing_fields && e.missing_fields.length ? e.missing_fields.join(", ") : "none";
     return el("div", {}, [
@@ -53,22 +67,49 @@ window.AuroraElla = (ui) => {
       line("Query parameter names", (e.query_keys || []).join(", ")), line("Anomaly score", e.anomaly_score), line("Fields this source didn't have", missing), line("Source record", e.raw_ref),
       ...(e.evidence || []).map((x) => el("div", { class: "card", style: "margin-top:8px" }, [
         el("b", { text: `Rule ${show(x.rule_id)} (${show(x.severity)})` }), el("div", { text: show(x.msg) }),
-        line("Matched in", x.matched_var_name), line("Check", x.operator), line("Matched data", x.matched_data)])),
+        line("Matched in", x.matched_var_name), line("Check", x.operator), line("Matched data", x.matched_data),
+        x.rule_id && soc ? el("div", { class: "toolbar" }, [btn("This is a false alarm", (ev) => { if (ev) ev.stopPropagation(); soc.wizard(e, x, reload); }, "btn-sm btn-ghost")]) : ""])),
+      (e.tags || []).includes("possible-breach") ? el("p", { class: "dm-note warn", text: "Possible breach: the request looked like an attack and still got a real answer. Check the site. This is a suspicion, not proof." }) : "",
       el("p", { class: "muted", text: "A rule match is a suspicion, not proof that anything was broken into." }),
+      e.client_ip && soc && !siteRole ? el("div", { class: "toolbar" }, [btn("Investigate this address", () => goTo.investigate(e.client_ip), "btn-sm btn-ghost"), btn("Open an incident", () => soc.incidentDialog(`${show(e.rule_id || e.action, 20)} from ${show(e.client_ip, 64)}`, "event", `${e.ts_event}/${e.id}`, goTo), "btn-sm btn-ghost")]) : "",
     ]);
   }
 
   function viewEvents(body, goBlocks) {
-    const filters = { client_ip: "", domain: "", rule_id: "", source: "" };
+    let query = "";
+    let selected = null;
     const expanded = new Set(); // what the operator has open survives the refresh every few seconds
     let paused = false, timer = null, cursor = null, shown = [];
     const table = el("div", { class: "table-wrap mx-table-wrap" });
     const status = el("span", { class: "muted" });
-    const inputs = Object.keys(filters).map((k) => {
-      const inp = el("input", { type: "text", placeholder: { client_ip: "Client address", domain: "Domain", rule_id: "Rule ID", source: "Source" }[k], style: "max-width:170px" });
-      inp.onchange = () => { filters[k] = inp.value.trim(); cursor = null; load(); };
-      return inp;
-    });
+    const fieldList = el("datalist", { id: "ella-fields" });
+    API.ella("GET", "/search/fields").then((r) => fieldList.replaceChildren(...r.fields.map((f) => el("option", { value: `${f}:` })))).catch(() => {});
+    const search = el("input", { type: "text", list: "ella-fields", placeholder: "Search: client_ip:1.2.3.4 AND rule_id:942100 AND status>=500", style: "flex:1;min-width:260px" });
+    const runSearch = () => { query = search.value.trim(); cursor = null; load(); };
+    search.onkeydown = (ev) => { if (ev.key === "Enter") runSearch(); };
+    const saved = el("select", { style: "max-width:170px" });
+    const drawSaved = () => API.ella("GET", "/queries").then((r) => {
+      saved.replaceChildren(el("option", { value: "", text: "Saved searches" }), ...r.queries.map((q) => el("option", { value: q.query, text: show(q.name, 40) })));
+    }).catch(() => {});
+    saved.onchange = () => { if (saved.value) { search.value = saved.value; runSearch(); } };
+    drawSaved();
+    const saveBtn = btn("Save search", () => {
+      const name = el("input", { type: "text", maxlength: 60 });
+      openModal("Save this search", field("Name", name), [btn("Cancel", closeModal, "btn-ghost"), btn("Save", async () => {
+        try { await API.ella("POST", "/queries", { name: name.value.trim(), query: search.value.trim() }); closeModal(); drawSaved(); } catch (e) { toast(e.message, "bad"); }
+      }, "btn-primary")]);
+    }, "btn-ghost");
+    const exportLink = (fmt, label) => { const a = el("a", { class: "btn btn-ghost", text: label }); a.onclick = () => { a.href = `/api/ella/export?format=${fmt}&q=${encodeURIComponent(search.value.trim())}`; }; return a; };
+    const onKey = (ev) => {
+      if (!body.isConnected) { document.removeEventListener("keydown", onKey); return; }
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement && document.activeElement.tagName) || document.querySelector(".modal, .modal-backdrop")) return;
+      if (ev.key === "/") { ev.preventDefault(); search.focus(); return; }
+      if (!selected) return;
+      if (ev.key === "b" && selected.client_ip) banDialog(selected.client_ip, goBlocks);
+      if (ev.key === "i" && soc) soc.incidentDialog(`${show(selected.rule_id || selected.action, 20)} from ${show(selected.client_ip, 64)}`, "event", `${selected.ts_event}/${selected.id}`, goTo);
+      if (ev.key === "e" && soc && selected.evidence && selected.evidence[0] && selected.evidence[0].rule_id) soc.wizard(selected, selected.evidence[0], load);
+    };
+    document.addEventListener("keydown", onKey);
     const pauseBtn = btn("Pause", () => { paused = !paused; pauseBtn.textContent = paused ? "Resume" : "Pause"; }, "btn-ghost");
     const more = btn("Older events", () => load(true), "btn-ghost");
     more.style.display = "none";
@@ -77,8 +118,9 @@ window.AuroraElla = (ui) => {
       const rows = [];
       shown.forEach((e) => {
         const key = `${e.source}:${e.id}`;
-        const detail = el("tr", { style: expanded.has(key) ? "" : "display:none" }, el("td", { colspan: 8 }, eventDetail(e)));
+        const detail = el("tr", { style: expanded.has(key) ? "" : "display:none" }, el("td", { colspan: 8 }, eventDetail(e, load)));
         rows.push(el("tr", { style: "cursor:pointer", onclick: () => {
+          selected = e;
           const opening = detail.style.display === "none";
           detail.style.display = opening ? "" : "none";
           if (opening) expanded.add(key); else expanded.delete(key);
@@ -96,9 +138,9 @@ window.AuroraElla = (ui) => {
 
     async function load(older) {
       try {
-        const params = { limit: 100, ...filters };
-        if (older && cursor) { params.cursor_ts = cursor[0]; params.cursor_id = cursor[1]; }
-        const r = await API.ellaEvents(params);
+        const params = new URLSearchParams({ limit: "100", q: query });
+        if (older && cursor) { params.set("cursor_ts", cursor[0]); params.set("cursor_id", cursor[1]); }
+        const r = await API.ella("GET", `/search?${params}`);
         shown = older ? shown.concat(r.events) : r.events;
         cursor = r.next_cursor;
         more.style.display = cursor ? "" : "none";
@@ -108,7 +150,7 @@ window.AuroraElla = (ui) => {
         status.textContent = `Couldn't load events: ${e.message}. What's on screen may be out of date.`;
       }
     }
-    body.append(el("div", { class: "toolbar" }, [...inputs, pauseBtn, status]), table, el("div", { class: "toolbar" }, [more]));
+    body.append(fieldList, el("div", { class: "toolbar" }, [search, btn("Search", runSearch, "btn-primary"), saved, saveBtn, pauseBtn, exportLink("csv", "CSV"), exportLink("json", "JSON")]), el("p", { class: "muted", text: "Keys: / search, then click an event and press b to ban, e for an exception, i for an incident. Times show your clock. Hover for UTC." }), status, table, el("div", { class: "toolbar" }, [more]));
     load();
     timer = setInterval(() => {
       if (!table.isConnected) { clearInterval(timer); return; }
@@ -152,7 +194,7 @@ window.AuroraElla = (ui) => {
             el("td", { text: show(b.reason) }), el("td", { text: show(b.owner) }),
             el("td", {}, READ_ONLY.includes(b.source) ? el("span", { class: "muted", text: "read-only" }) : btn("Unban", async () => {
               try {
-                const op = await API.ellaUnban(b.id);
+                const op = b.source === "cloudflare" ? await API.ella("POST", `/proxies/cdn-unban/${encodeURIComponent(b.id)}`) : await API.ellaUnban(b.id);
                 toast(op.state === "applied" ? `Unbanned from ${show(b.source, 40)} only, and confirmed. Other sources' bans on this address stay.` : `Not confirmed yet: ${op.error || op.state}`, op.state === "applied" ? "good" : "warn");
               } catch (e) { toast(e.message, "bad"); }
               load();
@@ -225,8 +267,23 @@ window.AuroraElla = (ui) => {
     body.prepend(note);
   }
 
+  async function agentNote(body) {
+    try {
+      const a = await API.ella("GET", "/agent");
+      const mode = el("select", {}, [el("option", { value: "open", text: "Carry on from inside the panel" }), el("option", { value: "closed", text: "Refuse firewall changes" })]);
+      mode.value = a.fail_mode;
+      mode.onchange = async () => { try { await API.ella("POST", "/fail-mode", { mode: mode.value }); toast("Saved", "good"); } catch (e) { toast(e.message, "bad"); } };
+      body.append(el("div", { class: "card", style: "margin-bottom:12px" }, [
+        el("div", { text: a.ping.ok ? `Agent service: answering (protocol ${a.ping.protocol}). Firewall changes go through it.` : `Agent service: not answering (${show(a.ping.error)}).` }),
+        field("If the agent service stops", mode),
+        el("p", { class: "muted", text: "Bans already in the firewall stay either way. Refusing means no new ban or unban until it's back, with the reason shown. ella-cli still works." }),
+      ]));
+    } catch (e) { body.append(el("p", { class: "dm-note warn", text: `Couldn't read the agent's state: ${e.message}` })); }
+  }
+
   async function viewSources(body) {
     leakNote(body);
+    await agentNote(body);
     try {
       const { sources } = await API.ellaSources();
       if (!sources.length) {
@@ -250,15 +307,22 @@ window.AuroraElla = (ui) => {
 
   function viewElla(root) {
     const body = el("div");
-    const tabs = [["Live Events", (b) => viewEvents(b, () => open(1))], ["Blocks", viewBlocks], ["Fail2Ban", viewFail2ban], ["Sources", viewSources]];
+    if (!soc && window.AuroraEllaSOC) soc = window.AuroraEllaSOC(ui, { show, when, banDialog, stamp });
+    const site = ui.role && ui.role() === "site";
+    const all = [["Overview", (b) => soc.viewOverview(b, goTo)], ["Live Events", (b) => viewEvents(b, () => goTo.blocks())], ["Investigate", (b, arg) => soc.viewInvestigate(b, arg, goTo)], ["Blocks", viewBlocks], ["WAF Rules", (b) => soc.viewRules(b)],
+      ["Fail2Ban", viewFail2ban], ["Sources", viewSources], ["Incidents & Audit", (b) => soc.viewIncidents(b, goTo)], ["Settings", (b) => soc.viewSettings(b)]];
+    // A website manager sees their own sites' events, and investigates within them. Everything else here is the whole server's.
+    const tabs = site ? all.filter(([label]) => ["Live Events", "Investigate"].includes(label)) : all;
     const bar = el("div", { class: "toolbar" });
-    function open(i) {
+    function open(i, arg) {
       body.replaceChildren();
       bar.replaceChildren(...tabs.map(([label], n) => btn(label, () => open(n), n === i ? "btn-primary" : "btn-ghost")));
-      tabs[i][1](body);
+      tabs[i][1](body, arg);
     }
+    const at = (label) => tabs.findIndex(([l]) => l === label);
+    goTo = { investigate: (ip) => open(at("Investigate"), ip), blocks: () => open(at("Blocks")), incidents: () => open(at("Incidents & Audit")) };
     root.append(el("div", { class: "em-head" }, [el("div", { class: "em-head-txt" }, [el("h2", {}, [icon("shield", 20), " WAF Ella"]),
-      el("p", { class: "muted", text: "Security events from your logs, and bans confirmed in the firewall. It works alongside WAF Firewall, Fail2ban and IP Blocker, which keep working as before." })])]), bar, body);
+      el("p", { class: "muted", text: "Your security center: events from every log, your own WAF rules, bans confirmed in the firewall, and investigations. It works alongside WAF Firewall, Fail2ban and IP Blocker, which keep working as before." })])]), bar, body);
     open(0);
   }
 

@@ -142,7 +142,9 @@ if [ $UNINSTALL = 1 ]; then
     ok "The WAF for Nginx is off (its packages stay installed)"
   fi
   systemctl disable aurora-ella.service 2>/dev/null || true
-  rm -f /usr/local/sbin/ella-cli /etc/systemd/system/aurora-ella.service
+  systemctl disable --now aurora-ella-agent.service 2>/dev/null || true
+  rm -f /usr/local/sbin/ella-cli /etc/systemd/system/aurora-ella.service /etc/systemd/system/aurora-ella-agent.service
+  rm -f /etc/modsecurity/zz-ella-rules.conf /etc/nginx/aurora-waf/ella.conf /etc/nginx/conf.d/aurora-ella-*.conf /etc/apache2/conf-available/zz-ella-*.conf /etc/apache2/conf-enabled/zz-ella-*.conf
   command -v nft >/dev/null && nft delete table inet aurora_ella 2>/dev/null || true
   ok "Service removed"
 
@@ -442,8 +444,39 @@ ExecStart=/usr/local/sbin/ella-cli restore
 [Install]
 WantedBy=multi-user.target
 EOF
+# Firewall changes go through this small service, which can do little else. Without it the panel does them itself.
+# A symlinked log folder (Fedora's compatibility layer) can't be listed here: systemd refuses the whole sandbox.
+ELLA_LOGS=""
+for d in /var/log/nginx /var/log/httpd /var/log/apache2; do [ -L "$d" ] || ELLA_LOGS="$ELLA_LOGS -$d"; done
+cat > /etc/systemd/system/aurora-ella-agent.service <<EOF
+[Unit]
+Description=WAF Ella agent: the only door to firewall and web server commands
+After=network-pre.target aurora-ella.service
+
+[Service]
+Type=simple
+WorkingDirectory=${APP_DIR}
+ExecStart=/usr/bin/python3 -m backend.ella.agentd
+RuntimeDirectory=aurora-ella
+RuntimeDirectoryMode=0700
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+ProtectSystem=strict
+PrivateTmp=yes
+# /run: nginx -t opens its pid file for writing, and that file may not exist yet.
+ReadWritePaths=/var/lib/aurora/ella /run${ELLA_LOGS}
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_SETUID CAP_SETGID CAP_CHOWN CAP_NET_BIND_SERVICE CAP_KILL
+MemoryMax=200M
+CPUQuota=50%
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
+EOF
 systemctl daemon-reload
 systemctl enable aurora-ella.service >/dev/null 2>&1 || warn "Could not enable aurora-ella.service, so bans come back only when the panel starts"
+systemctl enable --now aurora-ella-agent.service >/dev/null 2>&1 || warn "Could not start aurora-ella-agent.service, so the panel makes firewall changes itself"
 
 # --- systemd unit -----------------------------------------------------------
 say "Writing ${UNIT}"

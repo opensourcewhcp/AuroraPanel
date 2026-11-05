@@ -329,6 +329,8 @@ const API = (() => {
     nginxControl: (action) => request("POST", "/api/nginx/control", { action }),
     nginxDefault: () => request("POST", "/api/nginx/default-site", {}),
     nginxImport: () => request("POST", "/api/nginx/import-apache", {}),
+    ella: (method, path, body) => request(method, "/api/ella" + path, body),
+    ellaAudit: () => request("GET", "/api/ella/audit"),
     ellaEvents: (params) => request("GET", "/api/ella/events?" + new URLSearchParams(Object.entries(params).filter(([, v]) => v !== "" && v !== null && v !== undefined))),
     ellaBlocks: () => request("GET", "/api/ella/blocks"),
     ellaBan: (body) => request("POST", "/api/ella/blocks", body),

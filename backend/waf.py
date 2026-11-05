@@ -49,7 +49,7 @@ WEBMAIL_BODY_RULE = ('SecRule REQUEST_URI "@beginsWith /webmail/" '
                      '"id:1000104,phase:1,pass,nolog,t:none,ctl:requestBodyAccess=Off"')
 # Bump when the rules the panel renders change: an install that still has older rules in Apache rewrites
 # them once (at start, and when the WAF page is opened), so a shipped exception never stays on paper.
-RULES_REV = 6
+RULES_REV = 7
 # CRS bookkeeping rules: the score summary, not an attack type of their own.
 _SUMMARY = {"949110", "959100", "980130", "980140", "980145", "959180"}
 # Noise, not attacks: someone opened a site by its IP address (920350), which on its own never blocks.
@@ -126,7 +126,7 @@ def render_pre(s: dict) -> str:
     engine = {"block": "On", "detect": "DetectionOnly", "off": "Off"}[s["mode"]]
     out = [HEADER, f"SecRuleEngine {engine}", ""]
     # CRS settings (ids 900000–900999 are reserved for the admin's setup).
-    out.append(f'SecAction "id:900000,phase:1,nolog,pass,t:none,setvar:tx.paranoia_level={int(s["paranoia"])}"')
+    out.append(f'SecAction "id:900000,phase:1,nolog,pass,t:none,setvar:tx.paranoia_level={int(s["paranoia"])},setvar:tx.blocking_paranoia_level={int(s["paranoia"])}"')  # CRS 3 reads the first, CRS 4 only the second
     out.append(f'SecAction "id:900110,phase:1,nolog,pass,t:none,setvar:tx.inbound_anomaly_score_threshold={int(s["threshold"])},'
                f'setvar:tx.outbound_anomaly_score_threshold=4"')
     apps = [a for a in s["apps"] if a in APPS and a != "roundcube"]

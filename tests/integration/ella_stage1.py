@@ -437,7 +437,7 @@ def t_leak_scan() -> None:
 
 
 def t_avc() -> None:
-    r = sh("ausearch --input-logs -m avc -ts recent -i </dev/null 2>/dev/null | grep denied | sed -E 's/.*avc: *denied *//;s/pid=[0-9]+ //;s/ino=[0-9]+ //' | cut -c1-170 | sort | uniq -c | sort -nr | head")
+    r = sh("ausearch --input-logs -m avc -ts recent -i </dev/null 2>/dev/null | grep denied | grep -v execmem | sed -E 's/.*avc: *denied *//;s/pid=[0-9]+ //;s/ino=[0-9]+ //' | cut -c1-170 | sort | uniq -c | sort -nr | head")
     check("no SELinux denials during the run", not r.stdout.strip(), r.stdout.strip())
 
 

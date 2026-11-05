@@ -73,9 +73,11 @@ class _GZipFrontend(GZipMiddleware):
 
 app.add_middleware(_GZipFrontend, minimum_size=1024)
 from . import caddysites, nginxsites, nginxwaf  # noqa: E402
-from .ella import routes as ella_routes, service as ella_service  # noqa: E402
+from .ella import routes as ella_routes, routes_soc as ella_soc, service as ella_service  # noqa: E402
 
 app.include_router(ella_routes.router)
+app.include_router(ella_soc.router)
+app.include_router(ella_soc.public)
 
 
 class NginxSiteBody(BaseModel):
