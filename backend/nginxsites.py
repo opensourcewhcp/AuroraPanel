@@ -115,7 +115,12 @@ def clean(settings: dict) -> dict:
     custom = str(s.get("custom") or "").strip()
     if len(custom) > 8000:
         raise NginxError("Extra settings are limited to 8000 characters")
-    if custom.count("{") != custom.count("}"):
+    depth = 0
+    for ch in custom:  # "} server {" balances, but would break out of this site's block
+        depth += (ch == "{") - (ch == "}")
+        if depth < 0:
+            break
+    if depth != 0:
         raise NginxError("Extra settings have unbalanced braces")
     return {"server_name": name, "aliases": aliases, "mode": mode, "docroot": docroot, "proxy": proxy if mode == "proxy" else "", "https": https,
             "force_https": bool(s.get("force_https")) and https != "none", "max_body_mb": body, "custom": custom}
@@ -153,7 +158,7 @@ def render(s: dict, socket: str | None = None) -> str:
         out += ["server {", "    listen 80;", "    listen [::]:80;", f"    server_name {names};", *body, "}"]
     if s["https"] != "none":
         crt, key = _cert_paths(s["server_name"])
-        out += ["server {", "    listen 443 ssl;", "    listen [::]:443 ssl;", f"    server_name {names};", f"    ssl_certificate {crt};", f"    ssl_certificate_key {key};",
+        out += ["server {", "    listen 443 ssl;", "    listen [::]:443 ssl;", f"    server_name {names};", f"    ssl_certificate {crt.as_posix()};", f"    ssl_certificate_key {key.as_posix()};",
                 "    ssl_protocols TLSv1.2 TLSv1.3;", *body, "}"]
     return "\n".join(out) + "\n"
 
