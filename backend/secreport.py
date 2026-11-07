@@ -503,7 +503,7 @@ def _scan_kind(t: dict, kind: str, name: str, facts: dict) -> list[dict]:
                     x["fix"] = f"One click: switch those lines off in {over} (backed up) so the server-wide modern TLS applies here too."
                     x["action"] = f"vhost_tls:{over}"
                 if x["id"] == "self-signed" and kind == "site" and not _is_ip(name) and not t.get("system"):
-                    x["action"] = f"autossl_run:{site_key}"
+                    _offer_certificate(x, site_key)
             findings += f
             r = _http(443, name, True)
             if r:
@@ -542,7 +542,7 @@ def _scan_kind(t: dict, kind: str, name: str, facts: dict) -> list[dict]:
                 x["title"] = f"{label}: {x['title']}"
                 x["id"] = f"{port}-{x['id']}"
                 if x["id"].endswith("self-signed") and not _is_ip(name):
-                    x["action"] = f"autossl_run:{name}"  # AutoSSL covers the mail name too (and switches Postfix/Dovecot to it)
+                    _offer_certificate(x, name)  # AutoSSL covers the mail name too (and switches Postfix/Dovecot to it)
             findings += f
             facts[str(port)] = fa
         findings += secnet.mail_anon_findings()
@@ -656,6 +656,20 @@ def distrust_emsign() -> dict:
     return {"changed": True}
 
 
+def _offer_certificate(finding: dict, name: str) -> None:
+    """Let's Encrypt only issues for a name that points here, so that's the only time a button can keep its promise.
+    Otherwise the finding says what to change instead."""
+    from . import autossl
+    here, addrs = autossl.resolves_here(name)
+    if here:
+        finding["action"] = f"autossl_run:{name}"
+    elif addrs:
+        finding["fix"] = (f"{name} points to {addrs[0]}, not this server, so Let's Encrypt can't issue a certificate here. Point its DNS at this "
+                          "server first. If a proxy such as Cloudflare is in front on purpose, this certificate is only what the proxy sees.")
+    else:
+        finding["fix"] = f"{name} has no DNS record, so Let's Encrypt can't issue a certificate. Add a record pointing at this server first."
+
+
 def fix(action: str) -> dict:
     """The one-click fixes offered next to findings. `kind[:argument]` — see the frontend's FIX_LABEL."""
     kind, _, arg = action.partition(":")
@@ -680,8 +694,8 @@ def fix(action: str) -> dict:
                    if r["changed"] else f"{arg} has no cipher lines of its own — the server-wide modern TLS applies")
         elif kind == "autossl_run":
             from . import autossl
-            autossl.start(True, arg)
-            msg = f"Requesting a Let's Encrypt certificate for {arg} — it takes 1–4 minutes; the result shows under Security → AutoSSL. Run the report again afterwards."
+            res = autossl.request(arg)
+            msg = f"{arg}: certificate ready." + (f" {res['note']}." if res.get("note") else "")
         elif kind == "hsts":
             from . import sites
             sites.quick_toggle(arg, "hsts", True)
@@ -728,7 +742,7 @@ FIX_INFO = {
     "panel_harden": {"label": "Harden panel TLS", "what": "Strong ciphers only and no Server header for this panel. The panel restarts, the page reloads by itself.", "last": True},
     "ufw_enable": {"label": "Enable firewall", "what": "Turn ufw on. Every port that serves something now stays open, so nothing stops working."},
     "vhost_tls": {"label": "Use server-wide TLS", "what": "Switch off a site's own cipher and protocol lines (backed up) so the modern server-wide TLS applies."},
-    "autossl_run": {"label": "Get Let's Encrypt certificate", "what": "Request a free trusted certificate. The name must point at this server and port 80 must be reachable from the internet."},
+    "autossl_run": {"label": "Get certificate", "what": "Request a free trusted certificate. The name must point at this server and port 80 must be reachable from the internet."},
     "hsts": {"label": "Turn on HSTS", "what": "Tell browsers to only ever use HTTPS for this site."},
     "force_https": {"label": "Force HTTPS", "what": "Send every http:// visit to https:// (301)."},
     "ca_distrust": {"label": "Distrust it", "what": "Remove the compromised emSign root from this server's trust store."},

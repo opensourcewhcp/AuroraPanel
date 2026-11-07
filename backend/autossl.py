@@ -365,6 +365,35 @@ def start(force: bool = True, only: str = "") -> dict:
     return {"ok": True}
 
 
+def request(site: str, timeout: int = 240) -> dict:
+    """Get one site's certificate and wait for the answer. Only one AutoSSL job runs at a time, so a request
+    made while another is running waits its turn instead of being lost. Raises with the reason if none came."""
+    deadline = time.time() + timeout
+
+    def busy() -> bool:
+        return _run(["systemctl", "is-active", "aurora-autossl"], 10).stdout.strip() in ("active", "activating")
+
+    while busy():
+        if time.time() > deadline:
+            raise AutoSSLError("Another certificate request is still running. Try again in a minute.")
+        time.sleep(2)
+    began = int(time.time())
+    start(True, site)
+    while busy():
+        if time.time() > deadline:
+            raise AutoSSLError("Let's Encrypt is taking a while. The result will show under Security → AutoSSL.")
+        time.sleep(2)
+    res = load()["results"].get(site)
+    if res and res.get("ts", 0) >= began:
+        if res.get("ok"):
+            return res
+        raise AutoSSLError(res.get("error") or "Let's Encrypt didn't issue the certificate")
+    names = next((i.get("names") or [] for i in _plan() if i["site"] == site), [])
+    if names and all(n["state"] in ("ok", "excluded") for n in names):
+        return {"ok": True, "note": "It already has a valid certificate"}
+    raise AutoSSLError(f"No certificate was requested: {site} doesn't point at this server")
+
+
 # ------------------------------------------------------------------ wildcards (DNS-01 through our own zones)
 def _zone_for(domain: str) -> str:
     from . import dnszones

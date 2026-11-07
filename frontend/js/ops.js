@@ -491,12 +491,21 @@ window.AuroraOps = (ui) => {
       // list
       if (d.packages.length) {
         const selBtn = btn("Install selected", () => call(() => API.updatesInstall([...sel]), "Updating…", (r) => watch(r.job)), "btn-ghost");
-        const upd = () => { selBtn.disabled = !sel.size; selBtn.textContent = sel.size ? `Install ${sel.size} selected` : "Install selected"; };
+        const boxes = [];
+        const all = el("input", { type: "checkbox", class: "op-cb", title: "Select all", "aria-label": "Select all", onchange: () => {
+          boxes.forEach(({ c, name }) => { c.checked = all.checked; all.checked ? sel.add(name) : sel.delete(name); });
+          upd();
+        } });
+        const upd = () => {
+          selBtn.disabled = !sel.size; selBtn.textContent = sel.size ? `Install ${sel.size} selected` : "Install selected";
+          const n = d.packages.filter((p) => sel.has(p.name)).length;
+          all.checked = n === d.packages.length; all.indeterminate = n > 0 && n < d.packages.length;
+        };
         upd();
         body.append(card(`Waiting updates (${d.packages.length})`, [el("div", { class: "table-wrap mx-table-wrap" }, el("table", { class: "mx-table" }, [
-          el("thead", {}, el("tr", {}, ["", "Package", "Now", "New", "From"].map((h) => el("th", { text: h })))),
-          el("tbody", {}, d.packages.map((p) => { const c = el("input", { type: "checkbox", onchange: () => { c.checked ? sel.add(p.name) : sel.delete(p.name); upd(); } }); c.checked = sel.has(p.name);
-            return el("tr", {}, [el("td", {}, c), el("td", {}, [el("b", { text: p.name }), p.security ? el("span", { class: "pill bad", style: "margin-left:8px", text: "security" }) : null]),
+          el("thead", {}, el("tr", {}, [el("th", { class: "op-cb-cell" }, all), ...["Package", "Now", "New", "From"].map((h) => el("th", { text: h }))])),
+          el("tbody", {}, d.packages.map((p) => { const c = el("input", { type: "checkbox", class: "op-cb", "aria-label": `Select ${p.name}`, onchange: () => { c.checked ? sel.add(p.name) : sel.delete(p.name); upd(); } }); c.checked = sel.has(p.name); boxes.push({ c, name: p.name });
+            return el("tr", {}, [el("td", { class: "op-cb-cell" }, c), el("td", {}, [el("b", { text: p.name }), p.security ? el("span", { class: "pill bad", style: "margin-left:8px", text: "security" }) : null]),
               el("td", { class: "muted mx-mono", text: p.from }), el("td", { class: "mx-mono", text: p.to }), el("td", { class: "muted", text: p.origin.split(",")[0] })]); })),
         ]))], "", [selBtn]));
       }
@@ -1643,7 +1652,7 @@ window.AuroraOps = (ui) => {
   }
   // action → button label; per-target actions look like "kind:argument"
   const FIX_LABEL = { ca_distrust: "Distrust it", apache_harden: "Harden web server", panel_harden: "Harden panel TLS", panel_regen: "New panel certificate", ufw_enable: "Enable firewall",
-    vhost_tls: "Use server-wide TLS", autossl_run: "Get Let's Encrypt certificate", hsts: "Turn on HSTS", force_https: "Force HTTPS",
+    vhost_tls: "Use server-wide TLS", autossl_run: "Get certificate", hsts: "Turn on HSTS", force_https: "Force HTTPS",
     ssh_crypto: "Strong SSH algorithms only", timestamps_off: "Hide timestamps", mail_anon_off: "No anonymous TLS for mail", ftp_tls: "Require FTPS",
     port_lan: "Local network only", dmarc_wizard: "Set up DMARC", dmarc_step: "Tighten DMARC", mail_dns: "Publish record" };
   const fixLabel = (a) => /^mail_dns:/.test(a || "") ? `Publish ${a.split(":")[1].toUpperCase()}` : FIX_LABEL[a] || FIX_LABEL[(a || "").split(":")[0]] || "Fix";
@@ -1845,7 +1854,7 @@ window.AuroraOps = (ui) => {
   const sevTag = (s) => el("span", { class: `sr-sev sev-${s}`, text: SEV_NAME[s] || s });
 
   async function viewSecReport(root) {
-    const runBtn = btn("Run report", () => run(), "btn-primary");
+    const runBtn = btn("Run report", () => run(), "btn-ghost sr-run-btn");
     root.append(pageHead("Security Report", "What an outside vulnerability scanner would find on this server, checked from the inside: websites, SSL/TLS, open ports, email authentication and the server's own protections. Each issue says what it means and how to fix it.", [runBtn]));
     const top = el("div", { class: "sr-top" });
     const body = el("div", { class: "sr-page" }, el("div", { class: "loading", text: "Loading…" }));
@@ -1950,8 +1959,11 @@ window.AuroraOps = (ui) => {
         }
         toast(`${ok} of ${plural(todo.length, "fix", "fixes")} applied`, ok === todo.length ? "good" : "bad");
         if (reload) { toast("The panel restarts with hardened TLS, reloading…", "good"); setTimeout(() => location.reload(), 4500); return; }
+        const again = () => { closeModal(); run(lastIds()); };
+        // A failed fix says why in its row: that stays on screen until it has been read.
+        if (ok < todo.length) { go.textContent = "Run the report again"; go.disabled = false; go.onclick = again; return; }
         go.textContent = "Checking again…";
-        setTimeout(() => { closeModal(); run(lastIds()); }, 900);
+        setTimeout(again, 900);
       };
       openModal(auto ? "Fix what the report found" : "Apply fixes", el("div", { class: "sr-fx-wrap" }, [
         el("p", { class: "muted", text: "Each fix changes only what it says and checks the result before keeping it. Fixes that change how people or programs connect start unticked. The report runs again afterwards." }),
@@ -2110,9 +2122,8 @@ window.AuroraOps = (ui) => {
       const c = rep.counts || {};
       const plan = (rep.fix_plan || []).filter((p) => !p.interactive);
       const open = SEV_ORDER.slice(0, 4).reduce((a, k) => a + (c[k] || 0), 0);
-      const quick = new Set(rep.targets.flatMap((t) => t.findings.filter((f) => f.action && !f.accepted && f.severity !== "info").map((f) => f.key))).size;
       const head = rep.score >= 90 ? "Looking solid" : rep.score >= 65 ? "A few things to tighten" : "Needs attention";
-      const sub = open ? `${plural(open, "issue")} found${quick ? `, ${quick} can be fixed in one click` : ""}.` : "No open issues.";
+      const sub = open ? `${plural(open, "issue")} found${plan.length ? `, ${plan.length} can be fixed in one click` : ""}.` : "No open issues.";
       const bar = el("div", { class: "sr-sevbar" }, SEV_ORDER.slice(0, 4).filter((k) => c[k]).map((k) => el("span", { class: `sev-${k}`, style: `flex:${c[k]}`, title: `${c[k]} ${k}` })));
       const legend = el("div", { class: "sr-legend" }, [...SEV_ORDER.slice(0, 4), "accepted"].map((k) => el("span", { class: (c[k] || 0) ? "" : "zero" }, [sevDot(k), el("b", { text: String(c[k] || 0) }), (SEV_NAME[k] || "Accepted").toLowerCase()])));
       const prev = (d.history || []).slice(-2);

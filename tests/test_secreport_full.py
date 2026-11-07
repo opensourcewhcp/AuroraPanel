@@ -246,6 +246,8 @@ BARE = {"status": 200, "headers": {"server": "Apache/2.4"}, "cookies": [], "body
 
 
 def test_scan_site_variants(monkeypatch, tmp_path):
+    from backend import autossl
+    monkeypatch.setattr(autossl, "resolves_here", lambda n: (True, ["192.0.2.1"]))
     monkeypatch.setattr(secreport, "SITES_ENABLED", tmp_path)
     (tmp_path / "s.conf").write_text("SSLCipherSuite ALL\n")
     tf = [secreport._f("medium", "Weak", "d", fid="weak-ciphers"), secreport._f("medium", "Self", "d", fid="self-signed")]
@@ -273,6 +275,8 @@ def test_scan_site_variants(monkeypatch, tmp_path):
 
 
 def test_scan_panel_mail_network_dmarc_server(monkeypatch):
+    from backend import autossl
+    monkeypatch.setattr(autossl, "resolves_here", lambda n: (True, ["192.0.2.1"]))
     _web(monkeypatch, https=BARE, plain=BARE)
     p = secreport._scan_target({"id": "panel:ns0", "kind": "panel", "name": "ns0", "port": 8088, "scheme": "http", "label": "p"})
     assert p["findings"][0]["id"] == "panel-http" and p["findings"][0]["severity"] == "critical"
@@ -358,7 +362,7 @@ def test_fix_actions(monkeypatch):
     monkeypatch.setattr(panelhttps, "harden", lambda: calls.append("panel"))
     monkeypatch.setattr(firewall, "set_enabled", lambda on: {"preallowed": ["22/tcp"]})
     monkeypatch.setattr(appconfig, "strip_vhost_tls", lambda c: {"changed": 2 if c == "a.conf" else 0})
-    monkeypatch.setattr(autossl, "start", lambda force, name: calls.append(name))
+    monkeypatch.setattr(autossl, "request", lambda name: calls.append(name) or {"ok": True})
     monkeypatch.setattr(sites, "quick_toggle", lambda n, k, v: calls.append((n, k)))
     monkeypatch.setattr(secreport, "distrust_emsign", lambda: {"changed": False})
     for k in secnet.FIXES:
