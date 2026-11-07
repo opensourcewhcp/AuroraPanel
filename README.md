@@ -5,7 +5,7 @@ Websites, email, VPN, backups, security and monitoring, all from one browser tab
 Free, open source, MIT licensed.</p>
 
 <p align="center">
-  <a href="https://github.com/opensourcewhcp/AuroraPanel/releases"><img alt="Version 1.1.37" src="https://img.shields.io/badge/version-1.1.37-ff7a1a"></a>
+  <a href="https://github.com/opensourcewhcp/AuroraPanel/releases"><img alt="Version 1.1.38" src="https://img.shields.io/badge/version-1.1.38-ff7a1a"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-green"></a>
   <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-blue">
   <img alt="Runs on Raspberry Pi" src="https://img.shields.io/badge/runs%20on-Raspberry%20Pi-c51a4a">
@@ -124,7 +124,8 @@ version can be installed at a time.
 The installer turns on EPEL and CRB, and on version 9 installs Python 3.12 beside the system's Python. Docker comes from
 Docker's repository and Dovecot 2.4 from Dovecot's, added when you install them. Dovecot only publishes x86_64 packages, so
 email needs x86_64. Version 10 has no packages for ModSecurity on Nginx, Azure CLI or ddclient, and gets the OWASP Core
-Rule Set from its GitHub release. PHP is the system's default: 8.0 on version 9, 8.3 on version 10.
+Rule Set from its GitHub release. PHP is the system's default: 8.0 on version 9, 8.3 on version 10. Tested in containers on
+AlmaLinux 9 and 10 and Rocky Linux 9, so SELinux and firewalld haven't been tried on these systems yet, and neither has RHEL itself.
 
 **Nginx and Caddy websites**: Domains > Nginx Websites and Caddy Websites create and run PHP, static and reverse proxy
 sites. Nginx sites can get Let's Encrypt certificates and WordPress; Caddy gets certificates on its own. The Domains page and
