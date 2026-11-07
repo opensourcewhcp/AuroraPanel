@@ -1,4 +1,4 @@
-"""WAF Ella was removed in 1.1.39. This takes what it left on a server out of service, once.
+"""Takes a removed feature's leftovers on a server out of service, once. The names below are only what it must find.
 
 Updates copy files over the old ones, so nothing else would stop its services or lift its firewall table.
 
@@ -99,7 +99,10 @@ def _remove_old_program() -> None:
 
 def cleanup() -> None:
     """Safe to run at every start. Raises when a web server refuses its settings, so the panel can say so."""
-    if os.name != "posix" or os.geteuid() != 0 or DONE.exists():
+    if os.name != "posix" or os.geteuid() != 0:
+        return
+    (config.ROOT / "backend" / "ella_retire.py").unlink(missing_ok=True)  # this file's old name; updates don't delete
+    if DONE.exists():
         return
     _stop_services()
     apache, nginx = _remove_apache_rules(), _remove_nginx_rules()

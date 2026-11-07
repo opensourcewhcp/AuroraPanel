@@ -26,7 +26,7 @@ SITE_ALLOW = [
     ("POST", r"/api/mail/accounts/(create|update|delete)"),
     ("GET", r"/api/metrics/(sites|visitors|analytics|errors)"),
 ]
-# Security operators worked only in WAF Ella, which is gone. They can sign out and nothing else: making them
+# The security operator role is retired. Those accounts can sign out and nothing else: making them
 # viewers would quietly let them read the whole panel.
 RETIRED_ALLOW = re.compile(r"^/api/(me|status)$")
 # Viewers can read every page, but not these (secrets, file contents, downloads, a shell).
@@ -121,7 +121,7 @@ def _decide(user: dict | None, method: str, path: str) -> str | None:
     if user["role"] == "soc_operator":
         if (method in ("GET", "HEAD") and RETIRED_ALLOW.match(path)) or (method == "POST" and path == "/api/logout"):
             return None
-        return "This account's role was removed along with WAF Ella. Ask an administrator to give it a new one."
+        return "This account's role no longer exists. Ask an administrator to give it a new one."
     if user["role"] == "site":
         for m, rx in SITE_ALLOW:
             if m == method and re.fullmatch(rx, path):

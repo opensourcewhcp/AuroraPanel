@@ -422,7 +422,7 @@ def api_login(body: LoginBody, request: Request):
         _auth_log(False, body.username, request)
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not is_owner and panelusers.retired(body.username):
-        raise HTTPException(status_code=403, detail="This account's role was removed along with WAF Ella. Ask an administrator to give it a new one.")
+        raise HTTPException(status_code=403, detail="This account's role no longer exists. Ask an administrator to give it a new one.")
     if not is_owner:
         panelusers.touch(body.username)
     if is_owner and twofa.is_enabled():
@@ -4298,10 +4298,10 @@ def _metrics_start():
     except Exception as exc:
         problems.record("InstaBan", exc, hint="InstaBan is not watching the logs. Open Security → InstaBan.")
     try:
-        from . import ella_retire
-        ella_retire.cleanup()
+        from . import legacy_cleanup
+        legacy_cleanup.cleanup()
     except Exception as exc:
-        problems.record("WAF Ella removal", exc, hint="Removing what WAF Ella left behind didn't finish. Check the web server's settings.")
+        problems.record("Update cleanup", exc, hint="Removing old settings didn't finish. Check the web server's settings.")
     try:
         slackbot.start()  # Socket Mode: receives button clicks and /aurora
     except Exception as exc:

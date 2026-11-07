@@ -1,10 +1,10 @@
-"""WAF Ella is gone: what it left on a server comes out safely, and its accounts don't gain access."""
+"""A removed feature's leftovers come off a server safely, and its accounts don't gain access."""
 import os
 import subprocess
 
 import pytest
 
-from backend import authz, ella_retire as R, nginxwaf, panelusers
+from backend import authz, legacy_cleanup as R, nginxwaf, panelusers
 
 
 @pytest.fixture
