@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from backend import audit, guard, instaban
+from backend import abuse, audit, guard, instaban
 
 
 @pytest.fixture
@@ -21,6 +21,9 @@ def ib(tmp_path, monkeypatch):
     monkeypatch.setattr(guard, "ban", lambda ip, reason="", duration=None, client_ip=None, source="": bans.append((ip, reason, duration, source)) or {"ok": True})
     monkeypatch.setattr(guard, "is_trusted", lambda ip: ip.startswith("10.0.0."))
     monkeypatch.setattr(guard, "trusted_cidrs", lambda: ["10.0.0.0/8"])
+    monkeypatch.setattr(instaban, "_waf_mode", lambda: None)        # no WAF: InstaBan follows its own switch
+    monkeypatch.setattr(instaban, "_in_background", lambda fn: fn())
+    instaban._WOULD.clear()
     return {"logs": logs, "bans": bans}
 
 
@@ -180,3 +183,143 @@ def test_port_knocks_ban_a_scanner(ib, monkeypatch):
     hit = instaban.overview()["hits"][0]
     assert hit["kind"] == "ports" and hit["target"].startswith("ports 1000, 1001")
     assert instaban.scan()["bans"] == 0   # the same knocks are not counted twice
+
+
+def test_a_log_that_grows_is_read_on_the_next_beat_without_waiting(ib):
+    instaban.set_settings(enabled=True, ttl="6h")
+    log = ib["logs"] / "access.log"
+    log.write_text("")
+    seen: dict = {}
+    assert instaban._tick(seen, 3600) is True      # first beat: always a pass
+    assert instaban._tick(seen, 3600) is False     # nothing new: no work
+    with log.open("a") as f:
+        f.write(LINE.format(ip="203.0.113.7", target="/.env") + "\n")
+    assert instaban._tick(seen, 3600) is True and ib["bans"][0][0] == "203.0.113.7"
+    assert instaban._tick(seen, 0) is True         # the slow pass still runs for the port knock check
+    instaban.set_settings(enabled=False)
+    with log.open("a") as f:
+        f.write(LINE.format(ip="203.0.113.8", target="/.env") + "\n")
+    assert instaban._tick(seen, 3600) is False and len(ib["bans"]) == 1
+
+
+def test_quiet_passes_keep_their_place_without_writing_the_state_file(ib, monkeypatch):
+    instaban.set_settings(enabled=True, ttl="6h")
+    log = ib["logs"] / "access.log"
+    log.write_text("")
+    instaban.scan()                                                        # a log seen for the first time is read from its end
+    monkeypatch.setattr(instaban, "_last_save", time.monotonic() + 3600)   # a write has only just happened
+    writes: list[int] = []
+    real = instaban.save
+    monkeypatch.setattr(instaban, "save", lambda s: writes.append(1) or real(s))
+    with log.open("a") as f:
+        f.write(LINE.format(ip="203.0.113.7", target="/index.html") + "\n")
+    assert instaban.scan()["scanned"] == 1 and not writes     # read, not written
+    assert instaban.scan()["scanned"] == 0                    # and not read twice
+    with log.open("a") as f:
+        f.write(LINE.format(ip="203.0.113.7", target="/.env") + "\n")
+    assert instaban.scan()["bans"] == 1 and writes == [1]     # a catch is written straight away
+
+
+def _attack(log, ip, target="/.env"):
+    with log.open("a") as f:
+        f.write(LINE.format(ip=ip, target=target) + "\n")
+
+
+@pytest.fixture
+def armed(ib, monkeypatch):
+    """InstaBan on, reporting left unticked, past the first look at the log. Reports go to a list."""
+    instaban.set_settings(enabled=True, ttl="6h")
+    log = ib["logs"] / "access.log"
+    log.write_text("")
+    instaban.scan()
+    sent: list[str] = []
+    monkeypatch.setattr(abuse, "report", lambda ip, note="": sent.append(ip))
+    return {**ib, "log": log, "sent": sent}
+
+
+def test_blocking_bans_and_reports_without_the_tick_box(armed, monkeypatch):
+    monkeypatch.setattr(instaban, "_waf_mode", lambda: "block")
+    _attack(armed["log"], "203.0.113.7")
+    assert instaban.scan()["bans"] == 1
+    assert armed["sent"] == ["203.0.113.7"]
+    hit = instaban.overview()["hits"][0]
+    assert hit["banned"] is True and hit["reported"] is True and instaban.overview()["stats"]["reports"] == 1
+
+
+def test_one_burst_over_two_passes_is_reported_once(armed, monkeypatch):
+    monkeypatch.setattr(instaban, "_waf_mode", lambda: "block")
+    real = [None]
+
+    def ban(ip, reason="", duration=None, client_ip=None, source=""):
+        if real[0]:
+            raise guard.GuardError(f"Already covered by the ban on {ip}/32")
+        real[0] = ip
+    monkeypatch.setattr(guard, "ban", ban)
+    _attack(armed["log"], "203.0.113.7")
+    instaban.scan()
+    _attack(armed["log"], "203.0.113.7", "/.git/config")
+    instaban.scan()
+    assert armed["sent"] == ["203.0.113.7"]
+    assert all(h["banned"] for h in instaban.overview()["hits"])
+
+
+def test_a_failed_report_is_noted_and_does_not_undo_the_ban(armed, monkeypatch):
+    monkeypatch.setattr(instaban, "_waf_mode", lambda: "block")
+    monkeypatch.setattr(abuse, "report", lambda ip, note="": 1 / 0)
+    _attack(armed["log"], "203.0.113.7")
+    assert instaban.scan()["bans"] == 1
+    hit = instaban.overview()["hits"][0]
+    assert hit["banned"] is True and hit["reported"] is False and hit["error"].startswith("report:")
+
+
+def test_detect_only_records_but_never_bans_or_reports(armed, monkeypatch):
+    monkeypatch.setattr(instaban, "_waf_mode", lambda: "detect")
+    instaban.set_settings(report=True)
+    _attack(armed["log"], "203.0.113.7")
+    r = instaban.scan()
+    assert r["hits"] == 1 and r["bans"] == 0 and armed["bans"] == [] and armed["sent"] == []
+    hit = instaban.overview()["hits"][0]
+    assert hit["banned"] is False and hit["error"] == instaban.WOULD_BAN
+
+
+def test_detect_only_does_not_repeat_a_behaviour_hit_on_every_line(armed, monkeypatch):
+    monkeypatch.setattr(instaban, "_waf_mode", lambda: "detect")
+    instaban.set_behavior({"errors": {"on": True, "count": 3, "window": 60}})
+    for n in range(6):
+        _attack(armed["log"], "203.0.113.7", f"/missing{n}")
+    assert instaban.scan()["hits"] == 1 and armed["bans"] == []
+
+
+def test_off_stops_everything_and_old_lines_never_count_afterwards(armed, monkeypatch):
+    monkeypatch.setattr(instaban, "_waf_mode", lambda: "off")
+    monkeypatch.setattr(instaban, "_port_events", lambda now, s: pytest.fail("port knocks are not checked while off"))
+    _attack(armed["log"], "203.0.113.7")
+    assert instaban.scan() == {"scanned": 0, "hits": 0, "bans": 0}
+    assert armed["bans"] == [] and armed["sent"] == [] and instaban.overview()["hits"] == []
+    monkeypatch.setattr(instaban, "_port_events", lambda now, s: [])
+    monkeypatch.setattr(instaban, "_waf_mode", lambda: "block")
+    assert instaban.scan()["scanned"] == 0                  # what came in while off stays unread
+    _attack(armed["log"], "203.0.113.8")
+    assert instaban.scan()["bans"] == 1 and [b[0] for b in armed["bans"]] == ["203.0.113.8"]
+
+
+def test_switching_back_on_skips_what_came_in_meanwhile(armed):
+    instaban.set_settings(enabled=False)
+    _attack(armed["log"], "203.0.113.7")
+    instaban.set_settings(enabled=True)
+    assert instaban.scan()["hits"] == 0 and armed["bans"] == []
+
+
+def test_waf_mode_follows_the_waf(monkeypatch):
+    from backend import waf
+    get = instaban.__dict__["_waf_mode"]
+    monkeypatch.setattr(waf, "installed", lambda: False)
+    assert get() is None
+    monkeypatch.setattr(waf, "installed", lambda: True)
+    monkeypatch.setattr(waf, "module_on", lambda: False)
+    assert get() == "off"
+    monkeypatch.setattr(waf, "module_on", lambda: True)
+    monkeypatch.setattr(waf, "load", lambda: {"mode": "detect"})
+    assert get() == "detect"
+    monkeypatch.setattr(waf, "load", lambda: 1 / 0)
+    assert get() is None

@@ -2159,10 +2159,11 @@ def api_waf_update(body: WafBody, user: str = auth.CurrentUser):
 def api_waf_events(hours: int = 24, ip: str = "", user: str = auth.CurrentUser):
     ev = waf.events(hours=max(1, min(hours, 24 * 30)), limit=500, ip=ip)
     try:
-        st = guard.status_of(sorted({e["ip"] for e in ev}))
+        ips = sorted({e["ip"] for e in ev})
+        st, since = guard.status_of(ips), guard.ban_times(ips)
     except Exception:
-        st = {}
-    return {"events": ev, "ip_status": st}
+        st, since = {}, {}
+    return {"events": ev, "ip_status": st, "ban_since": since}
 
 
 @app.post("/api/waf/allow-rule")
@@ -4671,6 +4672,11 @@ def api_wpt_auto(body: WPActBody, user: str = auth.CurrentUser):
 @app.post("/api/wptoolkit/maintenance")
 def api_wpt_maint(body: WPActBody, user: str = auth.CurrentUser):
     return _wp_call(lambda: wptoolkit.maintenance(body.path, body.on))
+
+
+@app.post("/api/wptoolkit/staging/protect")
+def api_wpt_staging_protect(body: WPActBody, user: str = auth.CurrentUser):
+    return _wp_call(lambda: wptoolkit.protect_staging(body.path))
 
 
 @app.post("/api/wptoolkit/staging")

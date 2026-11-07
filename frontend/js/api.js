@@ -669,7 +669,7 @@ const API = (() => {
     wpt: () => request("GET", "/api/wptoolkit"),
     wptSite: (path) => request("GET", `/api/wptoolkit/site?path=${encodeURIComponent(path)}`),
     wptAct: (action, data) => request("POST", { update: "/api/wptoolkit/update", scan: "/api/wptoolkit/scan", harden: "/api/wptoolkit/harden",
-      autoupdates: "/api/wptoolkit/autoupdates", maintenance: "/api/wptoolkit/maintenance", staging: "/api/wptoolkit/staging" }[action], data),
+      autoupdates: "/api/wptoolkit/autoupdates", maintenance: "/api/wptoolkit/maintenance", staging: "/api/wptoolkit/staging", protect: "/api/wptoolkit/staging/protect" }[action], data),
     migrate: () => request("GET", "/api/migrate"),
     migrateAnalyze: (path) => request("GET", `/api/migrate/analyze?path=${encodeURIComponent(path)}`),
     migrateFetch: (url) => request("POST", "/api/migrate/fetch", { url }),

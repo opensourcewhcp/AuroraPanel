@@ -420,6 +420,21 @@ def status_of(ips: list[str]) -> dict[str, str]:
     return out
 
 
+def ban_times(ips: list[str]) -> dict[str, int]:
+    """ip -> when the panel's ban on it began. Fail2Ban's own bans carry no start time here, so they're left out."""
+    bans = [(ipaddress.ip_network(b["cidr"]), int(b.get("created") or 0)) for b in _state()["bans"]]
+    out = {}
+    for ip in ips:
+        try:
+            a = ipaddress.ip_address(ip)
+        except ValueError:
+            continue
+        since = [c for n, c in bans if c and a in n]
+        if since:
+            out[ip] = min(since)
+    return out
+
+
 def _sync_waf():
     """The WAF (ModSecurity) exempts trusted addresses too: rewrite its rules when the list changes."""
     try:

@@ -491,3 +491,9 @@ def test_a_swallowed_exception_is_counted_not_lost():
     q = problems.listing()["quiet"]
     assert len(q) == 1 and q[0]["where"].startswith("sshaccess._fingerprint:") and "Error" in q[0]["message"]
     problems.clear()
+
+
+def test_ban_times_say_when_a_ban_began(nft, monkeypatch):
+    monkeypatch.setattr(guard.time, "time", lambda: 1000)
+    guard.ban("203.0.113.0/24")
+    assert guard.ban_times(["203.0.113.9", "8.8.8.8", "junk"]) == {"203.0.113.9": 1000}

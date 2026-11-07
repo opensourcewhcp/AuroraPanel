@@ -37,7 +37,7 @@ SOC_ALLOW_POST = re.compile(r"^/api/(logout|me/password|ella(/.*)?)$")
 # Viewers can read every page, but not these (secrets, file contents, downloads, a shell).
 VIEWER_DENY_GET = re.compile(r"^/api/(files/(read|download)|backups/[^/]+/download|backups/download|metrics/download|"
                              r"schedules/plans/[^/]+/passphrase|docker/apps/[^/]+/secret|ddns-hosts/[^/]+/key|"
-                             r"mail/accounts/mobileconfig|tokens|apitokens|terminal|sysapps/[^/]+/file)")
+                             r"mail/accounts/mobileconfig|tokens|apitokens|terminal|sysapps/[^/]+/file|wptoolkit)")
 # Things that shape the whole system rather than respond to attacks stay with admins.
 SOC_ADMIN_ONLY = re.compile(r"^/api/ella/(fleet|config|fail-mode|retention/forget|proxies|channels|exports)")
 VIEWER_ALLOW_POST = re.compile(r"^/api/(logout|me/password)$")

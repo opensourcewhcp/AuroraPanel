@@ -1375,7 +1375,7 @@ window.AuroraOps = (ui) => {
             el("div", {}, [el("span", { class: "muted", text: "WordPress" }), el("b", { text: cu ? `${d.version} → ${d.core_updates[0].version}` : `${d.version} (latest)` })]),
             el("div", {}, [el("span", { class: "muted", text: "Plugins" }), el("b", { text: pu.length ? `${pu.length} to update` : "all current" })]),
             el("div", {}, [el("span", { class: "muted", text: "Security" }), el("b", { text: `${hard} of 4 protections on` })]),
-            el("div", {}, [el("span", { class: "muted", text: "Staging copy" }), d.staging ? el("a", { href: d.staging.url, target: "_blank", rel: "noopener", text: "open ↗" }) : el("b", { text: "none" })]),
+            el("div", {}, [el("span", { class: "muted", text: "Staging copy" }), d.staging ? el("a", { href: d.staging.access_url || d.staging.url, target: "_blank", rel: "noopener noreferrer", text: "open ↗" }) : el("b", { text: "none" })]),
           ]),
           el("div", { class: "toolbar" }, [
             todo && !d.db_error ? btn("Update everything", () => call(() => API.wptAct("update", { path: d.path, what: "all" }), "Updating…", (r) => watch(r.job, "Updated", fill)), "btn-primary") : null,
@@ -1383,6 +1383,7 @@ window.AuroraOps = (ui) => {
             hard < 4 ? btn("Harden", () => call(() => API.wptAct("harden", { path: d.path }), "", (r) => { toast(r.done.join(" · "), "good"); fill(); }), "btn-ghost") : null,
             btn(autoOn ? "Turn off auto-updates" : "Turn on auto-updates", () => call(() => API.wptAct("autoupdates", { path: d.path, on: !autoOn }), autoOn ? "Auto-updates off" : "WordPress, plugins and themes now update themselves", fill), "btn-ghost"),
             btn(d.maintenance ? "End maintenance" : "Maintenance mode", () => call(() => API.wptAct("maintenance", { path: d.path, on: !d.maintenance }), "", fill), "btn-ghost"),
+            d.staging && !d.staging.protected ? btn("Lock staging copy", () => call(() => API.wptAct("protect", { path: d.path }), "Staging copy locked", fill), "btn-primary") : null,
             d.staging ? armed("Delete staging", "Click again", () => call(() => API.wptAct("staging", { path: d.path, on: false }), "Staging copy deleted", fill), "btn-ghost")
               : btn("Make a staging copy", () => call(() => API.wptAct("staging", { path: d.path, on: true }), "Copying…", (r) => watch(r.job, "Staging copy ready", fill)), "btn-ghost"),
             d.url ? el("a", { class: "btn btn-sm btn-ghost", href: d.url.replace(/\/$/, "") + "/wp-admin/", target: "_blank", rel: "noopener", text: "wp-admin ↗" }) : null,

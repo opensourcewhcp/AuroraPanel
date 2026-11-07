@@ -2,8 +2,11 @@
 matches one gets its address banned at the firewall for a time you choose, the hit is kept as evidence
 (what was tried, from where, against which site), and the address can be reported to its abuse desk.
 
-Sources: every Apache access log on this server, read incrementally every few seconds by a small
-thread inside the panel. Trusted addresses (IP Blocker & Trust) are never banned, nor is loopback.
+Sources: every Apache access log on this server, read as soon as one grows (checked once a second) by a
+small thread inside the panel. Trusted addresses (IP Blocker & Trust) are never banned, nor is loopback.
+
+The WAF's mode decides what InstaBan may do: Blocking bans and reports, Detect only records what it would
+have done, Off stops it. With no WAF installed it simply follows its own switch.
 
 Everything stored here is attacker-controlled text (payloads, request lines, user agents). The API
 hands it to the panel as plain JSON and the page shows it with textContent only, so a payload can be
@@ -36,6 +39,23 @@ DEFAULT_BEHAVIOR = {
     "ports": {"on": True, "count": 8, "window": 60},      # distinct ports knocked on (needs the Network Monitor's connection log)
 }
 _LOCK = threading.Lock()
+SAVE_EVERY = 10          # seconds between state writes when nothing was caught: a busy site shouldn't rewrite the SD card every second
+_OFFSETS: dict = {}      # how far each log has been read, newer than the state file between those writes
+_last_save = 0.0
+_WOULD: dict[str, float] = {}   # Detect only: when an address last got a behaviour hit, nobody cuts it off so it would repeat on every line
+WOULD_BAN = "Detect only: would have been banned"
+
+
+def _waf_mode() -> str | None:
+    """block, detect or off. None when this server has no WAF to follow."""
+    try:
+        from . import waf
+        if not waf.installed():
+            return None
+        return waf.load()["mode"] if waf.module_on() else "off"
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
+        return None
 
 
 class InstaBanError(Exception):
@@ -207,6 +227,7 @@ def export_text() -> str:
 def set_settings(enabled: bool | None = None, ttl: str | None = None, report: bool | None = None) -> dict:
     with _LOCK:
         s = load()
+        was_on = s["enabled"]
         if enabled is not None:
             s["enabled"] = bool(enabled)
         if ttl is not None:
@@ -215,7 +236,8 @@ def set_settings(enabled: bool | None = None, ttl: str | None = None, report: bo
             s["ttl"] = ttl
         if report is not None:
             s["report"] = bool(report)
-        if enabled and not s["files"]:
+        if enabled and (not was_on or not s["files"]):
+            _OFFSETS.clear()
             _mark_log_ends(s)   # switching on: only requests from now on count, not months of old logs
         save(s)
     return settings()
@@ -225,7 +247,7 @@ def settings() -> dict:
     s = load()
     return {"enabled": s["enabled"], "ttl": s["ttl"], "ttl_seconds": TTL_CHOICES.get(s["ttl"], 86400), "report": s["report"],
             "ttl_choices": list(TTL_CHOICES), "stats": s["stats"], "last_scan": s["last_scan"], "pattern_count": len(s["patterns"]),
-            "behavior": s["behavior"], "ports_source": _ports_source()}
+            "behavior": s["behavior"], "ports_source": _ports_source(), "waf_mode": _waf_mode()}
 
 
 def _ports_source() -> bool:
@@ -426,15 +448,72 @@ def _new_lines(s: dict, path: Path) -> list[str]:
     return lines + data.decode("utf-8", "replace").splitlines()
 
 
+def _in_background(fn) -> None:
+    threading.Thread(target=fn, name="instaban-report", daemon=True).start()
+
+
+def _ban(s: dict, hit: dict, ip: str, reason: str) -> bool:
+    """Ban at the firewall and note it on the hit. True only for a new ban, so one burst gets one report."""
+    try:
+        guard.ban(ip, reason, duration=TTL_CHOICES.get(s["ttl"], 86400) or None, source="InstaBan")
+        hit["banned"] = True
+        s["stats"]["bans"] += 1
+        return True
+    except guard.GuardError as exc:
+        hit["banned"] = "Already covered" in str(exc)
+        hit["error"] = "" if hit["banned"] else str(exc)[:160]
+    except Exception as exc:  # nft missing, helper broken: keep the evidence, say why
+        hit["error"] = str(exc)[:160]
+    return False
+
+
+def _send_reports(reports: list[tuple[str, str]], ts: int) -> None:
+    """Looking up the abuse desk and sending mail takes seconds: never in the way of the next ban."""
+    from . import abuse
+    for ip, note in reports:
+        err = ""
+        try:
+            abuse.report(ip, note=note)
+        except Exception as exc:
+            err = f"report: {str(exc)[:120]}"
+        with _LOCK:
+            s = load()
+            if not err:
+                s["stats"]["reports"] += 1
+            for h in s["hits"]:
+                if h["ip"] == ip and h["ts"] == ts:
+                    if err:
+                        h["error"] = (h["error"] + " · " if h["error"] else "") + err
+                    else:
+                        h["reported"] = True
+            save(s)
+
+
 def scan(now: int | None = None) -> dict:
     """Read what the access logs gained since the last pass and act on every match."""
+    global _last_save
     now = now or int(time.time())
     with _LOCK:
         s = load()
         if not s["enabled"]:
+            _OFFSETS.clear()
             s["last_scan"] = now
             save(s)
             return {"scanned": 0, "hits": 0, "bans": 0}
+        s["files"].update(_OFFSETS)
+        mode = _waf_mode()
+        if mode == "off":   # stopped: nothing is read, and turning it back on starts from that moment
+            _mark_log_ends(s)
+            _OFFSETS.update(s["files"])
+            _SEEN.clear()
+            s["last_scan"] = now
+            if time.monotonic() - _last_save >= SAVE_EVERY:
+                save(s)
+                _last_save = time.monotonic()
+            return {"scanned": 0, "hits": 0, "bans": 0}
+        acting = mode != "detect"
+        report = s["report"] or mode == "block"
+        to_report: list[tuple[str, str]] = []
         compiled = _compiled(s["patterns"])
         scanned = hits = bans = 0
         banned_now: set[str] = set()
@@ -456,6 +535,10 @@ def scan(now: int | None = None) -> dict:
                         why = f"{b['errors']['count']} error answers within {b['errors']['window']} s"
                     if not why:
                         continue
+                    if not acting:
+                        if now - _WOULD.get(rec["ip"], 0) < 60:
+                            continue
+                        _WOULD[rec["ip"]] = now
                 hit = {"ts": now, "ip": rec["ip"], "host": rec["host"], "method": rec["method"], "target": rec["target"], "status": rec["status"],
                        "ua": rec["ua"], "pattern": p["pattern"] if p else why, "pattern_id": p["id"] if p else "", "kind": p["kind"] if p else "behavior",
                        "log": path.name, "banned": False, "reported": False, "error": ""}
@@ -465,29 +548,16 @@ def scan(now: int | None = None) -> dict:
                 hits += 1
                 if _skip_ip(rec["ip"]):
                     hit["error"] = "trusted or local address, not banned"
+                elif not acting:
+                    hit["error"] = WOULD_BAN
                 elif rec["ip"] in banned_now:
                     hit["banned"] = True
                 else:
-                    try:
-                        ttl = TTL_CHOICES.get(s["ttl"], 86400) or None
-                        guard.ban(rec["ip"], f"InstaBan: {hit['pattern'][:60]}", duration=ttl, source="InstaBan")
-                        hit["banned"] = True
+                    if _ban(s, hit, rec["ip"], f"InstaBan: {hit['pattern'][:60]}"):
                         bans += 1
-                        s["stats"]["bans"] += 1
-                    except guard.GuardError as exc:
-                        hit["banned"] = "Already covered" in str(exc)
-                        hit["error"] = "" if hit["banned"] else str(exc)[:160]
-                    except Exception as exc:  # nft missing, helper broken: keep the evidence, say why
-                        hit["error"] = str(exc)[:160]
+                        if report:
+                            to_report.append((rec["ip"], f"InstaBan: requested {rec['target'][:120]} ({hit['pattern'][:60]})"))
                     banned_now.add(rec["ip"])
-                    if s["report"] and hit["banned"]:
-                        try:
-                            from . import abuse
-                            abuse.report(rec["ip"], note=f"InstaBan: requested {rec['target'][:120]} ({p['pattern'][:60]})")
-                            hit["reported"] = True
-                            s["stats"]["reports"] += 1
-                        except Exception as exc:
-                            hit["error"] = (hit["error"] + " · " if hit["error"] else "") + f"report: {str(exc)[:120]}"
                 s["hits"].append(hit)
         # Port knocks: distinct ports one address touched, from the Network Monitor's connection log.
         pb = s["behavior"]["ports"]
@@ -495,6 +565,10 @@ def scan(now: int | None = None) -> dict:
             for ev in _port_events(now, s):
                 if ev["src"] in banned_now or _note("ports", ev["src"], ev["ts"], pb["window"], ev["port"]) < pb["count"]:
                     continue
+                if not acting:
+                    if now - _WOULD.get(ev["src"], 0) < 60:
+                        continue
+                    _WOULD[ev["src"]] = now
                 ports = sorted({x[1] for x in _SEEN.get(ev["src"], {}).get("ports", [])})
                 shown = ", ".join(str(x) for x in ports[:12]) + ("..." if len(ports) > 12 else "")
                 hit = {"ts": now, "ip": ev["src"], "host": "", "method": "", "target": f"ports {shown}", "status": 0, "ua": "",
@@ -504,24 +578,26 @@ def scan(now: int | None = None) -> dict:
                 hits += 1
                 if _skip_ip(ev["src"]):
                     hit["error"] = "trusted or local address, not banned"
+                elif not acting:
+                    hit["error"] = WOULD_BAN
                 else:
-                    try:
-                        ttl = TTL_CHOICES.get(s["ttl"], 86400) or None
-                        guard.ban(ev["src"], f"InstaBan: {hit['pattern']}", duration=ttl, source="InstaBan")
-                        hit["banned"] = True
+                    if _ban(s, hit, ev["src"], f"InstaBan: {hit['pattern']}"):
                         bans += 1
-                        s["stats"]["bans"] += 1
-                    except guard.GuardError as exc:
-                        hit["banned"] = "Already covered" in str(exc)
-                        hit["error"] = "" if hit["banned"] else str(exc)[:160]
-                    except Exception as exc:
-                        hit["error"] = str(exc)[:160]
+                        if mode == "block":
+                            to_report.append((ev["src"], f"InstaBan: {hit['pattern']} ({hit['target'][:120]})"))
                     banned_now.add(ev["src"])
                 s["hits"].append(hit)
         _forget(now)
+        if len(_WOULD) > 2000:
+            _WOULD.clear()
         s["hits"] = s["hits"][-MAX_HITS:]
         s["last_scan"] = now
-        save(s)
+        _OFFSETS.update(s["files"])
+        if hits or time.monotonic() - _last_save >= SAVE_EVERY:   # anything caught is written at once, so a restart can't report it twice
+            save(s)
+            _last_save = time.monotonic()
+    if to_report:
+        _in_background(lambda: _send_reports(to_report, now))
     return {"scanned": scanned, "hits": hits, "bans": bans}
 
 
@@ -549,17 +625,41 @@ def _port_events(now: float, s: dict) -> list[dict]:
 _thread: threading.Thread | None = None
 
 
-def start(interval: int = 10) -> None:
+def _log_signature() -> tuple:
+    out = []
+    for p in _logs():
+        try:
+            st = p.stat()
+            out.append((str(p), st.st_ino, st.st_size))
+        except OSError:
+            pass
+    return tuple(out)
+
+
+def _tick(seen: dict, interval: int) -> bool:
+    """One beat of the watcher. A log that grew is read now, so a scanner is cut off during its burst and not
+    after it; otherwise a full pass every `interval` seconds keeps the port knock check going."""
+    sig, at = _log_signature(), time.monotonic()
+    if sig == seen.get("sig") and at - seen.get("at", 0.0) < interval:
+        return False
+    seen.update(sig=sig, at=at)
+    if load()["enabled"]:
+        scan()
+        return True
+    return False
+
+
+def start(interval: int = 10, tick: float = 1.0) -> None:
     global _thread
     if _thread and _thread.is_alive():
         return
 
     def loop():
+        seen: dict = {}
         while True:
-            time.sleep(interval)
+            time.sleep(tick)
             try:
-                if load()["enabled"]:
-                    scan()
+                _tick(seen, interval)
             except Exception as quiet_exc:
                 problems.quiet(quiet_exc)
 

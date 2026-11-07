@@ -125,3 +125,18 @@ def test_status_sums_up_the_last_day(tmp_path, monkeypatch):
     assert st["stats"]["events"] == 3 and st["stats"]["blocked"] == 2 and st["stats"]["detected"] == 1
     assert st["stats"]["ips"][0] == ["203.0.113.3", 2] or st["stats"]["ips"][0] == ("203.0.113.3", 2)
     assert dict(st["stats"]["types"])["SQL injection"] == 1   # the 920 noise never names the attack
+
+
+def test_switching_to_blocking_arms_instaban_once(state, monkeypatch):
+    from backend import instaban
+    armed: list[dict] = []
+    monkeypatch.setattr(instaban, "set_settings", lambda **k: armed.append(k))
+    monkeypatch.setattr(waf, "apply", lambda s=None: s)
+    waf.update({"mode": "detect"})
+    assert armed == []
+    monkeypatch.setattr(waf, "load", lambda: {**waf._default(), "mode": "detect"})
+    waf.update({"mode": "block"})
+    assert armed == [{"enabled": True, "report": True}]
+    monkeypatch.setattr(waf, "load", lambda: {**waf._default(), "mode": "block"})
+    waf.update({"paranoia": 2})                                # already blocking: their InstaBan choice stands
+    assert len(armed) == 1

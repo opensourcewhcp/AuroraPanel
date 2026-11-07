@@ -233,7 +233,9 @@ window.AuroraExtras = (ui) => {
         tile("Data sent", fmtBytes(w.bytes), "", "network"),
         tile("WAF", num(d.waf.events), d.waf.events ? `${num(d.waf.blocked)} blocked` : "no attacks seen", "shield", d.waf.events ? "warnt" : ""),
         tile("Failed logins", num(d.logins_failed), "SSH, mail, panel, FTP", "key", d.logins_failed ? "warnt" : ""),
+        tile("Connections", num(d.probes || 0), "attempts the firewall logged", "network", d.probes ? "warnt" : ""),
       ]));
+      const lg = d.logins || { sources: [], users: [], recent: [] };
       const kvRow = (k, v) => (v ? el("div", { class: "mx-kv" }, [el("span", { text: k }), typeof v === "string" ? el("span", { text: v }) : v]) : null);
       body.append(el("div", { class: "mx-grid2" }, [
         card("Who owns it", [
@@ -249,9 +251,17 @@ window.AuroraExtras = (ui) => {
           w.agents.length ? el("div", { class: "mx-sub" }, "Identifies as") : null,
           ...w.agents.map((a) => el("div", { class: "mx-list-row" }, [el("span", { class: a.bot ? "mx-bot" : "", text: a.bot ? `🤖 ${a.browser}` : `${a.browser} · ${a.os}` }),
             el("span", { class: "muted mx-ell grow", title: a.ua, text: a.ua || "(empty)" }), el("b", { text: num(a.n) })])),
-          !w.hits && !d.waf.events ? el("p", { class: "muted", text: "No requests to your websites in this period." }) : null,
+          lg.sources.length ? el("div", { class: "mx-sub" }, "Failed logins") : null, lg.sources.length ? rank(lg.sources.map(([s, n]) => ({ label: s, n })), { limit: 6 }) : null,
+          lg.users.length ? el("div", { class: "mx-sub" }, "Usernames tried") : null, lg.users.length ? rank(lg.users.map(([s, n]) => ({ label: s, n })), { limit: 8 }) : null,
+          d.probes ? el("div", { class: "mx-sub" }, "Connection attempts") : null, d.probes ? el("p", { class: "muted", text: `${num(d.probes)} logged by the firewall in this period.` }) : null,
+          !w.hits && !d.waf.events && !d.logins_failed && !d.probes ? el("p", { class: "muted", text: "Nothing from this address in this period." }) : null,
+          !w.hits && (d.waf.events || d.logins_failed || d.probes) ? el("p", { class: "muted", text: "No requests to your websites in this period." }) : null,
         ]),
       ]));
+      if (lg.recent.length) body.append(card("Latest failed logins", [el("div", { class: "table-wrap mx-table-wrap", style: "max-height:320px" }, el("table", { class: "mx-table" }, [
+        el("thead", {}, el("tr", {}, ["Time", "Service", "User", "Log line"].map((h) => el("th", { text: h })))),
+        el("tbody", {}, lg.recent.map((r) => el("tr", {}, [el("td", { class: "mx-time", text: t2s(r.ts) }), el("td", { text: r.source || "" }), el("td", { text: r.user || "" }),
+          el("td", {}, el("span", { class: "mx-url", title: r.detail || "", text: r.detail || "" }))])))]))]));
       if (w.recent.length) body.append(card("Latest requests", [el("div", { class: "table-wrap mx-table-wrap", style: "max-height:320px" }, el("table", { class: "mx-table" }, [
         el("thead", {}, el("tr", {}, ["Time", "Site", "Request", "Status", "Size"].map((h, i) => el("th", { class: i >= 3 ? "num" : "", text: h })))),
         el("tbody", {}, w.recent.map((r) => el("tr", {}, [el("td", { class: "mx-time", text: t2s(r.ts) }), el("td", { class: "mx-ell", text: r.site }),
@@ -351,9 +361,9 @@ window.AuroraExtras = (ui) => {
         el("div", { class: "mx-hero-ico" }, icon("shield", 30)),
         el("div", { class: "mx-hero-txt" }, [
           el("h3", { text: !on ? "The WAF is off, websites aren't filtered" : d.mode === "block" ? "Protecting your websites" : "Watching, not blocking" }),
-          el("p", { class: "muted", text: !on ? "Turn on Blocking to stop attacks, or Detect only to see what would be blocked first."
-            : d.mode === "block" ? `Attacks are refused with “403 Forbidden”. OWASP CRS ${d.crs_version || ""}, ${PARANOIA[d.paranoia][0].toLowerCase()} rules.`
-            : "Attacks are logged below but still reach your sites, good for a few days after installing a new app, then switch to Blocking." }),
+          el("p", { class: "muted", text: !on ? "Nothing is being watched and InstaBan is stopped. Turn on Blocking to stop attacks, or Detect only to see what would be blocked first."
+            : d.mode === "block" ? `Attacks are refused with “403 Forbidden”, and InstaBan bans and reports the addresses it catches. OWASP CRS ${d.crs_version || ""}, ${PARANOIA[d.paranoia][0].toLowerCase()} rules.`
+            : "Attacks are logged below but still reach your sites, and InstaBan only records who it would ban: no bans, no reports. Good for a few days after installing a new app, then switch to Blocking." }),
           testOut,
         ]),
         el("div", { class: "mx-hero-act" }, [
@@ -415,17 +425,24 @@ window.AuroraExtras = (ui) => {
         seg([[1, "1 h"], [24, "24 h"], [168, "7 days"], [720, "30 days"]], hours, (v) => { hours = v; loadEvents(); })]), evBox], "", [btn("Refresh", () => loadEvents(), "btn-ghost")]));
       loadEvents();
     }
-    let evBox, events = [], ipst = {}, reportedIps = {};
+    let evBox, events = [], ipst = {}, banSince = {}, reportedIps = {};
     async function loadEvents() {
-      try { const r = await API.wafEvents(hours); events = r.events; ipst = r.ip_status || {}; } catch (e) { evBox.innerHTML = ""; evBox.append(el("p", { class: "empty", text: e.message })); return; }
+      try { const r = await API.wafEvents(hours); events = r.events; ipst = r.ip_status || {}; banSince = r.ban_since || {}; } catch (e) { evBox.innerHTML = ""; evBox.append(el("p", { class: "empty", text: e.message })); return; }
       try { reportedIps = (await API.abuseReported()) || {}; } catch (e) { reportedIps = {}; }
       drawEvents();
     }
     // Ban / Unban / Report straight from a row, with the address's state shown next to the buttons.
+    // The answer in a row is from when the request came, "banned" is the address now. Say which came first.
+    function banPill(e) {
+      const since = banSince[e.ip];
+      if (!since || Math.floor(e.ts) > since) return pill("banned", "bad");
+      const gap = Math.max(1, Math.round(since - e.ts));
+      return el("span", { class: "pill bad", title: `This request arrived before the ban, so the firewall didn't stop it. The address has been blocked since ${new Date(since * 1000).toLocaleString()}.`, text: gap < 60 ? `banned ${gap}s later` : "banned later" });
+    }
     function ipRowActions(e, r0) {
       const ip = e.ip, st = ipst[ip], rep = reportedIps[ip];
       return el("div", { class: "mx-ev-act" }, [
-        st === "banned" ? pill("banned", "bad") : st === "trusted" ? pill("trusted", "good") : null,
+        st === "banned" ? banPill(e) : st === "trusted" ? pill("trusted", "good") : null,
         rep ? el("span", { class: "pill warn", title: `Reported to ${(rep.to || []).join(", ")} ${ago(rep.ts)}`, text: "reported" }) : null,
         btn("Lookup", () => ipCard(ip, loadEvents), "btn-ghost"),
         st === "banned" ? btn("Unban", () => call(() => API.guardUnban(ip), `${ip} unbanned`, loadEvents), "btn-ghost")
@@ -1022,16 +1039,20 @@ window.AuroraExtras = (ui) => {
       const ttl = el("select", { class: "em-select mx-narrow", onchange: () => setting({ ttl: ttl.value }, `Bans last ${TTL_LABEL[ttl.value]}`) },
         d.ttl_choices.map((k) => el("option", { value: k, text: TTL_LABEL[k] || k })));
       ttl.value = d.ttl;
-      body.append(el("div", { class: `card ib-hero ${d.enabled ? "good" : ""}` }, [
-        el("div", { class: "net-card-h" }, [icon("trap", 22), el("h3", { text: d.enabled ? "InstaBan is on" : "InstaBan is off" }), el("span", { style: "flex:1" }),
-          seg([["on", "On"], ["off", "Off"]], d.enabled ? "on" : "off", (v) => setting({ enabled: v === "on" }, v === "on" ? "InstaBan is on: new requests are checked every 10 seconds" : "InstaBan is off"))]),
-        el("p", { class: "muted", text: d.enabled
+      body.append(el("div", { class: `card ib-hero ${d.enabled && (d.waf_mode === "block" || !d.waf_mode) ? "good" : ""}` }, [
+        el("div", { class: "net-card-h" }, [icon("trap", 22), el("h3", { text: !d.enabled ? "InstaBan is off" : d.waf_mode === "off" ? "InstaBan is stopped, the WAF is Off" : d.waf_mode === "detect" ? "InstaBan is only watching, the WAF is on Detect only" : "InstaBan is on" }), el("span", { style: "flex:1" }),
+          seg([["on", "On"], ["off", "Off"]], d.enabled ? "on" : "off", (v) => setting({ enabled: v === "on" }, v === "on" ? "InstaBan is on: new requests are checked within about a second" : "InstaBan is off"))]),
+        el("p", { class: "muted", text: d.enabled && d.waf_mode === "off"
+          ? "Nothing is read and nobody is banned while the WAF is Off. When it comes back, only requests from then on are checked."
+          : d.enabled && d.waf_mode === "detect"
+          ? "Requests that match are recorded below as would have been banned. Nobody is banned or reported until the WAF is set to Blocking."
+          : d.enabled
           ? "Every Apache access log is read as it grows. A request whose path or query matches a pattern bans the address at once; the address, site, request and pattern are kept below."
           : "Turn it on and every request from then on is checked against the list. Old log lines are not scanned, so nobody is banned for something from last month." }),
         el("div", { class: "ib-opts" }, [
           el("label", { class: "ib-opt" }, [el("span", { class: "muted", text: "Ban length" }), ttl]),
-          el("label", { class: "dm-check ib-opt" }, [el("input", { type: "checkbox", ...(d.report ? { checked: "checked" } : {}), onchange: (e) => setting({ report: e.target.checked }, e.target.checked ? "Banned addresses are reported to their abuse desk" : "Reports are manual") }),
-            el("span", { text: " Also report each banned address to its abuse desk (uses this server's mail; set a sender under IP Blocker & Trust → Reports)" })]),
+          el("label", { class: "dm-check ib-opt" }, [el("input", { type: "checkbox", ...(d.report || d.waf_mode === "block" ? { checked: "checked" } : {}), ...(d.waf_mode === "block" ? { disabled: "disabled" } : {}), onchange: (e) => setting({ report: e.target.checked }, e.target.checked ? "Banned addresses are reported to their abuse desk" : "Reports are manual") }),
+            el("span", { text: (d.waf_mode === "block" ? " Each banned address is reported to its abuse desk, always on while the WAF is Blocking" : " Also report each banned address to its abuse desk") + " (uses this server's mail; set a sender under IP Blocker & Trust → Reports)" })]),
         ]),
         el("div", { class: "mx-tiles mx-tiles-4" }, [
           tile("Bans so far", String(d.stats.bans || 0), "by InstaBan", "trap", d.stats.bans ? "accent" : ""),

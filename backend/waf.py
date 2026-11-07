@@ -272,8 +272,18 @@ def _clean_ips(vals) -> list[str]:
     return sorted(set(out))
 
 
+def _arm_instaban() -> None:
+    """Blocking means bans and reports too. Its own page can still turn InstaBan off afterwards."""
+    try:
+        from . import instaban
+        instaban.set_settings(enabled=True, report=True)
+    except Exception as exc:  # noqa: BLE001
+        problems.record("WAF Blocking → InstaBan", exc, hint="The WAF is blocking, but InstaBan didn't switch on. Open Security → InstaBan and turn it on.")
+
+
 def update(data: dict) -> dict:
     s = load()
+    was = s["mode"]
     if "mode" in data:
         if data["mode"] not in ("block", "detect", "off"):
             raise WafError("Unknown mode")
@@ -295,7 +305,10 @@ def update(data: dict) -> dict:
             if h:
                 hosts.append(h)
         s["sites_off"] = sorted(set(hosts))
-    return apply(s)
+    out = apply(s)
+    if s["mode"] == "block" and was != "block":
+        _arm_instaban()
+    return out
 
 
 def allow_rule(rule_id: str, msg: str = "") -> dict:

@@ -1294,10 +1294,17 @@ def ip_info(ip: str, days: int = 7) -> dict:
         out["waf"] = {"events": 0, "blocked": 0, "types": []}
     try:
         from . import abuse
-        out["logins_failed"] = sum(1 for e in abuse.evidence(ip, days) if e.get("kind") != "attack")
+        ev = abuse.evidence(ip, days)
+        logins = [e for e in ev if e.get("kind") not in ("attack", "probe")]   # the same count the abuse report gives
+        out["logins_failed"] = len(logins)
+        out["probes"] = sum(1 for e in ev if e.get("kind") == "probe")
+        out["logins"] = {"sources": Counter(e.get("source") or "?" for e in logins).most_common(6),
+                         "users": Counter(e["user"] for e in logins if e.get("user")).most_common(8),
+                         "recent": [{k: e.get(k) for k in ("ts", "source", "user", "detail")} for e in logins[:30]]}
         out["reported"] = abuse.reported().get(ip)
     except Exception:
-        out["logins_failed"], out["reported"] = 0, None
+        out["logins_failed"], out["probes"], out["reported"] = 0, 0, None
+        out["logins"] = {"sources": [], "users": [], "recent": []}
     try:
         from . import servers
         out["servers"] = servers.count()
