@@ -1497,8 +1497,8 @@ window.AuroraOps = (ui) => {
       body.append(card(`Users (${d.users.length})`, [el("div", { class: "op-isos" }, d.users.map((u) => el("div", { class: `op-iso ${u.disabled ? "" : "on"}` }, [
         el("span", { class: "op-dapp-ico", style: `--h:${APP_HUE(u.username)}`, text: u.username[0].toUpperCase() }),
         el("div", { class: "grow" }, [el("b", { text: u.username }), el("p", { class: "muted mx-small mx-ell", text: u.owner ? "Owner, set up this panel" :
-          `${ROLE_TXT[u.role][0]}${u.sites && u.sites.length ? ` · ${u.sites.join(", ")}` : ""}${u.last_login ? ` · last sign-in ${ago(u.last_login)}` : " · never signed in"}` })]),
-        pill(u.disabled ? "disabled" : ROLE_TXT[u.role][0], u.disabled ? "dim" : u.role === "admin" ? "warn" : u.role === "site" ? "good" : "dim"),
+          `${(ROLE_TXT[u.role] || ["No role"])[0]}${u.sites && u.sites.length ? ` · ${u.sites.join(", ")}` : ""}${u.last_login ? ` · last sign-in ${ago(u.last_login)}` : " · never signed in"}` })]),
+        pill(u.disabled ? "disabled" : (ROLE_TXT[u.role] || ["No role, can't sign in"])[0], u.disabled ? "dim" : u.role === "admin" ? "warn" : u.role === "site" ? "good" : "dim"),
         u.owner ? null : btn("Edit", () => editor(u), "btn-ghost"),
         u.owner ? null : armed("Delete", "Click again", () => call(() => API.panelUserDelete(u.username), "User deleted, signed out at once", load), "btn-ghost"),
       ])))]),

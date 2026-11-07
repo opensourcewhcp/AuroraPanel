@@ -30,7 +30,6 @@ def box(tmp_path, monkeypatch):
     monkeypatch.setattr(W, "MAIN", tmp_path / "waf" / "main.conf")
     monkeypatch.setattr(W, "PRE", tmp_path / "waf" / "pre.conf")
     monkeypatch.setattr(W, "POST", tmp_path / "waf" / "post.conf")
-    monkeypatch.setattr(W, "ELLA", tmp_path / "waf" / "ella.conf")
     monkeypatch.setattr(W, "HOOK", conf / "aurora-waf.conf")
     monkeypatch.setattr(W, "module_installed", lambda: True)
     monkeypatch.setattr(W, "find_crs", lambda: (str(setup), [str(tmp_path / "rules" / "REQUEST-901.conf")]))

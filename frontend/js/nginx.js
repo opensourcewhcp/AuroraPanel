@@ -137,7 +137,7 @@ window.AuroraNginx = (ui) => {
       } else {
         kids.push(el("div", { class: "toolbar" }, [pill(text, tone), el("span", { class: "muted", text: `OWASP Core Rule Set, ${w.rule_files} rule files` }),
           ...["block", "detect", "off"].filter((m) => m !== w.mode).map((m) => act({ block: "Block attacks", detect: "Only watch", off: "Turn off" }[m], async () => { await API.nginxWafMode(m); toast("Changed and checked", "good"); })),
-          btn("See events", () => navigate("ella"), "btn-ghost")]),
+          ]),
           el("p", { class: "muted", text: "Paranoia level, exceptions and trusted addresses come from the WAF Firewall page. To protect Caddy, Lighttpd or a Docker app, make it listen on 127.0.0.1 and add a Reverse proxy site here: its requests then pass through this WAF." }));
       }
       return el("div", { class: "card", style: "margin:12px 0" }, kids);

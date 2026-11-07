@@ -333,7 +333,7 @@ def _unban_f2b(ip: str):
 
 
 def unban(target: str, include_fail2ban: bool = True) -> dict:
-    """include_fail2ban=False lifts only this list's own entry (WAF Ella's combined list treats each source separately)."""
+    """include_fail2ban=False lifts only this list's own entry."""
     n = _net(target)
     s = _state()
     before = len(s["bans"])

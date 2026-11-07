@@ -274,7 +274,7 @@
     vhosts: "globe", redirects: "redirect", revproxy: "redirect", zones: "zone", dmarc: "at", dyndns: "refresh", ddnshosts: "refresh",
     activity: "t_activity", isolation: "t_isolate", dockerapps: "t_docker", servers: "t_servers", mysites: "globe", panelusers: "t_usergear", wptoolkit: "t_wptool", migrate: "t_migrate", alerts: "t_bell", schedbackups: "t_cloudup", updates: "t_update", autossl: "t_autossl",
     visitors: "visitors", errors: "errors", bandwidth: "gauge", rawaccess: "rawlog", analytics: "chart", resources: "dashboard",
-    ssh: "key", caddy: "globe", nginx: "globe", ella: "shield", ipblocker: "ban", ssl: "lock", panelhttps: "lock", tokens: "token", hotlink: "link", secreport: "listing",
+    ssh: "key", caddy: "globe", nginx: "globe", ipblocker: "ban", ssl: "lock", panelhttps: "lock", tokens: "token", hotlink: "link", secreport: "listing",
     leech: "trap", modsec: "shield", instaban: "trap", security: "phone", fixperms: "home", virus: "virus", globalsec: "shield",
     files: "folder", shadow: "shadow", disk: "disk", backups: "backup", cron: "cron", indexes: "indexes",
     errorpages: "error", handlers: "handler", mime: "mime", dns: "dns",
@@ -340,11 +340,6 @@
     const lbl = $("#user-label");
     if (lbl && state.role !== "admin" && !document.getElementById("role-pill")) {
       lbl.after(el("span", { id: "role-pill", class: `pill ${state.role === "viewer" ? "warn" : "dim"}`, text: state.role === "viewer" ? "read-only" : state.role === "soc_operator" ? "security operator" : "website manager" }));
-    }
-    if (state.role === "soc_operator") {
-      const socNav = $("#nav");
-      socNav.querySelectorAll(".nav-item").forEach((n) => { if (n.dataset.view !== "ella") n.remove(); });
-      [...socNav.querySelectorAll(".nav-group")].forEach((g) => { const n = g.nextElementSibling; if (!n || n.classList.contains("nav-group")) g.remove(); });
     }
     if (state.role !== "site") return;
     const nav = $("#nav");
@@ -806,7 +801,7 @@
   });
 
   // What a limited panel user may open (the server enforces it too, this only keeps the menus honest).
-  const SITE_VIEWS = new Set(["mysites", "files", "mailaccounts", "visitors", "analytics", "errors", "ella"]);
+  const SITE_VIEWS = new Set(["mysites", "files", "mailaccounts", "visitors", "analytics", "errors"]);
   async function enterApp(username, me) {
     $("#auth-screen").hidden = true;
     $("#app-shell").hidden = false;
@@ -867,7 +862,7 @@
     backups: "Backups", network: "Interfaces & Wi-Fi", firewall: "Firewall", users: "Users", security: "Security", panelhttps: "Panel HTTPS",
     indexes: "Indexes", mime: "MIME Types", errorpages: "Error Pages", handlers: "Apache Handlers",
     virus: "Virus Scanner", dns: "Track DNS",
-    ssh: "SSH Access", caddy: "Caddy Websites", nginx: "Nginx Websites", ella: "WAF Ella", ipblocker: "IP Blocker & Trust", ssl: "SSL/TLS Certificates", tokens: "Manage API Tokens",
+    ssh: "SSH Access", caddy: "Caddy Websites", nginx: "Nginx Websites", ipblocker: "IP Blocker & Trust", ssl: "SSL/TLS Certificates", tokens: "Manage API Tokens",
     hotlink: "Hotlink Protection", redirects: "Redirects", modsec: "WAF Firewall", instaban: "InstaBan", globalsec: "Global Security", secreport: "Security Report", activity: "Activity Log", isolation: "Site Isolation", dockerapps: "Docker", servers: "Servers", mysites: "My Websites", panelusers: "Panel Users", wptoolkit: "WordPress Toolkit", migrate: "Move from cPanel", alerts: "Alerts", schedbackups: "Scheduled Backups", updates: "Updates", autossl: "AutoSSL", ddnshosts: "Dynamic DNS", visitors: "Visitors", errors: "Errors", bandwidth: "Bandwidth", rawaccess: "Raw Access", analytics: "Analytics", resources: "Resource Usage", leech: "Fail2ban",
     fixperms: "Fix Home Permissions", vhosts: "Domains", revproxy: "Reverse Proxy", dyndns: "Dynamic DNS Updater", zones: "Zone Editor", dmarc: "DMARC",
     mysql: "Manage Databases", mysqlwiz: "MariaDB Wizard", pgsql: "PostgreSQL Databases",
@@ -915,7 +910,6 @@
   function navigate(view, opts = {}) {
     if (!TITLES[view] && view !== "dashboard") view = "dashboard";
     if (state.role === "site" && !SITE_VIEWS.has(view)) view = "mysites";
-    if (state.role === "soc_operator") view = "ella";
     const mode = opts.history || "push";
     state.viewArg = opts.arg !== undefined ? opts.arg : (mode === "push" ? null : argFromHash());
     const hash = `#/${view}${state.viewArg ? "/" + argToUrl(state.viewArg) : ""}`;
@@ -1001,7 +995,7 @@
       git: viewGit,
       inodes: viewInodes,
       about: viewAbout,
-    }[view] || mailViews()[view] || extraViews()[view] || opsViews()[view] || cloudViews()[view] || ellaViews()[view] || nginxViews()[view] || caddyViews()[view] || viewDashboard);
+    }[view] || mailViews()[view] || extraViews()[view] || opsViews()[view] || cloudViews()[view] || nginxViews()[view] || caddyViews()[view] || viewDashboard);
     if (VIEW_NEEDS[view]) requireGate(root, view, VIEW_NEEDS[view], render);
     else render(root);
   }
@@ -1195,7 +1189,6 @@
       { label: "Dynamic DNS Updater", icon: "refresh", view: "dyndns" },
       { label: "Port Checker", icon: "plug", view: "portcheck" },
       { label: "Network Monitor", icon: "radar", view: "netmon" },
-      { label: "WAF Ella", icon: "shield", view: "ella" },
       { label: "IP Blocker & Trust", icon: "ban", view: "ipblocker" },
       { label: "Fail2ban", icon: "trap", view: "leech" },
       { label: "Interfaces & Wi-Fi", icon: "wifi", view: "network" },
@@ -10251,12 +10244,6 @@
   function nginxViews() {
     if (!NGINXV && window.AuroraNginx) NGINXV = window.AuroraNginx({ el, icon, btn, pill, field, toast, API, openModal, closeModal, navigate });
     return NGINXV || {};
-  }
-
-  let ELLAV = null;
-  function ellaViews() {
-    if (!ELLAV && window.AuroraElla) ELLAV = window.AuroraElla({ el, icon, btn, pill, field, toast, API, openModal, closeModal, role: () => state.role });
-    return ELLAV || {};
   }
 
   let CLOUDV = null;

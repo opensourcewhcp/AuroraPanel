@@ -17,7 +17,7 @@ import time
 
 from . import config
 
-ROLES = {"admin": "Administrator", "viewer": "Viewer (read-only)", "site": "Website manager", "soc_operator": "Security operator (WAF Ella only)"}
+ROLES = {"admin": "Administrator", "viewer": "Viewer (read-only)", "site": "Website manager"}
 _NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._@-]{1,63}$")
 
 
@@ -65,6 +65,11 @@ def verify(username: str, password: str) -> bool:
             return ok and not u.get("disabled")
     config._hash_password(password, "00" * 16)  # same time for unknown names
     return False
+
+
+def retired(username: str) -> bool:
+    """Is this account on a role that no longer exists? It stays refused until an administrator picks a new one."""
+    return any(u["username"] == username and u.get("role") not in ROLES for u in _all())
 
 
 def listing() -> dict:

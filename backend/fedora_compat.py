@@ -646,12 +646,10 @@ def setup_waf():
     write_new("/etc/modsecurity/modsecurity.conf-recommended", WAF_DEFAULTS)
     write_new("/etc/modsecurity/modsecurity.conf", WAF_DEFAULTS)
     write_new("/etc/modsecurity/zz-aurora-waf.conf", "# Filled in by AuroraPanel\n")
-    write_new("/etc/modsecurity/zz-ella-rules.conf", "# Filled in by AuroraPanel (WAF Ella)\n")
     write_new(AP / "mods-available/security2.load", "# security2: loaded from /etc/httpd/conf.modules.d\n")
     write_new("/usr/share/modsecurity-crs/owasp-crs.load", "# The rule set is loaded from /etc/httpd/modsecurity.d\n")
     link(rules / "00-aurora-main.conf", "/etc/modsecurity/modsecurity.conf")
     link(rules / "zz-aurora-waf.conf", "/etc/modsecurity/zz-aurora-waf.conf")
-    link(rules / "zz-ella-rules.conf", "/etc/modsecurity/zz-ella-rules.conf")
     once("waf-selinux", lambda: label(("equal", "/etc/modsecurity", "/etc/httpd/modsecurity.d")))
     if selinux_on():
         run("restorecon", "-R", "/etc/modsecurity", str(rules))

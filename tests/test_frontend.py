@@ -232,11 +232,3 @@ def test_nginx_page_is_wired_and_never_builds_html():
         assert unsafe not in js, unsafe
 
 
-def test_ella_page_is_wired_and_never_builds_html_from_events():
-    ella_js = (FRONT / "js" / "ella.js").read_text(encoding="utf-8")
-    app_js = (FRONT / "js" / "app.js").read_text(encoding="utf-8")
-    html = (FRONT / "index.html").read_text(encoding="utf-8")
-    assert html.index("/js/ella.js") < html.index("/js/app.js")
-    assert '{ label: "WAF Ella", icon: "shield", view: "ella" }' in app_js and 'ella: "WAF Ella"' in app_js
-    for unsafe in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "html:"):
-        assert unsafe not in ella_js, unsafe

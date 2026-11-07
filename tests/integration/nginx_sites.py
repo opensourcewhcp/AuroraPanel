@@ -28,7 +28,7 @@ STARTED = time.time()
 
 
 def new_denials() -> str:
-    """SELinux refusals since this run began, apart from execmem (see docs/waf-ella.md). Older ones aren't this run's."""
+    """SELinux refusals since this run began, apart from execmem. Older ones aren't this run's."""
     out = subprocess.run("ausearch --input-logs -m avc -ts recent </dev/null 2>/dev/null", shell=True, capture_output=True, text=True).stdout
     found = []
     for line in out.splitlines():

@@ -10,7 +10,7 @@ import pytest
 
 from backend.app import app
 
-PUBLIC = {"/", "/index.html", "/api/status", "/api/login", "/api/logout", "/api/net/confirm", "/api/ella/fleet/checkin"}  # that last one is signed per server: see test_ella_soc.py
+PUBLIC = {"/", "/index.html", "/api/status", "/api/login", "/api/logout", "/api/net/confirm"}  # that last one is signed per server: see test_ella_soc.py
 # Slow (scans the whole disk), or reaches out to the internet.
 SKIP_CALL = {"/api/diskusage", "/api/inodes", "/api/about/update", "/api/files/download", "/api/backups/download"}
 

@@ -73,11 +73,7 @@ class _GZipFrontend(GZipMiddleware):
 
 app.add_middleware(_GZipFrontend, minimum_size=1024)
 from . import caddysites, nginxsites, nginxwaf  # noqa: E402
-from .ella import routes as ella_routes, routes_soc as ella_soc, service as ella_service  # noqa: E402
 
-app.include_router(ella_routes.router)
-app.include_router(ella_soc.router)
-app.include_router(ella_soc.public)
 
 
 class NginxSiteBody(BaseModel):
@@ -425,6 +421,8 @@ def api_login(body: LoginBody, request: Request):
     if not is_owner and not panelusers.verify(body.username, body.password):
         _auth_log(False, body.username, request)
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    if not is_owner and panelusers.retired(body.username):
+        raise HTTPException(status_code=403, detail="This account's role was removed along with WAF Ella. Ask an administrator to give it a new one.")
     if not is_owner:
         panelusers.touch(body.username)
     if is_owner and twofa.is_enabled():
@@ -4300,9 +4298,10 @@ def _metrics_start():
     except Exception as exc:
         problems.record("InstaBan", exc, hint="InstaBan is not watching the logs. Open Security → InstaBan.")
     try:
-        ella_service.start()
+        from . import ella_retire
+        ella_retire.cleanup()
     except Exception as exc:
-        problems.record("WAF Ella", exc, hint="WAF Ella isn't collecting events or checking its bans.")
+        problems.record("WAF Ella removal", exc, hint="Removing what WAF Ella left behind didn't finish. Check the web server's settings.")
     try:
         slackbot.start()  # Socket Mode: receives button clicks and /aurora
     except Exception as exc:

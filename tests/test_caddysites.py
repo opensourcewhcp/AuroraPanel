@@ -5,7 +5,6 @@ import subprocess
 import pytest
 
 from backend import apps, caddysites as C, jobs, nginxsites as N
-from backend.ella import collector
 
 
 def _posix_ok(monkeypatch):
@@ -130,14 +129,6 @@ def test_caddy_routes(admin, caddy):
 
 def test_caddy_routes_need_a_login(client):
     assert client.get("/api/caddy").status_code == 401
-
-
-def test_caddy_access_log_becomes_an_event():
-    line = json.dumps({"ts": 1793848000.5, "status": 404, "size": 12, "request": {"remote_ip": "203.0.113.9", "client_ip": "203.0.113.9", "method": "GET", "host": "A.example:443", "uri": "/x?token=SECRET&y=1", "headers": {"User-Agent": ["ua/1"], "Cookie": ["sid=SECRET"]}}}).encode()
-    e = collector.PARSERS["caddy_access"].parse(line, {"path": "/l", "inode": 1, "offset": 0})
-    assert (e["client_ip"], e["domain"], e["url"], e["status"], e["user_agent"]) == ("203.0.113.9", "a.example", "/x", 404, "ua/1")
-    assert "SECRET" not in json.dumps(e) and json.loads(e["query_keys"]) == ["token", "y"]
-    assert collector.PARSERS["caddy_access"].parse(b"not json", {"path": "/l", "inode": 1, "offset": 0}) is None
 
 
 # ----------------------------------------------------------------------------- Let's Encrypt on Nginx

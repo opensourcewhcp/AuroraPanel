@@ -25,21 +25,14 @@ SITE_ALLOW = [
     ("GET", r"/api/mail/accounts(/device|/mobileconfig)?"),
     ("POST", r"/api/mail/accounts/(create|update|delete)"),
     ("GET", r"/api/metrics/(sites|visitors|analytics|errors)"),
-    # WAF Ella: each of these is limited to the manager's own domains in the query or the rule itself.
-    ("GET", r"/api/ella/(events|search|search/fields|export|digest|learning|exceptions)"),
-    ("GET", r"/api/ella/investigate/[^/]+"),
-    ("POST", r"/api/ella/exceptions(/suggest)?"),
-    ("DELETE", r"/api/ella/exceptions/\d+"),
 ]
-# SOC operators: WAF Ella and nothing else of the panel.
-SOC_ALLOW = re.compile(r"^/api/(me|status|requires|ella(/.*)?)$")
-SOC_ALLOW_POST = re.compile(r"^/api/(logout|me/password|ella(/.*)?)$")
+# Security operators worked only in WAF Ella, which is gone. They can sign out and nothing else: making them
+# viewers would quietly let them read the whole panel.
+RETIRED_ALLOW = re.compile(r"^/api/(me|status)$")
 # Viewers can read every page, but not these (secrets, file contents, downloads, a shell).
 VIEWER_DENY_GET = re.compile(r"^/api/(files/(read|download)|backups/[^/]+/download|backups/download|metrics/download|"
                              r"schedules/plans/[^/]+/passphrase|docker/apps/[^/]+/secret|ddns-hosts/[^/]+/key|"
                              r"mail/accounts/mobileconfig|tokens|apitokens|terminal|sysapps/[^/]+/file|wptoolkit)")
-# Things that shape the whole system rather than respond to attacks stay with admins.
-SOC_ADMIN_ONLY = re.compile(r"^/api/ella/(fleet|config|fail-mode|retention/forget|proxies|channels|exports)")
 VIEWER_ALLOW_POST = re.compile(r"^/api/(logout|me/password)$")
 # The owner on the installer's random password: only what it takes to replace it.
 FIRST_LOGIN_ALLOW = re.compile(r"^/api/(me|status|logout|account/password)$")
@@ -126,9 +119,9 @@ def _decide(user: dict | None, method: str, path: str) -> str | None:
             return "This account can look but not open files, secrets or downloads" if VIEWER_DENY_GET.match(path) else None
         return None if VIEWER_ALLOW_POST.match(path) else "This account is read-only"
     if user["role"] == "soc_operator":
-        if method in ("GET", "HEAD"):
-            return None if SOC_ALLOW.match(path) else "This account only works in WAF Ella"
-        return None if SOC_ALLOW_POST.match(path) and not SOC_ADMIN_ONLY.match(path) else "This account only works in WAF Ella"
+        if (method in ("GET", "HEAD") and RETIRED_ALLOW.match(path)) or (method == "POST" and path == "/api/logout"):
+            return None
+        return "This account's role was removed along with WAF Ella. Ask an administrator to give it a new one."
     if user["role"] == "site":
         for m, rx in SITE_ALLOW:
             if m == method and re.fullmatch(rx, path):
