@@ -570,13 +570,56 @@ if [ $UP = 0 ]; then
 fi
 ok "Panel is up"
 
-IPS="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+\.' || true)"
+# --- where to open it from ----------------------------------------------------
+# Container and VM bridges (Docker, libvirt, LXC) only exist inside this server, so they aren't listed.
+ADDRS="$(ip -4 -o addr show scope global 2>/dev/null | awk '$2 !~ /^(docker|br-|veth|virbr|cni|podman|lxc|lxd|flannel)/ {sub(/\/.*/, "", $4); print $4}' || true)"
+[ -n "$ADDRS" ] || ADDRS="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+\.' || true)"
+LAN=""; WAN=""
+for ip in $ADDRS; do
+  if "$APP_DIR/.venv/bin/python" -c 'import ipaddress, sys; sys.exit(not ipaddress.ip_address(sys.argv[1]).is_global)' "$ip" 2>/dev/null; then
+    WAN="$WAN $ip"
+  else
+    LAN="$LAN $ip"
+  fi
+done
+# Google Cloud: the external address belongs to Google's network, not to a network card here. Only the
+# metadata server, which answers inside the VM's own network, knows it. Nothing is asked anywhere else.
+GCP=0; GCP_IP=""
+if grep -qs 'Google Compute Engine' "${AURORA_DMI_PRODUCT:-/sys/class/dmi/id/product_name}"; then
+  GCP=1
+  GCP_IP="$(curl -fs --max-time 2 -H 'Metadata-Flavor: Google' \
+    "${AURORA_GCP_METADATA:-http://169.254.169.254}/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip" 2>/dev/null || true)"
+  if [[ "$GCP_IP" =~ ^[0-9]+(\.[0-9]+){3}$ ]]; then
+    [[ " $WAN " == *" $GCP_IP "* ]] || WAN="$WAN $GCP_IP"
+  else
+    GCP_IP=""
+  fi
+fi
+MDNS=""
+systemctl is-active --quiet avahi-daemon 2>/dev/null && MDNS="$(hostname).local"
 echo
 echo "${c_hi}  AuroraPanel is installed!${c_off}"
-echo
-echo "  Open it from a browser on your network:"
-for ip in $IPS; do echo "    ${SCHEME}://${ip}:${PORT}"; done
-systemctl is-active --quiet avahi-daemon 2>/dev/null && echo "    ${SCHEME}://$(hostname).local:${PORT}"
+if [ -n "$LAN$MDNS" ]; then
+  echo
+  echo "  On your network (private):"
+  for ip in $LAN; do echo "    ${SCHEME}://${ip}:${PORT}"; done
+  [ -z "$MDNS" ] || echo "    ${SCHEME}://${MDNS}:${PORT}"
+fi
+if [ -n "$WAN" ]; then
+  echo
+  echo "  From the internet (public):"
+  for ip in $WAN; do echo "    ${SCHEME}://${ip}:${PORT}"; done
+fi
+if [ $GCP = 1 ]; then
+  echo
+  if [ -n "$GCP_IP" ]; then
+    echo "  Google Cloud: the public address works once a VPC firewall rule allows TCP ${PORT}"
+    echo "  (VPC network → Firewall → Create firewall rule). Allow only your own IP if you can."
+  else
+    echo "  Google Cloud: this VM has no external IP. Add one, or open the panel through SSH:"
+    echo "    gcloud compute ssh $(hostname) -- -L ${PORT}:localhost:${PORT}   then https://localhost:${PORT}"
+  fi
+fi
 echo
 if [ -f "$APP_DIR/aurora_initial_password" ]; then
   show_initial_password
