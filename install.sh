@@ -133,6 +133,8 @@ if [ $UNINSTALL = 1 ]; then
       && ok "Removed the firewalld rule for ${OLD_PORT}/tcp"
   fi
   command -v semanage >/dev/null && semanage fcontext -d "${APP_DIR}/\.venv/bin(/.*)?" 2>/dev/null || true
+  command -v semanage >/dev/null && semanage fcontext -d "/opt/aurora(/.*)?" 2>/dev/null || true
+  rm -rf /opt/aurora
   rm -rf /usr/local/lib/aurora
   # The panel's WAF hook for Nginx goes; websites on Nginx and Caddy are kept, like Apache's.
   if [ -e /etc/nginx/conf.d/aurora-waf.conf ]; then
@@ -308,6 +310,7 @@ python3 -c 'import venv, ensurepip' 2>/dev/null || NEED+=(python3-venv)
 command -v ss >/dev/null || NEED+=(iproute2)
 command -v curl >/dev/null || NEED+=(curl)
 command -v openssl >/dev/null || NEED+=(openssl)
+command -v tar >/dev/null || NEED+=(tar)
 if [ ${#NEED[@]} -gt 0 ]; then
   say "Installing: ${NEED[*]}"
   if command -v apt-get >/dev/null; then
@@ -328,36 +331,93 @@ if [ ${#NEED[@]} -gt 0 ]; then
     die "Missing: ${NEED[*]} — install them and re-run."
   fi
 fi
-# RHEL 9's python3 stays at 3.9 because dnf runs on it. A newer one installs beside it.
-PY=python3
-if ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' && ! command -v apt-get >/dev/null && command -v dnf >/dev/null; then
-  say "Installing python3.12 next to this system's older python3"
-  dnf install -y -q python3.12 >/dev/null || die "Could not install python3.12."
-  PY=python3.12
+# The panel runs on its own Python in /opt/aurora, so that it needn't wait for a distribution to ship a current one.
+# The system's python3 stays as it is: dnf, apt and other programs depend on it. A new Python version
+# reaches servers with a panel update: change these lines and their checksums. 32-bit systems stay on the
+# system's Python: a new Python has no prebuilt packages there, and building them takes a small Pi far too long.
+PY_VERSION=3.15.2
+PY_BUILD=20261026
+PY_ROOT=/opt/aurora
+PY_HOME="${PY_ROOT}/python-${PY_VERSION}"
+PY_TRIPLE=""; PY_SHA=""
+case "$(uname -m)" in
+  x86_64) PY_TRIPLE=x86_64-unknown-linux-gnu; PY_SHA=08d4ae9024a7cfbd3b70e559241afa2571cd3208d7bd5f96f88e0080dd4092aa ;;
+  aarch64) PY_TRIPLE=aarch64-unknown-linux-gnu; PY_SHA=6fc73e8a4c80a65d2a0ed21535c65383f7b9f96bb58a5f40ed035bd7ee318616 ;;
+esac
+py_ok() { "$1" -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null; }
+py_fetch() {
+  local tmp url
+  tmp="$(mktemp -d)" || return 1
+  url="https://github.com/astral-sh/python-build-standalone/releases/download/${PY_BUILD}/cpython-${PY_VERSION}+${PY_BUILD}-${PY_TRIPLE}-install_only.tar.gz"
+  if curl -fsSL --retry 2 --max-time 300 -o "$tmp/python.tgz" "$url" \
+    && echo "${PY_SHA}  $tmp/python.tgz" | sha256sum -c --status \
+    && tar xzf "$tmp/python.tgz" -C "$tmp" \
+    && py_ok "$tmp/python/bin/python3" \
+    && mkdir -p "$PY_ROOT" && rm -rf "$PY_HOME" && mv "$tmp/python" "$PY_HOME"; then
+    rm -rf "$tmp"
+    return 0
+  fi
+  rm -rf "$tmp"
+  return 1
+}
+if [ -n "$PY_TRIPLE" ] && ! py_ok "$PY_HOME/bin/python3"; then
+  say "Installing Python ${PY_VERSION} for the panel"
+  py_fetch || warn "Couldn't get Python ${PY_VERSION}, so the panel uses this system's Python for now"
 fi
-SYS_PY="/usr/bin/${PY}"
-PYV="$("$PY" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
-"$PY" -c 'import sys; sys.exit(sys.version_info < (3, 10))' || die "Python 3.10+ required (found $PYV)."
+if py_ok "$PY_HOME/bin/python3"; then
+  PY="$PY_HOME/bin/python3"
+else
+  PY=python3
+  if ! py_ok python3; then
+    # RHEL 9 and Ubuntu 22.04 keep an older python3 for their own programs. A newer one installs beside it.
+    if command -v apt-get >/dev/null; then
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3.11 python3.11-venv >/dev/null && PY=python3.11
+    elif command -v dnf >/dev/null; then
+      dnf install -y -q python3.12 >/dev/null && PY=python3.12
+    fi
+  fi
+fi
+PYV="$("$PY" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])')"
+py_ok "$PY" || die "Python 3.11 or newer is required (found $PYV)."
 ok "Python $PYV"
 
 # --- virtualenv + deps ------------------------------------------------------
 say "Setting up Python environment"
 cd "$APP_DIR"
-if [ ! -x .venv/bin/python ]; then
-  "$PY" -m venv .venv || die "Could not create .venv (is python3-venv installed?)."
+# A failed update must not leave the panel without its environment: the old one stays until the new one works.
+venv_fail() {
+  if [ -d .venv.old ]; then rm -rf .venv; mv .venv.old .venv; fi
+  die "$1"
+}
+rm -rf .venv.old
+if [ -d .venv ] && [ "$(.venv/bin/python -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null)" != "$PYV" ]; then
+  mv .venv .venv.old
 fi
-.venv/bin/python -m pip install --quiet --upgrade pip
+if [ ! -x .venv/bin/python ]; then
+  "$PY" -m venv .venv || venv_fail "Could not create .venv (is python3-venv installed?)."
+fi
+.venv/bin/python -m pip install --quiet --upgrade pip || warn "Could not update pip, so this uses the one it has"
 if ! .venv/bin/python -m pip install --quiet -r requirements.txt; then
   # No prebuilt wheel for this Pi (e.g. 32-bit / older OS) — build from source.
-  command -v apt-get >/dev/null || command -v dnf >/dev/null || die "pip install failed."
+  command -v apt-get >/dev/null || command -v dnf >/dev/null || venv_fail "pip install failed."
   warn "Prebuilt packages unavailable — installing build tools and retrying (this can take a while on older Pis)"
+  # A Python installed beside the system's has its own headers package. The panel's own Python carries its headers.
+  PY_DEV=python3
+  case "$PY" in python3.*) PY_DEV="$PY" ;; esac
   if command -v apt-get >/dev/null; then
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential python3-dev libffi-dev >/dev/null
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential "${PY_DEV}-dev" libffi-dev >/dev/null \
+      || warn "Could not install the build tools"
   else
-    dnf install -y -q gcc make "${PY}-devel" libffi-devel rust cargo >/dev/null
+    dnf install -y -q gcc make "${PY_DEV}-devel" libffi-devel rust cargo >/dev/null \
+      || warn "Could not install the build tools"
   fi
-  .venv/bin/python -m pip install --quiet -r requirements.txt || die "pip install failed — see errors above."
+  .venv/bin/python -m pip install --quiet -r requirements.txt || venv_fail "pip install failed — see errors above."
 fi
+rm -rf .venv.old
+# Older copies of the panel's Python, once nothing uses them.
+for d in "$PY_ROOT"/python-*; do
+  [ -d "$d" ] && [ "$d" != "$PY_HOME" ] && rm -rf "$d"
+done
 ok "Dependencies installed"
 
 # --- SELinux (Fedora) ---------------------------------------------------------
@@ -371,8 +431,13 @@ if command -v getenforce >/dev/null && [ "$(getenforce 2>/dev/null)" != "Disable
       || semanage fcontext -m -t bin_t "${VENV_BIN}(/.*)?" \
       || warn "Could not save the SELinux label rule for ${VENV_BIN}"
     restorecon -R "$VENV_BIN"
+    if [ -d "$PY_ROOT" ]; then
+      semanage fcontext -a -t bin_t "${PY_ROOT}(/.*)?" 2>/dev/null || semanage fcontext -m -t bin_t "${PY_ROOT}(/.*)?" 2>/dev/null || true
+      restorecon -R "$PY_ROOT"
+    fi
   else
     chcon -R -h -t bin_t "$VENV_BIN"
+    [ -d "$PY_ROOT" ] && chcon -R -t bin_t "$PY_ROOT"
     warn "semanage is missing, so the SELinux label lasts until a full relabel (dnf install policycoreutils-python-utils, then re-run)"
   fi
   ok "SELinux: labelled the panel's programs"

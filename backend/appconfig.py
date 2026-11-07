@@ -586,12 +586,22 @@ def mariadb_save(changes: dict) -> dict:
 # stays "active" even when the database is down) is restarted.
 PG_HBA_BEGIN = "# aurora-remote begin (managed by AuroraPanel — edit in System Applications → PostgreSQL)"
 PG_HBA_END = "# aurora-remote end"
+PG_HBA_FIREWALL = "# firewall rules for these were added by AuroraPanel"
+PG_INTERNET = ["0.0.0.0/0", "::/0"]
 PG_SCHEMA = [
-    {"title": "Network", "desc": "Remote access also needs a database role with a password (PostgreSQL Wizard) and port open in the firewall.", "fields": [
+    {"title": "Network", "desc": "Remote access also needs a database role with a password (PostgreSQL Wizard).", "fields": [
         {"key": "remote_access", "label": "Allow connections from other computers", "type": "bool",
          "help": "Off = only apps on this Pi can connect (safest)."},
-        {"key": "remote_from", "label": "Allowed networks", "type": "text", "placeholder": "192.168.0.0/24",
-         "help": "Comma-separated addresses or networks that may log in with a password, e.g. your LAN 192.168.0.0/24."},
+        {"key": "remote_scope", "label": "Who can connect", "type": "select", "show_if": {"remote_access": "On"},
+         "options": [["specific", "Specific addresses"], ["network", "This server's network"], ["internet", "Anywhere (the whole internet)"]]},
+        {"key": "remote_from", "label": "Allowed addresses", "type": "text", "placeholder": "192.168.0.5, 10.0.0.0/8",
+         "show_if": {"remote_access": "On", "remote_scope": "specific"},
+         "help": "Comma-separated addresses or networks that may log in with a password."},
+        {"key": "remote_firewall", "label": "Open the firewall for them", "type": "bool", "show_if": {"remote_access": "On"},
+         "help": "Keeps the firewall matching this list. Off = you manage the firewall yourself."},
+        {"key": "_internet_note", "type": "note", "show_if": {"remote_access": "On", "remote_scope": "internet"},
+         "text": "Anyone on the internet can try to log in, and bots will. Use long passwords, and only keep this on if you need it. "
+                 "Connections from anywhere must use SSL. On a home network, your router must forward the port too."},
         {"key": "port", "label": "Port", "type": "port"},
         {"key": "max_connections", "label": "Max connections", "type": "int", "min": 5, "max": 10000},
         {"key": "ssl", "label": "Encrypt connections (SSL)", "type": "bool", "help": "Uses the certificate set in postgresql.conf (a self-signed one on Debian)."},
@@ -666,7 +676,41 @@ def _pg_hba_strip(text: str) -> str:
 
 def _pg_hba_networks(text: str) -> list[str]:
     m = re.search(rf"{re.escape(PG_HBA_BEGIN)}(.*?){re.escape(PG_HBA_END)}", text, re.S)
-    return re.findall(r"(?m)^host\s+all\s+all\s+(\S+)\s+scram-sha-256", m.group(1)) if m else []
+    return re.findall(r"(?m)^host(?:ssl)?\s+all\s+all\s+(\S+)\s+scram-sha-256", m.group(1)) if m else []
+
+
+def _pg_firewall_managed(text: str) -> bool:
+    """Were the firewall rules added by the panel? Rules from before this setting are the admin's own, and stay."""
+    m = re.search(rf"{re.escape(PG_HBA_BEGIN)}(.*?){re.escape(PG_HBA_END)}", text, re.S)
+    return bool(m and PG_HBA_FIREWALL in m.group(1))
+
+
+def _pg_lan_net() -> str:
+    from .dockerapps import _lan_net
+    try:
+        return _lan_net()
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return ""
+
+
+def _pg_scope(nets: list[str]) -> str:
+    if any(n.endswith("/0") for n in nets):
+        return "internet"
+    return "network" if nets and nets == [_pg_lan_net()] else "specific"
+
+
+def _pg_sync_firewall(old_nets: list[str], old_port: str, nets: list[str], port: str) -> list[str]:
+    """Make the firewall match the allowed list. PostgreSQL has already changed by now, so a problem is reported, not raised."""
+    from . import firewall
+    if not firewall.available():
+        return []
+    gone = old_nets if old_port != port else [n for n in old_nets if n not in nets]
+    try:
+        firewall.remove_from(old_port, "tcp", gone)
+        firewall.allow_from(port, "tcp", nets, "AuroraPanel PostgreSQL")
+    except (firewall.FirewallError, OSError, subprocess.SubprocessError) as e:
+        return [f"PostgreSQL was updated, but the firewall wasn't: {e}"]
+    return []
 
 
 def _pg_size(v, label) -> str:
@@ -697,13 +741,20 @@ def postgresql_settings() -> dict:
             human[f[0]], raw[f[0]] = f[1], f[2]
     onoff = lambda n: "On" if human.get(n) == "on" else "Off"
     slow = int(raw.get("log_min_duration_statement", "-1") or -1)
-    nets = _pg_hba_networks(_read(c[2] / "pg_hba.conf"))
+    hba_text = _read(c[2] / "pg_hba.conf")
+    nets = _pg_hba_networks(hba_text)
+    scope = _pg_scope(nets)
+    lan = _pg_lan_net()
+    schema = [{**s, "fields": [{**f, "options": [[k, f"{t} ({lan})" if k == "network" and lan else t] for k, t in f["options"]]}
+                               if f["key"] == "remote_scope" else f for f in s["fields"]]} for s in PG_SCHEMA]
     values = {"remote_access": "Off" if human.get("listen_addresses", "localhost") in ("localhost", "127.0.0.1", "::1", "") else "On",
-              "remote_from": ", ".join(nets), "port": raw.get("port", "5432"), "max_connections": raw.get("max_connections", "100"),
+              "remote_scope": scope, "remote_from": ", ".join(nets) if scope == "specific" else "",
+              "remote_firewall": "On" if _pg_firewall_managed(hba_text) or not nets else "Off",
+              "port": raw.get("port", "5432"), "max_connections": raw.get("max_connections", "100"),
               "ssl": onoff("ssl"), "shared_buffers": human.get("shared_buffers", ""), "work_mem": human.get("work_mem", ""),
               "maintenance_work_mem": human.get("maintenance_work_mem", ""), "effective_cache_size": human.get("effective_cache_size", ""),
               "slow_query_ms": str(max(slow, 0)), "log_connections": onoff("log_connections"), "autovacuum": onoff("autovacuum")}
-    return {"schema": PG_SCHEMA, "values": values, "bool_values": ["On", "Off"], "version": c[0], "cluster": c[1]}
+    return {"schema": schema, "values": values, "bool_values": ["On", "Off"], "version": c[0], "cluster": c[1]}
 
 
 def postgresql_save(changes: dict) -> dict:
@@ -712,12 +763,17 @@ def postgresql_save(changes: dict) -> dict:
     ver, name, confdir = _pg_cluster() or (None, None, None)
     if not confdir:
         raise AppConfigError("PostgreSQL isn't installed (no database cluster found)")
-    new = {**postgresql_settings()["values"]}
+    old = postgresql_settings()["values"]
+    new = {**old}
     for k, v in (changes or {}).items():
         fdef = next((f for s in PG_SCHEMA for f in s["fields"] if f["key"] == k), None)
         if not fdef:
             raise AppConfigError(f"Unknown setting {k}")
-        if fdef["type"] == "bool":
+        if fdef["type"] == "select":
+            if v not in [o[0] for o in fdef["options"]]:
+                raise AppConfigError(f"{fdef['label']}: {v!r} isn't one of the choices")
+            new[k] = v
+        elif fdef["type"] == "bool":
             new[k] = "On" if str(v).lower() in ("on", "yes", "true", "1") else "Off"
         elif fdef["type"] in ("int", "port"):
             new[k] = _num(v, fdef["label"], 1 if fdef["type"] == "port" else fdef.get("min", 0), 65535 if fdef["type"] == "port" else fdef.get("max", 1 << 40))
@@ -734,13 +790,22 @@ def postgresql_save(changes: dict) -> dict:
     if ram and _pg_bytes(new["shared_buffers"]) > ram // 2:
         raise AppConfigError(f"Shared buffers {new['shared_buffers']} is more than half of this Pi's RAM — PostgreSQL wouldn't start reliably")
     nets = []
-    for part in [p.strip() for p in new["remote_from"].split(",") if p.strip()]:
-        try:
-            nets.append(str(ipaddress.ip_network(part, strict=False)))
-        except ValueError:
-            raise AppConfigError(f"Allowed networks: {part!r} isn't an address or network (e.g. 192.168.0.0/24)")
+    if new["remote_scope"] == "internet":
+        nets = list(PG_INTERNET)
+    elif new["remote_scope"] == "network":
+        nets = [n for n in [_pg_lan_net()] if n]
+        if new["remote_access"] == "On" and not nets:
+            raise AppConfigError("Couldn't work out this server's network. Choose Specific addresses and enter it, e.g. 192.168.0.0/24")
+    else:
+        for part in [p.strip() for p in new["remote_from"].split(",") if p.strip()]:
+            try:
+                nets.append(str(ipaddress.ip_network(part, strict=False)))
+            except ValueError:
+                raise AppConfigError(f"Allowed networks: {part!r} isn't an address or network (e.g. 192.168.0.0/24)")
     if new["remote_access"] == "On" and not nets:
         raise AppConfigError("Remote access needs at least one allowed network, e.g. 192.168.0.0/24")
+    if new["remote_access"] == "On" and new["ssl"] != "On" and any(n.endswith("/0") for n in nets):
+        raise AppConfigError("Connections from anywhere must be encrypted. Turn on Encrypt connections (SSL), or allow specific addresses.")
 
     slow = int(new["slow_query_ms"])
     conf = "\n".join([
@@ -755,14 +820,19 @@ def postgresql_save(changes: dict) -> dict:
         f"autovacuum = {'on' if new['autovacuum'] == 'On' else 'off'}",
     ]) + "\n"
     hba_path = confdir / "pg_hba.conf"
-    hba = _pg_hba_strip(_read(hba_path)).rstrip("\n") + "\n"
+    hba_old = _read(hba_path)
+    hba = _pg_hba_strip(hba_old).rstrip("\n") + "\n"
     if new["remote_access"] == "On":
-        hba += "\n" + "\n".join([PG_HBA_BEGIN, *[f"host    all    all    {n}    scram-sha-256" for n in nets], PG_HBA_END]) + "\n"
+        rules = [f"{'hostssl' if n.endswith('/0') else 'host'}    all    all    {n}    scram-sha-256" for n in nets]
+        hba += "\n" + "\n".join([PG_HBA_BEGIN, *rules, *([PG_HBA_FIREWALL] if new["remote_firewall"] == "On" else []), PG_HBA_END]) + "\n"
     override = confdir / "conf.d" / "99-aurora.conf"
+    # Rules the panel added before go away with the setting. Without its marker, a rule is the admin's own.
+    old_nets = _pg_hba_networks(hba_old) if _pg_firewall_managed(hba_old) else []
     _apply({override: conf, hba_path: hba}, _pg_validate(), _pg_unit(), "restart")
     for p in (override, hba_path):  # postgres must be able to read them
         shutil.chown(p, "postgres", "postgres")
-    return {"ok": True, **postgresql_settings()}
+    warnings = _pg_sync_firewall(old_nets, str(old["port"]), nets if new["remote_access"] == "On" and new["remote_firewall"] == "On" else [], str(new["port"]))
+    return {"ok": True, "warnings": warnings, **postgresql_settings()}
 
 
 def _pg_files():

@@ -138,6 +138,11 @@ def _pkgs(c: dict) -> list[str]:
     return c["pkgs"]() if callable(c["pkgs"]) else c["pkgs"]
 
 
+def _gcloud_env() -> dict:
+    """Asked at install time: _gcloud_repo may have just added the Python this names."""
+    return {"CLOUDSDK_PYTHON": distro.system_python()}
+
+
 def _collect(fn) -> list[str]:
     lines: list[str] = []
     fn(lines.append)
@@ -174,6 +179,11 @@ def _gcloud_repo() -> list[str]:
                             f"baseurl=https://packages.cloud.google.com/yum/repos/cloud-sdk-el{distro.el_major() or 9}-{os.uname().machine}\n"
                             "enabled=1\ngpgcheck=1\nrepo_gpgcheck=0\n"
                             "gpgkey=https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg\n")
+        # The CLI needs Python 3.10 or newer, and RHEL 9's python3 stays at 3.9. The panel's own Python is too new for it.
+        if distro.el_major() == 9 and not os.path.exists("/usr/bin/python3.12"):
+            r = _run(["dnf", "install", "-y", "-q", "python3.12"], 600)
+            if r.returncode != 0:
+                raise RequiresError("Could not install Python 3.12 for the Google Cloud CLI: " + (r.stderr or "")[-200:])
         return ["• Added Google's package source for the Google Cloud CLI"]
     if GCLOUD_LIST.exists() and GCLOUD_KEYRING.exists():
         return []
@@ -425,7 +435,7 @@ COMPONENTS: dict[str, dict] = {
         "pkgs": ["google-cloud-cli"],
         "pre": _gcloud_repo,
         # The Python bundled with the package crashes on some Raspberry Pi kernels; Debian's works.
-        "env": {"CLOUDSDK_PYTHON": distro.system_python()},
+        "env": _gcloud_env,
         "check": lambda: shutil.which("gcloud", path=PATH) is not None,
     },
     "azurecli": {
@@ -516,7 +526,7 @@ def install(cid: str) -> jobs.Job:
         log.progress(1, "Updating the package lists")
         log.apt(["update"], (1, 8))
         log.progress(8, "Downloading packages")
-        aenv = {k: v for n in plan for k, v in (COMPONENTS[n].get("env") or {}).items()}
+        aenv = {k: v for n in plan if COMPONENTS[n].get("env") for k, v in COMPONENTS[n]["env"]().items()}
         rc = log.apt(["install", "--no-install-recommends", *pkgs], (8, 92), env=aenv)
         if rc != 0:
             # A half-finished earlier install blocks apt: finish it and retry once.

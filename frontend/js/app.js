@@ -8422,6 +8422,8 @@
     return false;
   }
   const pgOffer = (d, box, jp, reload) => dbOffer("postgresql", d, box, jp, reload);
+  // PostgreSQL only listens on this server until remote access is on, so the browser's address is refused by default.
+  const pgConnect = (user, db) => `postgresql://${user}:<password>@localhost:5432/${db}\n\nOn this server, and in the panel's Terminal:\npsql -h localhost -U ${user} -d ${db}\n\nFrom another computer, first turn on "Allow connections from other computers" in PostgreSQL's settings and choose who can connect, then:\npsql -h ${location.hostname} -U ${user} -d ${db}`;
 
   // ---- PostgreSQL Databases ----
   function viewPgSQL(root) { pgManager(root); }
@@ -8542,7 +8544,6 @@
         };
         return c.node;
       }) : [el("p", { class: "muted", text: "No users yet, create one first." })]);
-      const host = location.hostname;
       openModal(`Database ${db.name}`, el("div", { style: "display:flex;flex-direction:column;gap:14px;min-width:min(520px,80vw)" }, [
         kv([["Size", db.size], ["Encoding", db.encoding], ["Open connections", String(db.connections)]]),
         el("div", {}, [el("h4", { text: "Owner", style: "margin:0 0 6px" }),
@@ -8553,8 +8554,7 @@
         el("div", {}, [el("h4", { text: "Users with full access", style: "margin:0 0 6px" }), list,
           el("p", { class: "dm-hint", text: "Full access = read and write every table, including tables created later. The owner always has it." })]),
         el("div", {}, [el("h4", { text: "Connect from an app", style: "margin:0 0 6px" }),
-          el("pre", { class: "log", style: "margin:0;white-space:pre-wrap", text:
-            `postgresql://<user>:<password>@localhost:5432/${db.name}\n\npsql -h ${host} -U <user> -d ${db.name}` })]),
+          el("pre", { class: "log", style: "margin:0;white-space:pre-wrap", text: pgConnect("<user>", db.name) })]),
       ]), []);
     }
 
@@ -8633,7 +8633,7 @@
       fetch: () => API.pg(),
       create: (v) => API.pgWizard({ db: v.db, role: v.user, password: v.password }),
       result: (r, v) => [["Database", v.db], ["User (owner)", r.role]],
-      conn: (v) => `postgresql://${v.user}:<password>@localhost:5432/${v.db}\n\npsql -h ${location.hostname} -U ${v.user} -d ${v.db}`,
+      conn: (v) => pgConnect(v.user, v.db),
     });
   }
 
@@ -8870,7 +8870,12 @@
               const ch = form.changes();
               if (!Object.keys(ch).length) { toast("Nothing changed", "good"); return; }
               save.disabled = true;
-              try { await API.appSettingsSave(id, ch); toast(`${APP_NAMES[id]} updated`, "good"); pane.innerHTML = ""; appSettingsTab(pane); }
+              try {
+                const r = await API.appSettingsSave(id, ch);
+                toast(`${APP_NAMES[id]} updated`, "good");
+                pane.innerHTML = ""; appSettingsTab(pane);
+                if (r && r.warnings && r.warnings.length) openModal("Almost done", el("pre", { class: "log", style: "white-space:pre-wrap", text: r.warnings.join("\n") }), []);
+              }
               catch (e) { toast("Not applied, see details", "bad"); openModal("Settings not applied", el("pre", { class: "log", text: e.message }), []); save.disabled = false; }
             }, "btn-primary");
             pane.append(form.node, el("div", { class: "sf-actions" }, [save]));
@@ -9069,10 +9074,16 @@
     const overridden = new Set(opts.overridden || []);
     const reset = new Set();
     const tzList = opts.timezones || [];
+    const conditional = [];  // fields a schema shows only for certain values of other fields (show_if)
     const sections = schema.map((sec) => el("div", { class: "card sf-sec" }, [
       el("h3", { text: sec.title }),
       sec.desc ? el("p", { class: "dm-hint", text: sec.desc }) : null,
       el("div", { class: "sf-grid" }, sec.fields.map((f) => {
+        if (f.type === "note") {
+          const note = el("div", { class: "card net-warn", style: "grid-column:1/-1;margin:0" }, el("p", { text: f.text, style: "margin:0" }));
+          if (f.show_if) conditional.push([note, f.show_if]);
+          return note;
+        }
         const v = values[f.key];
         let inp;
         if (f.type === "bool") {
@@ -9100,16 +9111,24 @@
         inputs[f.key] = { inp, f };
         const tag = overridden.has(f.key) ? el("button", { type: "button", class: "sf-reset", title: "Back to the default", text: "custom · reset", onclick: (e) => {
           reset.add(f.key); e.target.textContent = "will reset"; e.target.disabled = true; } }) : null;
-        return el("label", { class: `sf-field ${f.type === "bool" ? "sf-bool" : ""}` }, [
+        const field = el("label", { class: `sf-field ${f.type === "bool" ? "sf-bool" : ""}` }, [
           el("span", { class: "sf-label" }, [el("span", { text: f.label }), tag]),
           inp,
           f.help ? el("small", { class: "dm-hint", text: f.help }) : null,
         ]);
+        if (f.show_if) conditional.push([field, f.show_if]);
+        return field;
       })),
     ]));
     const readVal = ({ inp, f }) => f.type === "bool" ? (opts.boolValues ? (inp.checked ? opts.boolValues[0] : opts.boolValues[1]) : (inp.checked ? "On" : "Off")) : inp.value.trim();
+    const node = el("div", { class: "sf" }, sections);
+    const showHide = () => conditional.forEach(([n, when]) => {
+      n.style.display = Object.entries(when).every(([k, want]) => readVal(inputs[k]) === want) ? "" : "none";
+    });
+    node.addEventListener("change", showHide);
+    showHide();
     return {
-      node: el("div", { class: "sf" }, sections),
+      node,
       // Only what the user actually changed (passwords only when typed).
       changes() {
         const out = {};

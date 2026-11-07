@@ -701,3 +701,87 @@ def test_logs_from_file_or_journal(tmp_path, etc, run):
     out = appconfig.logs("nginx", lines=5000)
     assert out == {"source": "journal (nginx)", "text": "nginx started\n"}
     assert run.calls[-1][:5] == ["journalctl", "-u", "nginx", "-n", "2000"]
+
+
+# ---------------------------------------------------------------- PostgreSQL: who can connect
+@pytest.fixture
+def fw(monkeypatch):
+    from backend import firewall
+    calls = []
+    monkeypatch.setattr(firewall, "available", lambda: True)
+    monkeypatch.setattr(firewall, "allow_from", lambda port, proto, nets, comment="": calls.append(("allow", port, list(nets))))
+    monkeypatch.setattr(firewall, "remove_from", lambda port, proto, nets: calls.append(("remove", port, list(nets))))
+    monkeypatch.setattr(appconfig, "_pg_lan_net", lambda: "192.168.0.0/24")
+    return calls
+
+
+def _pg_save(pg, run, monkeypatch, **changes):
+    monkeypatch.setattr(os, "sysconf", lambda name: 0, raising=False)
+    run.on("systemctl", "is-active", rc=0)
+    out = appconfig.postgresql_save(changes)
+    return out, (pg.confdir / "pg_hba.conf").read_text(encoding="utf-8")
+
+
+def test_postgresql_allows_the_servers_whole_network(pg, run, monkeypatch, fw):
+    _, hba = _pg_save(pg, run, monkeypatch, remote_access="on", remote_scope="network")
+    assert "host    all    all    192.168.0.0/24    scram-sha-256" in hba
+    assert ("allow", "5433", ["192.168.0.0/24"]) in fw
+    assert appconfig._pg_scope(appconfig._pg_hba_networks(hba)) == "network"
+
+
+def test_postgresql_can_also_allow_the_internet_but_only_over_ssl(pg, run, monkeypatch, fw):
+    _, hba = _pg_save(pg, run, monkeypatch, remote_access="on", remote_scope="internet")
+    assert "hostssl    all    all    0.0.0.0/0    scram-sha-256\nhostssl    all    all    ::/0    scram-sha-256" in hba
+    assert ("allow", "5433", ["0.0.0.0/0", "::/0"]) in fw
+    assert appconfig._pg_hba_networks(hba) == ["0.0.0.0/0", "::/0"] and appconfig._pg_scope(["0.0.0.0/0", "::/0"]) == "internet"
+    for change in ({"remote_scope": "internet"}, {"remote_scope": "specific", "remote_from": "0.0.0.0/0"}):
+        with pytest.raises(appconfig.AppConfigError, match="must be encrypted"):
+            appconfig.postgresql_save({"remote_access": "on", "ssl": "off", **change})
+
+
+def test_postgresql_refuses_a_made_up_scope_and_an_unknown_network(pg, run, monkeypatch, fw):
+    with pytest.raises(appconfig.AppConfigError, match="isn't one of the choices"):
+        appconfig.postgresql_save({"remote_scope": "everyone"})
+    monkeypatch.setattr(appconfig, "_pg_lan_net", lambda: "")
+    with pytest.raises(appconfig.AppConfigError, match="Couldn't work out"):
+        appconfig.postgresql_save({"remote_access": "on", "remote_scope": "network"})
+
+
+def test_postgresql_firewall_follows_the_list_and_goes_when_remote_access_does(pg, run, monkeypatch, fw):
+    _, hba = _pg_save(pg, run, monkeypatch, remote_access="on", remote_from="192.168.0.5, 10.0.0.0/8")
+    assert appconfig.PG_HBA_FIREWALL in hba
+    fw.clear()
+    _pg_save(pg, run, monkeypatch, remote_access="on", remote_from="192.168.0.5")
+    assert fw == [("remove", "5433", ["10.0.0.0/8"]), ("allow", "5433", ["192.168.0.5/32"])]
+    fw.clear()
+    _pg_save(pg, run, monkeypatch, remote_access="off")
+    assert fw == [("remove", "5433", ["192.168.0.5/32"]), ("allow", "5433", [])]
+
+
+def test_postgresql_firewall_can_be_left_to_the_admin(pg, run, monkeypatch, fw):
+    _, hba = _pg_save(pg, run, monkeypatch, remote_access="on", remote_from="192.168.0.5", remote_firewall="off")
+    assert appconfig.PG_HBA_FIREWALL not in hba and fw == [("remove", "5433", []), ("allow", "5433", [])]
+
+
+def test_postgresql_leaves_firewall_rules_from_before_this_setting_alone(pg, run, monkeypatch, fw):
+    (pg.confdir / "pg_hba.conf").write_text(f"local all all peer\n\n{appconfig.PG_HBA_BEGIN}\nhost    all    all    10.0.0.0/8    scram-sha-256\n{appconfig.PG_HBA_END}\n", encoding="utf-8")
+    assert appconfig.postgresql_settings()["values"]["remote_firewall"] == "Off"
+    _pg_save(pg, run, monkeypatch, remote_access="off")
+    assert fw == [("remove", "5433", []), ("allow", "5433", [])]
+
+
+def test_postgresql_reports_a_firewall_problem_after_the_change_is_made(pg, run, monkeypatch, fw):
+    from backend import firewall
+
+    def refuse(*a, **k):
+        raise firewall.FirewallError("ufw said no")
+    monkeypatch.setattr(firewall, "allow_from", refuse)
+    out, hba = _pg_save(pg, run, monkeypatch, remote_access="on", remote_from="192.168.0.5")
+    assert out["ok"] is True and "ufw said no" in out["warnings"][0] and "192.168.0.5/32" in hba
+
+
+def test_postgresql_schema_names_the_network_it_found(pg, monkeypatch, fw):
+    s = appconfig.postgresql_settings()
+    field = next(f for sec in s["schema"] for f in sec["fields"] if f["key"] == "remote_scope")
+    assert ["network", "This server's network (192.168.0.0/24)"] in field["options"]
+    assert ["network", "This server's network"] in next(f for sec in appconfig.PG_SCHEMA for f in sec["fields"] if f["key"] == "remote_scope")["options"]

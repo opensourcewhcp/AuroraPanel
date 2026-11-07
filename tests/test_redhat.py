@@ -175,3 +175,18 @@ def test_system_python(monkeypatch, major, exists, want):
     monkeypatch.setattr(distro, "el_major", lambda: major)
     monkeypatch.setattr(distro.os.path, "exists", lambda p: exists)
     assert distro.system_python() == want
+
+
+def test_gcloud_gets_python_3_12_on_el9_and_names_it_at_install_time(monkeypatch, tmp_path):
+    from pathlib import Path as P
+    from types import SimpleNamespace
+    from backend import requires
+    calls = []
+    monkeypatch.setattr(requires.distro, "is_dnf", lambda: True)
+    monkeypatch.setattr(requires.distro, "el_major", lambda: 9)
+    monkeypatch.setattr(requires, "Path", lambda p: tmp_path / P(p).name)
+    monkeypatch.setattr(requires.os.path, "exists", lambda p: bool(calls))
+    monkeypatch.setattr(requires, "_run", lambda a, t=0, **k: calls.append(a) or SimpleNamespace(returncode=0, stdout="", stderr=""))
+    requires._gcloud_repo()
+    assert calls == [["dnf", "install", "-y", "-q", "python3.12"]]
+    assert requires.COMPONENTS["gcloud"]["env"]() == {"CLOUDSDK_PYTHON": "/usr/bin/python3.12"}

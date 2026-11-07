@@ -950,11 +950,15 @@ def report_html(rep: dict) -> str:
             k = (f["severity"], f["title"])
             todo.setdefault(k, {"f": f, "on": []})["on"].append(t["label"])
     todo_items = sorted(todo.values(), key=lambda x: (order.index(x["f"]["severity"]) if x["f"]["severity"] in order else 9, x["f"]["title"]))
+
+    def seen_on(on: list) -> str:
+        return "Seen on " + e(", ".join(on[:6])) + (f" and {len(on) - 6} more" if len(on) > 6 else "")
+
     todo_html = "".join(
         f'<li>{sev(x["f"]["severity"])}<div><b>{e(x["f"]["title"])}</b>'
         f'<p>{e(x["f"]["detail"])}</p>'
         + (f'<p class="fix"><span>Fix</span>{e(x["f"]["fix"])}</p>' if x["f"].get("fix") else "")
-        + f'<p class="on">{"Seen on " + e(", ".join(x["on"][:6])) + (f" and {len(x['on']) - 6} more" if len(x["on"]) > 6 else "") if len(x["on"]) > 1 else "Seen on " + e(x["on"][0])}</p></div></li>'
+        + f'<p class="on">{seen_on(x["on"])}</p></div></li>'
         for x in todo_items) or '<li class="ok">Nothing to do. Every check passed.</li>'
 
     # Targets: the ones with the same kind, score and findings fold into one card.

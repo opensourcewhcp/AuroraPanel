@@ -128,6 +128,32 @@ def lan_only(port: str, proto: str, nets: list[str]) -> None:
     _fwd_apply()
 
 
+def allow_from(port: str, proto: str, nets: list[str], comment: str = "AuroraPanel") -> None:
+    """Let these addresses or networks reach a port, and nobody else because of this rule."""
+    for net in nets:
+        if _firewalld():
+            _fwd(f'--add-rich-rule=rule family="{"ipv6" if ":" in net else "ipv4"}" source address="{net}" port port="{port}" protocol="{proto}" accept')
+            continue
+        out = subprocess.run([_ufw(), "allow", "from", net, "to", "any", "port", str(port), "proto", proto, "comment", comment],
+                             capture_output=True, text=True, timeout=15)
+        if out.returncode != 0:
+            raise FirewallError(out.stderr.strip() or out.stdout.strip() or "ufw failed")
+    if nets and _firewalld():
+        _fwd_apply()
+
+
+def remove_from(port: str, proto: str, nets: list[str]) -> None:
+    """Undo allow_from. A rule that's already gone is fine."""
+    for net in nets:
+        if _firewalld():
+            _fwd(f'--remove-rich-rule=rule family="{"ipv6" if ":" in net else "ipv4"}" source address="{net}" port port="{port}" protocol="{proto}" accept', check=False)
+        else:
+            subprocess.run([_ufw(), "--force", "delete", "allow", "from", net, "to", "any", "port", str(port), "proto", proto],
+                           capture_output=True, text=True, timeout=15)
+    if nets and _firewalld():
+        _fwd_apply()
+
+
 def deny_source(ip: str) -> None:
     """firewalld's version of `ufw deny from <ip>`."""
     family = "ipv6" if ":" in ip else "ipv4"

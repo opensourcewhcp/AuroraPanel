@@ -2,8 +2,8 @@
 
 ## Install
 
-On a Raspberry Pi (Raspberry Pi OS Bookworm or newer) or an Ubuntu/Debian server with systemd and
-Python 3.10+:
+On a Raspberry Pi (Raspberry Pi OS Bookworm or newer) or an Ubuntu/Debian server with systemd. The
+installer sets up the panel's own Python 3.15 on 64-bit systems:
 
 ```bash
 git clone https://github.com/opensourcewhcp/AuroraPanel ~/AuroraPanel

@@ -232,3 +232,17 @@ def test_nginx_page_is_wired_and_never_builds_html():
         assert unsafe not in js, unsafe
 
 
+
+
+def test_postgres_command_uses_localhost_unless_remote_access_is_on():
+    app_js = (FRONT / "js" / "app.js").read_text(encoding="utf-8")
+    start = app_js.index("const pgConnect =")
+    line = app_js[start:app_js.index("\n", start)]
+    assert line.index("psql -h localhost") < line.index("Allow connections from other computers") < line.index("psql -h ${location.hostname}")
+    assert app_js.count("psql -h ") == 2
+
+
+def test_settings_form_can_show_fields_only_for_certain_values():
+    app_js = (FRONT / "js" / "app.js").read_text(encoding="utf-8")
+    form = app_js[app_js.index("function settingsForm("):]
+    assert 'f.type === "note"' in form and "conditional.push" in form and 'addEventListener("change", showHide)' in form

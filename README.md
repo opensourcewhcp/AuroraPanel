@@ -5,9 +5,9 @@ Websites, email, VPN, backups, security and monitoring, all from one browser tab
 Free, open source, MIT licensed.</p>
 
 <p align="center">
-  <a href="https://github.com/opensourcewhcp/AuroraPanel/releases"><img alt="Version 1.1.41" src="https://img.shields.io/badge/version-1.1.41-ff7a1a"></a>
+  <a href="https://github.com/opensourcewhcp/AuroraPanel/releases"><img alt="Version 1.2.0" src="https://img.shields.io/badge/version-1.2.0-ff7a1a"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-green"></a>
-  <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-blue">
+  <img alt="Python 3.15" src="https://img.shields.io/badge/python-3.15-blue">
   <img alt="Runs on Raspberry Pi" src="https://img.shields.io/badge/runs%20on-Raspberry%20Pi-c51a4a">
   <img alt="Runs on Debian" src="https://img.shields.io/badge/runs%20on-Debian-a80030">
   <img alt="Runs on Ubuntu" src="https://img.shields.io/badge/runs%20on-Ubuntu-e95420">
@@ -113,7 +113,9 @@ The scripts create a `.venv`, install `requirements.txt`, and start Uvicorn.
 ## Installing on a Raspberry Pi or an Ubuntu/Debian server
 
 Works on any Raspberry Pi running Raspberry Pi OS Bookworm or newer, and on any
-Ubuntu or Debian server or VPS with systemd and Python 3.10+, under any user name.
+Ubuntu or Debian server or VPS with systemd, under any user name. On 64-bit systems the installer gives the panel its own
+Python 3.15 in `/opt/aurora` and leaves the system's Python alone. On 32-bit systems, or if it can't download it, the panel
+uses the system's Python 3.11 or newer.
 
 **Fedora Server** (tested on Fedora 45 with SELinux enforcing and firewalld): the panel, websites, PHP, MariaDB,
 PostgreSQL, WordPress, the WAF, DNS, FTP, Docker, fail2ban, WireGuard and email work. Fedora has no Rspamd package, so
@@ -121,7 +123,7 @@ email uses SpamAssassin for spam filtering and OpenDKIM for signing, and greylis
 version can be installed at a time.
 
 **Red Hat family** (RHEL, AlmaLinux, Rocky Linux and CentOS Stream, versions 9 and 10): works the same way as Fedora.
-The installer turns on EPEL and CRB, and on version 9 installs Python 3.12 beside the system's Python. Docker comes from
+The installer turns on EPEL and CRB. Docker comes from
 Docker's repository and Dovecot 2.4 from Dovecot's, added when you install them. Dovecot only publishes x86_64 packages, so
 email needs x86_64. Version 10 has no packages for ModSecurity on Nginx, Azure CLI or ddclient, and gets the OWASP Core
 Rule Set from its GitHub release. PHP is the system's default: 8.0 on version 9, 8.3 on version 10. Tested in containers on
