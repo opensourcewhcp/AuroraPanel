@@ -139,7 +139,7 @@ def env(provider: str) -> dict:
         e |= {"CLOUDSDK_CONFIG": str(d / "gcloud"), "CLOUDSDK_CORE_DISABLE_PROMPTS": "1",
               "CLOUDSDK_CORE_DISABLE_USAGE_REPORTING": "1",
               # The Python bundled with the Google Cloud CLI crashes on some Raspberry Pi kernels.
-              "CLOUDSDK_PYTHON": "/usr/bin/python3"}
+              "CLOUDSDK_PYTHON": distro.system_python()}
     elif provider == "azure":
         e |= {"AZURE_CONFIG_DIR": str(d / "azure"), "AZURE_CORE_COLLECT_TELEMETRY": "0",
               "AZURE_CORE_ONLY_SHOW_ERRORS": "1", "AZURE_CORE_NO_COLOR": "1"}

@@ -37,6 +37,7 @@ def test_check_upgrade_keeps_packages_and_skips_headings():
 
 
 def test_updates_put_security_advisories_first(monkeypatch):
+    monkeypatch.setattr(distro, "has_dnf5", lambda: True)
     def run(argv, timeout=600):
         out = {"check-upgrade": CHECK_UPGRADE, "advisory": ADVISORY}.get(argv[2], RPM if argv[0] == "rpm" else "")
         return subprocess.CompletedProcess(argv, 100, out, "")
@@ -48,6 +49,7 @@ def test_updates_put_security_advisories_first(monkeypatch):
 
 
 def test_automatic_updates_config_round_trips(tmp_path, monkeypatch):
+    monkeypatch.setattr(distro, "has_dnf5", lambda: True)
     conf = tmp_path / "automatic.conf"
     monkeypatch.setattr(updates, "DNF_AUTO_CONF", conf)
     _which(monkeypatch, "dnf")

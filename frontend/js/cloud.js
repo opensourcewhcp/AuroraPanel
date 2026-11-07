@@ -140,10 +140,10 @@ window.AuroraCloud = (ui) => {
     ]))));
     const svc = d.providers[0].services;
     body.append(el("div", { class: "card mx-card" }, [el("div", { class: "mx-card-h" }, [el("h3", { text: "The same job on each cloud" })]),
-      el("table", { class: "table cl-table" }, [
+      el("div", { class: "cl-table-wrap" }, el("table", { class: "table cl-table cl-compare" }, [
         el("thead", {}, el("tr", {}, [el("th", { text: "What for" }), ...d.providers.map((p) => el("th", { text: p.short }))])),
-        el("tbody", {}, svc.map((s, i) => el("tr", {}, [el("td", { text: s.label }), ...d.providers.map((p) => el("td", { text: p.services[i].product }))]))),
-      ]),
+        el("tbody", {}, svc.map((s, i) => el("tr", {}, [el("td", { text: s.label }), ...d.providers.map((p) => el("td", { "data-label": p.short, text: p.services[i].product }))]))),
+      ])),
       el("p", { class: "dm-hint", text: "The match between providers is approximate. Each page lists what you have, starts and stops virtual servers, and copies files to and from storage." })]));
     body.append(el("div", { class: "card mx-card" }, [el("div", { class: "mx-card-h" }, [el("h3", { text: "Ways this Pi can manage the cloud" })]),
       el("ul", { class: "cl-ways" }, [
@@ -281,7 +281,7 @@ window.AuroraCloud = (ui) => {
       box.append(empty("t_cloud", `No ${s.product} yet`, "Nothing in this account and region. Create one in the provider's console.", ext(d.console, "Open the console")));
       return;
     }
-    box.append(el("table", { class: "table cl-table" }, [
+    box.append(el("div", { class: "cl-table-wrap" }, el("table", { class: "table cl-table" }, [
       el("thead", {}, el("tr", {}, [el("th", { text: "Name" }), el("th", { text: "State" }), el("th", { text: "Details" }), el("th", {})])),
       el("tbody", {}, d.items.map((it) => el("tr", {}, [
         el("td", {}, el("b", { text: it.name })),
@@ -291,7 +291,7 @@ window.AuroraCloud = (ui) => {
           ? btn("Start", () => call(() => API.cloudVm(pid, it.id, "start"), null, (r) => { toast(r.message, "good"); setTimeout(() => listItems(pid, s, box), 4000); }), "btn-ghost")
           : armed("Stop", "Click again to stop it", () => call(() => API.cloudVm(pid, it.id, "stop"), null, (r) => { toast(r.message, "good"); setTimeout(() => listItems(pid, s, box), 4000); }), "btn-ghost"))),
       ]))),
-    ]));
+    ])));
     box.append(el("div", { class: "toolbar cl-foot" }, [btn("Refresh", () => { box.innerHTML = ""; box.append(loading()); listItems(pid, s, box); }, "btn-ghost"), el("span", { class: "grow" }), ext(d.console, "Manage in the console")]));
   }
 
@@ -317,10 +317,10 @@ window.AuroraCloud = (ui) => {
     })));
     if (d.accounts.length) {
       body.append(el("div", { class: "card mx-card" }, [el("div", { class: "mx-card-h" }, [el("h3", { text: "Connected accounts" })]),
-        el("table", { class: "table cl-table" }, [el("tbody", {}, d.accounts.map((a) => el("tr", {}, [
+        el("div", { class: "cl-table-wrap" }, el("table", { class: "table cl-table" }, [el("tbody", {}, d.accounts.map((a) => el("tr", {}, [
           el("td", {}, el("b", { text: a.label })), el("td", { text: a.name }), el("td", { class: "muted", text: a.email || "" }), el("td", { class: "muted", text: `connected ${ago(a.created)}` }),
           el("td", { class: "cl-act" }, btn("Open", () => navigate(SVC_VIEW[a.service], { arg: a.id }), "btn-ghost")),
-        ])))])]));
+        ])))]))]));
     }
   }
 

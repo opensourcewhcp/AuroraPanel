@@ -1,5 +1,8 @@
 #!/usr/bin/python3
-"""Debian compatibility commands for Fedora.
+"""Debian compatibility commands for Fedora and the Red Hat family.
+
+RHEL, AlmaLinux, Rocky Linux and CentOS Stream are answered the same way, with EL_PACKAGES where their
+packages differ and EPEL plus the vendors' own repositories for what they don't carry.
 
 The panel's web features are written against Debian's layout: apt-get and dpkg-query, a2ensite and
 friends, /etc/apache2, /etc/php/<ver>, the apache2 and cron service names, the www-data user. This
@@ -10,11 +13,15 @@ folders and links for whatever software is installed, and is safe to run again a
 It uses the system Python and the standard library only.
 """
 import glob
+import hashlib
+import io
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
+import urllib.request
 from pathlib import Path
 
 COMPAT_DIR = Path("/usr/local/lib/aurora/compat")
@@ -64,10 +71,134 @@ def run(*argv, **kw):
     return subprocess.run(argv, capture_output=True, text=True, **kw)
 
 
+EL_IDS = {"rhel", "centos", "almalinux", "rocky", "ol"}
+# Where the Red Hat family differs from Fedora. Dovecot's own packages are split up the way Debian's are.
+EL_PACKAGES = {
+    "docker.io": ["docker-ce", "docker-ce-cli", "containerd.io"], "docker-cli": [], "docker-compose-v2": ["docker-compose-plugin"],
+    "redis-server": ["valkey"],
+}
+EL_DOVECOT = {"dovecot-core": ["dovecot"], "dovecot-imapd": ["dovecot-imapd"], "dovecot-pop3d": ["dovecot-pop3d"], "dovecot-lmtpd": ["dovecot-lmtpd"],
+              "dovecot-sieve": ["dovecot-sieve"], "dovecot-managesieved": ["dovecot-managesieved"]}
+DOCKER_RPMS = {"docker-ce", "docker-ce-cli", "containerd.io", "docker-compose-plugin"}
+# EL 10 has no rule set package, so the release itself is installed. Pinned: a new version needs a new checksum.
+CRS_VERSION = "4.30.0"
+CRS_SHA256 = "3d678a41fd5aade34760127fef5dd64fd7a77848913fc0f70dde0cf467c94427"
+CRS_URL = f"https://github.com/coreruleset/coreruleset/releases/download/v{CRS_VERSION}/coreruleset-{CRS_VERSION}-minimal.tar.gz"
+CRS_MARKER = Path("/etc/httpd/modsecurity.d/.aurora-crs-version")
+
+
+def os_release():
+    try:
+        text = Path("/etc/os-release").read_text()
+    except OSError:
+        return {}
+    return {k: v.strip().strip('"') for k, _, v in (line.partition("=") for line in text.splitlines()) if k}
+
+
+def el_major():
+    """9 or 10 on RHEL and its rebuilds. None on Fedora, which has newer software and dnf 5."""
+    info = os_release()
+    if info.get("ID") == "fedora":
+        return None
+    if info.get("ID") in EL_IDS or "rhel" in info.get("ID_LIKE", "").split():
+        m = re.match(r"\d+", info.get("VERSION_ID", ""))
+        return int(m.group()) if m else None
+    return None
+
+
+def external_repo(rpm):
+    """The vendor repository that carries this rpm on the Red Hat family, or None."""
+    major = el_major()
+    if not major or not rpm:
+        return None
+    arch = os.uname().machine
+    if rpm in DOCKER_RPMS and arch in ("x86_64", "aarch64"):
+        vendor_os = "rhel" if os_release().get("ID") == "rhel" else "centos"
+        return {"id": "docker-ce", "name": "Docker CE", "version": "latest", "baseurl": f"https://download.docker.com/linux/{vendor_os}/{major}/{arch}/stable",
+                "gpgkey": f"https://download.docker.com/linux/{vendor_os}/gpg"}
+    # The panel writes Dovecot 2.4 settings and the family ships 2.3. Dovecot publishes x86_64 packages only.
+    if rpm.startswith("dovecot") and arch == "x86_64":
+        return {"id": "dovecot-2.4", "name": "Dovecot 2.4", "version": "2.4", "baseurl": f"https://repo.dovecot.org/ce-2.4-latest/rhel/{major}/RPMS/{arch}",
+                "gpgkey": "https://repo.dovecot.org/DOVECOT-REPO-GPG-2.4"}
+    return None
+
+
+def add_repos(rpms):
+    """Add the vendor repositories these rpms come from. Only asked for when someone installs them."""
+    for rpm in rpms:
+        repo = external_repo(rpm)
+        path = Path(f"/etc/yum.repos.d/aurora-{repo['id']}.repo") if repo else None
+        if path and not path.exists():
+            path.write_text(f"[aurora-{repo['id']}]\nname={repo['name']}\nbaseurl={repo['baseurl']}\nenabled=1\ngpgcheck=1\ngpgkey={repo['gpgkey']}\n")
+
+
+def setup_el_repos():
+    """EPEL carries much of what the panel installs, and it needs CRB. Failing here isn't fatal: the panel
+    still runs, and what is missing says so when someone tries to install it."""
+    major = el_major()
+    if not major:
+        return
+    distro_id, arch = os_release().get("ID"), os.uname().machine
+    if distro_id == "rhel":
+        epel, crb = f"https://dl.fedoraproject.org/pub/epel/epel-release-latest-{major}.noarch.rpm", None
+        r = run("subscription-manager", "repos", "--enable", f"codeready-builder-for-rhel-{major}-{arch}-rpms")
+        if r.returncode != 0:
+            print(f"! Could not enable CodeReady Builder: {r.stderr.strip()}", file=sys.stderr)
+    elif distro_id == "ol":
+        epel, crb = f"oracle-epel-release-el{major}", f"ol{major}_codeready_builder"
+    else:
+        epel, crb = "epel-release", "crb"
+    r = run("dnf", "-y", "install", "dnf-plugins-core", epel)
+    if r.returncode != 0:
+        print(f"! Could not add EPEL: {r.stderr.strip()[-400:]}", file=sys.stderr)
+    if crb:
+        r = run("dnf", "config-manager", "--set-enabled", crb)
+        if r.returncode != 0:
+            print(f"! Could not enable {crb}: {r.stderr.strip()}", file=sys.stderr)
+
+
+def crs_is_bundled():
+    return (el_major() or 0) >= 10
+
+
+def install_crs():
+    """Lay the rule set out the way mod_security_crs does on EL 9 and Fedora, so everything else reads it alike."""
+    with urllib.request.urlopen(CRS_URL, timeout=120) as resp:
+        data = resp.read()
+    got = hashlib.sha256(data).hexdigest()
+    if got != CRS_SHA256:
+        raise OSError(f"the rule set download has the wrong checksum: {got}")
+    root = Path("/etc/httpd/modsecurity.d")
+    active = root / "activated_rules"
+    active.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(fileobj=io.BytesIO(data)) as tar:
+        for member in tar.getmembers():
+            parts = member.name.split("/")
+            if not member.isfile() or ".." in parts:
+                continue
+            content = tar.extractfile(member).read()
+            if parts[1:] == ["crs-setup.conf.example"]:
+                write_new(root / "crs-setup.conf", content.decode())
+            elif len(parts) == 3 and parts[1] == "rules":
+                (active / parts[2]).write_bytes(content)
+    CRS_MARKER.write_text(CRS_VERSION + "\n")
+    if selinux_on():
+        run("restorecon", "-R", str(root))
+
+
 def rpms_for(pkg):
     m = re.fullmatch(r"php\d+\.\d+-(.+)", pkg)
     if m:
         pkg = f"php-{m.group(1)}"
+    if el_major():
+        if pkg == "modsecurity-crs" and crs_is_bundled():
+            return []
+        if pkg == "postfix" and el_major() >= 10:  # its only keyed map type comes as a separate package
+            return ["postfix", "postfix-lmdb"]
+        if pkg in EL_PACKAGES:
+            return EL_PACKAGES[pkg]
+        if pkg in EL_DOVECOT and external_repo("dovecot"):
+            return EL_DOVECOT[pkg]
     return PACKAGES.get(pkg, [pkg])
 
 
@@ -108,10 +239,22 @@ def apt_get(args):
         return dnf("clean", "packages")
     if action == "install" or action == "reinstall":
         rpms = sorted({r for n in names for r in rpms_for(n)})
-        if not rpms:
+        bundled_crs = "modsecurity-crs" in names and crs_is_bundled()
+        if not rpms and not bundled_crs:
             return 0
         status_line("pmstatus", 10, "Downloading and installing " + " ".join(rpms[:4]))
-        rc = dnf("-y", "install", *rpms)
+        try:
+            add_repos(rpms)
+        except OSError as e:
+            print(f"Could not add a package repository: {e}", file=sys.stderr)
+            return 100
+        rc = dnf("-y", "install", *rpms) if rpms else 0
+        if rc == 0 and bundled_crs:
+            try:
+                install_crs()
+            except OSError as e:  # URLError is an OSError
+                print(f"Could not install the OWASP Core Rule Set: {e}", file=sys.stderr)
+                return 100
         if rc == 0:
             status_line("pmstatus", 90, "Setting up")
             setup()
@@ -122,7 +265,7 @@ def apt_get(args):
     if action in ("remove", "purge"):
         rpms = sorted({r for n in names for r in rpms_for(n)})
         return dnf("-y", "remove", *rpms) if rpms else 0
-    print(f"apt-get {action} isn't available on Fedora", file=sys.stderr)
+    print(f"apt-get {action} isn't available on this system", file=sys.stderr)
     return 100
 
 
@@ -145,17 +288,20 @@ def apt_cache(args):
         have = rpm_versions(wanted)
         for n in names:
             r = rpm_of[n]
-            # No rpm of its own means Fedora ships it inside another package, so it is always available.
-            best = cand.get(r) or have.get(r) or ("included" if r is None else "(none)")
+            # No rpm of its own means it comes inside another package, so it is always available. A vendor's
+            # repository is only added on install, so its version is known without being asked.
+            repo = external_repo(r)
+            best = have.get(r) or (repo and repo["version"]) or cand.get(r) or ("included" if r is None else "(none)")
             print(f"{n}:\n  Installed: {have.get(r, '(none)')}\n  Candidate: {best}")
         return 0
     if args[0] == "search":
         term = args[-1]
         out = run("dnf", "-q", "search", "--", term).stdout
         for line in out.splitlines():
-            if "\t" in line:
-                name, _, summary = line.strip().partition("\t")
-                print(f"{name.rpartition('.')[0] or name} - {summary}")
+            # dnf 5 prints " name.arch<TAB>summary" and dnf 4 "name.arch : summary". Headings match neither.
+            m = re.match(r"\s*(\S+?)\.\w+(?:\t| : )(.*)", line)
+            if m:
+                print(f"{m.group(1)} - {m.group(2).strip()}")
         return 0
     return 1
 
@@ -171,6 +317,10 @@ def dpkg_query(args):
     fmt = fmt.replace("\\t", "\t").replace("\\n", "\n")
     rows = []
     for n in names:
+        if n == "modsecurity-crs" and crs_is_bundled():
+            if CRS_MARKER.exists():
+                rows.append((n, CRS_MARKER.read_text().strip()))
+            continue
         if n == "postgresql-[0-9]*":
             ver = rpm_versions(["postgresql-server"]).get("postgresql-server")
             if ver:
@@ -563,6 +713,11 @@ def setup_mail():
     """SELinux labels for the folders the panel's mail setup uses and Fedora's policy doesn't know."""
     if not Path("/etc/postfix/main.cf").exists():
         return
+    # The Red Hat family lists port 465 under older names, and Postfix can't start on a name it can't look up.
+    services = Path("/etc/services")
+    if el_major() and services.exists() and not re.search(r"(?m)^submissions\s", services.read_text()):
+        with services.open("a") as fh:
+            fh.write("submissions     465/tcp                         # Added by AuroraPanel for Postfix\n")
     once("mail-selinux", lambda: label(("type", "mail_spool_t", "/var/vmail"), ("type", "cert_t", "/etc/aurora-mail/tls")))
 
 
@@ -607,6 +762,7 @@ def install(source):
         link(COMPAT_DIR / c, SELF_PATH.name)
     if selinux_on():
         run("restorecon", "-R", str(COMPAT_DIR))
+    setup_el_repos()
     setup()
     return 0
 
@@ -642,7 +798,7 @@ def main():
         return subprocess.call([f"/usr/sbin/{cmd}", *[ACCOUNTS.get(a, a) for a in args]], env=ENV)
     if cmd == "pg_lsclusters":
         return pg_lsclusters()
-    print(f"{cmd}: not available on Fedora", file=sys.stderr)
+    print(f"{cmd}: not available on this system", file=sys.stderr)
     return 127
 
 

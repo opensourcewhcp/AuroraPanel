@@ -115,11 +115,11 @@ def search(term: str, limit: int = 60) -> list[dict]:
         out = subprocess.run(["dnf", "-q", "search", "--", term], capture_output=True, text=True, timeout=120, env=_DNF_ENV)
         results = []
         for line in out.stdout.splitlines():
-            # " name.arch<TAB>summary"; the "Matched fields:" headings have no tab.
-            if "\t" not in line:
+            # dnf 5 prints " name.arch<TAB>summary" and dnf 4 "name.arch : summary". Headings match neither.
+            m = re.match(r"\s*(\S+?)\.\w+(?:\t| : )(.*)", line)
+            if not m:
                 continue
-            name, _, summary = line.strip().partition("\t")
-            name = name.rpartition(".")[0] or name
+            name, summary = m.groups()
             if term.lower() in name.lower() and all(r["name"] != name for r in results):
                 results.append({"name": name, "summary": summary.strip()})
         return results[:limit]

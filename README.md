@@ -61,8 +61,8 @@ sudo bash install.sh
 ```
 
 Open `https://<pi-ip>:8088`, create your admin account and you are in. Works on
-Raspberry Pi OS Bookworm or newer and on any Debian or Ubuntu server with systemd. Fedora Server also works
-(see [Installing](#installing-on-a-raspberry-pi-or-an-ubuntudebian-server)).
+Raspberry Pi OS Bookworm or newer and on any Debian or Ubuntu server with systemd. Fedora Server and the Red Hat
+family also work (see [Installing](#installing-on-a-raspberry-pi-or-an-ubuntudebian-server)).
 Details and options are in [Installing](#installing-on-a-raspberry-pi-or-an-ubuntudebian-server).
 
 To update, open **Preferences → About & Updates → Check for updates** in the panel (it only contacts
@@ -119,6 +119,12 @@ Ubuntu or Debian server or VPS with systemd and Python 3.10+, under any user nam
 PostgreSQL, WordPress, the WAF, DNS, FTP, Docker, fail2ban, WireGuard and email work. Fedora has no Rspamd package, so
 email uses SpamAssassin for spam filtering and OpenDKIM for signing, and greylisting isn't available. Only one PHP
 version can be installed at a time.
+
+**Red Hat family** (RHEL, AlmaLinux, Rocky Linux and CentOS Stream, versions 9 and 10): works the same way as Fedora.
+The installer turns on EPEL and CRB, and on version 9 installs Python 3.12 beside the system's Python. Docker comes from
+Docker's repository and Dovecot 2.4 from Dovecot's, added when you install them. Dovecot only publishes x86_64 packages, so
+email needs x86_64. Version 10 has no packages for ModSecurity on Nginx, Azure CLI or ddclient, and gets the OWASP Core
+Rule Set from its GitHub release. PHP is the system's default: 8.0 on version 9, 8.3 on version 10.
 
 **Nginx and Caddy websites**: Domains > Nginx Websites and Caddy Websites create and run PHP, static and reverse proxy
 sites. Nginx sites can get Let's Encrypt certificates and WordPress; Caddy gets certificates on its own. The Domains page and
@@ -193,7 +199,7 @@ to re-run first-time setup.
 
 ## Testing
 
-Tests live in `tests/` (pytest, with a coverage report). They use a throwaway login, config and
+Tests live in `tests/` in the GitHub repository, not in the release zip (pytest, with a coverage report). They use a throwaway login, config and
 File Manager folder, and only call read-only pages, so they never change your Pi.
 
 | Where | Command | What it checks |

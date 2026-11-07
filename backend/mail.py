@@ -47,6 +47,8 @@ SIEVE_GLOBAL = SIEVE_DIR / "aurora-before.sieve"
 VMAIL = Path("/var/vmail")
 RSPAMD_LOCAL = Path("/etc/rspamd/local.d")
 RSPAMD_MAPS = Path("/etc/rspamd/aurora")
+# Postfix on the Red Hat family's version 10 has no hash maps: lmdb is what it offers.
+MAP_TYPE, MAP_SUFFIX = ("lmdb", ".lmdb") if (distro.el_major() or 0) >= 10 else ("hash", ".db")
 DKIM_DIR = Path("/etc/opendkim/keys") if distro.is_dnf() else Path("/var/lib/rspamd/dkim")
 SA_CONF = Path("/etc/mail/spamassassin/aurora.cf")
 SA_SYSCONFIG = Path("/etc/sysconfig/spamass-milter")
@@ -1204,7 +1206,7 @@ def delete_list(address: str) -> dict:
 
 # ----------------------------------------------------------------------------- rendering
 def render_postfix(s: dict) -> dict[str, str]:
-    """name -> table text, for the hash: maps in PF_DIR."""
+    """name -> table text, for the maps in PF_DIR."""
     local, relay = [], []
     for d, dom in sorted(s["domains"].items()):
         r = _effective_routing(d, dom) if dom.get("routing") == "auto" else dom.get("routing", "local")
@@ -1399,8 +1401,8 @@ def apply(s: dict | None = None) -> dict:
         changed.add("postfix-maps")
     for name, text in render_postfix(s).items():
         p = PF_DIR / name
-        if _write(p, HEADER + text + "\n", 0o640, "root", "postfix") or not Path(str(p) + ".db").exists():
-            r = _run(["postmap", f"hash:{p}"])
+        if _write(p, HEADER + text + "\n", 0o640, "root", "postfix") or not Path(str(p) + MAP_SUFFIX).exists():
+            r = _run(["postmap", f"{MAP_TYPE}:{p}"])
             if r.returncode != 0:
                 raise MailError(f"postmap {name}: {r.stderr.strip()[-300:]}")
             changed.add("postfix-maps")
@@ -1507,7 +1509,7 @@ def dovecot_ok() -> tuple[bool, str]:
         m = re.search(r"Candidate:\s*(?:\d+:)?(\d+)\.(\d+)", _run(["apt-cache", "policy", "dovecot-core"]).stdout)
     if m and (int(m.group(1)), int(m.group(2))) < (2, 4):
         return False, (f"This system offers Dovecot {m.group(0)}; the panel's mail server needs Dovecot 2.4 or newer "
-                       "(Debian 13 / Raspberry Pi OS trixie, Ubuntu 25.04 or newer).")
+                       "(Debian 13 / Raspberry Pi OS trixie, Ubuntu 25.04 or newer, Fedora, or the Red Hat family on x86_64).")
     return True, ""
 
 
@@ -1778,7 +1780,7 @@ service managesieve-login {{
 
 
 def postfix_settings(host: str, cert: str, key: str) -> dict:
-    m = f"hash:{PF_DIR}"
+    m = f"{MAP_TYPE}:{PF_DIR}"
     return {
         "myhostname": host, "myorigin": "$myhostname", "mydestination": "localhost",
         "inet_interfaces": "all", "inet_protocols": "all", "recipient_delimiter": "+",
@@ -1813,7 +1815,7 @@ def postfix_settings(host: str, cert: str, key: str) -> dict:
 
 
 def postfix_services() -> list[tuple[str, str, list[str]]]:
-    m = f"hash:{PF_DIR}"
+    m = f"{MAP_TYPE}:{PF_DIR}"
     sub = ["smtpd_tls_security_level=encrypt", "smtpd_sasl_auth_enable=yes", "smtpd_tls_auth_only=yes",
            "smtpd_client_restrictions=permit_sasl_authenticated,reject",
            "smtpd_sender_restrictions=$aurora_submission_sender",

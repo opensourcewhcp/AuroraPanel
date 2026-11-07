@@ -3382,6 +3382,17 @@ details[open] > summary .sr-chev { transform: rotate(-90deg); }
 .cl-prov-f { display: flex; gap: 8px; align-items: center; }
 .cl-badge { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 14px; background: var(--accent-soft); color: var(--accent); }
 .cl-table td, .cl-table th { vertical-align: middle; }
+.cl-table-wrap { overflow-x: auto; max-width: 100%; }
+@media (max-width: 640px) {
+  /* Four columns don't fit a phone: each row becomes a heading and one line per provider. */
+  .cl-compare thead { display: none; }
+  .cl-compare, .cl-compare tbody, .cl-compare tr { display: block; }
+  .cl-compare tr { padding: 10px 0; border-bottom: 1px solid var(--stroke); }
+  .cl-compare tr:last-child { border-bottom: 0; }
+  .cl-compare td { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; border: 0; text-align: right; }
+  .cl-compare td:first-child { display: block; padding-bottom: 4px; font-weight: 600; text-align: left; }
+  .cl-compare td[data-label]::before { content: attr(data-label); color: var(--text-dim); text-align: left; }
+}
 .cl-act { text-align: right; white-space: nowrap; }
 .cl-act .btn + .btn { margin-left: 6px; }
 .cl-ways { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }

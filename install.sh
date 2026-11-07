@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AuroraPanel installer — Raspberry Pi OS / Debian / Ubuntu / Fedora.
+# AuroraPanel installer — Raspberry Pi OS / Debian / Ubuntu / Fedora / RHEL, AlmaLinux, Rocky Linux, CentOS Stream.
 #
 #   sudo bash install.sh                 # interactive: asks which port
 #   sudo bash install.sh --port 9000     # non-interactive
@@ -328,15 +328,23 @@ if [ ${#NEED[@]} -gt 0 ]; then
     die "Missing: ${NEED[*]} — install them and re-run."
   fi
 fi
-PYV="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
-python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' || die "Python 3.10+ required (found $PYV)."
+# RHEL 9's python3 stays at 3.9 because dnf runs on it. A newer one installs beside it.
+PY=python3
+if ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' && ! command -v apt-get >/dev/null && command -v dnf >/dev/null; then
+  say "Installing python3.12 next to this system's older python3"
+  dnf install -y -q python3.12 >/dev/null || die "Could not install python3.12."
+  PY=python3.12
+fi
+SYS_PY="/usr/bin/${PY}"
+PYV="$("$PY" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+"$PY" -c 'import sys; sys.exit(sys.version_info < (3, 10))' || die "Python 3.10+ required (found $PYV)."
 ok "Python $PYV"
 
 # --- virtualenv + deps ------------------------------------------------------
 say "Setting up Python environment"
 cd "$APP_DIR"
 if [ ! -x .venv/bin/python ]; then
-  python3 -m venv .venv || die "Could not create .venv (is python3-venv installed?)."
+  "$PY" -m venv .venv || die "Could not create .venv (is python3-venv installed?)."
 fi
 .venv/bin/python -m pip install --quiet --upgrade pip
 if ! .venv/bin/python -m pip install --quiet -r requirements.txt; then
@@ -346,7 +354,7 @@ if ! .venv/bin/python -m pip install --quiet -r requirements.txt; then
   if command -v apt-get >/dev/null; then
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential python3-dev libffi-dev >/dev/null
   else
-    dnf install -y -q gcc make python3-devel libffi-devel rust cargo >/dev/null
+    dnf install -y -q gcc make "${PY}-devel" libffi-devel rust cargo >/dev/null
   fi
   .venv/bin/python -m pip install --quiet -r requirements.txt || die "pip install failed — see errors above."
 fi
@@ -370,14 +378,14 @@ if command -v getenforce >/dev/null && [ "$(getenforce 2>/dev/null)" != "Disable
   ok "SELinux: labelled the panel's programs"
 fi
 
-# --- Fedora: Debian-named commands for the panel ------------------------------
+# --- Fedora, Red Hat family: Debian-named commands for the panel ------------------------------
 # Only the panel's own PATH reaches this folder. See backend/fedora_compat.py.
 COMPAT_DIR=/usr/local/lib/aurora/compat
 UNIT_PATH=""
 if ! command -v apt-get >/dev/null && command -v dnf >/dev/null; then
-  /usr/bin/python3 "$APP_DIR/backend/fedora_compat.py" install || die "Could not set up the Fedora compatibility commands."
+  /usr/bin/python3 "$APP_DIR/backend/fedora_compat.py" install || die "Could not set up the compatibility commands."
   UNIT_PATH="Environment=PATH=${COMPAT_DIR}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-  ok "Fedora compatibility commands ready"
+  ok "Compatibility commands ready"
 fi
 
 # --- leftovers from earlier installs ----------------------------------------
@@ -423,7 +431,7 @@ fi
 # --- ella-cli: emergency access that needs neither the panel nor its virtualenv ---
 cat > /usr/local/sbin/ella-cli <<EOF
 #!/bin/sh
-cd "${APP_DIR}" && exec /usr/bin/python3 -m backend.ella.cli "\$@"
+cd "${APP_DIR}" && exec ${SYS_PY} -m backend.ella.cli "\$@"
 EOF
 chmod 755 /usr/local/sbin/ella-cli
 # Firewall tables don't survive a reboot: WAF Ella's bans go back before the network comes up.
@@ -446,6 +454,7 @@ WantedBy=multi-user.target
 EOF
 # Firewall changes go through this small service, which can do little else. Without it the panel does them itself.
 # A symlinked log folder (Fedora's compatibility layer) can't be listed here: systemd refuses the whole sandbox.
+mkdir -p /var/lib/aurora/ella  # the agent's sandbox needs it to exist before it can start
 ELLA_LOGS=""
 for d in /var/log/nginx /var/log/httpd /var/log/apache2; do [ -L "$d" ] || ELLA_LOGS="$ELLA_LOGS -$d"; done
 cat > /etc/systemd/system/aurora-ella-agent.service <<EOF
@@ -456,7 +465,7 @@ After=network-pre.target aurora-ella.service
 [Service]
 Type=simple
 WorkingDirectory=${APP_DIR}
-ExecStart=/usr/bin/python3 -m backend.ella.agentd
+ExecStart=${SYS_PY} -m backend.ella.agentd
 RuntimeDirectory=aurora-ella
 RuntimeDirectoryMode=0700
 Restart=on-failure

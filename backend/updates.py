@@ -3,7 +3,8 @@
 refresh() runs `apt-get update` (daily from the task runner, or on demand) and caches the list of
 upgradable packages, marking the ones from a -security pocket. Automatic updates are Debian's own
 unattended-upgrades, configured here (security only, or everything; optional restart at a set time).
-On Fedora the same features run on dnf: `dnf check-upgrade`, security advisories, and dnf5-automatic.
+On Fedora and the Red Hat family the same features run on dnf: `dnf check-upgrade`, security advisories,
+and dnf-automatic (dnf5-automatic on Fedora).
 """
 from __future__ import annotations
 
@@ -23,8 +24,14 @@ UU_CONF = Path("/etc/apt/apt.conf.d/52aurora-unattended")
 PATH = distro.PATH
 ENV = {"DEBIAN_FRONTEND": "noninteractive", "PATH": PATH, "LC_ALL": "C"}
 DNF_AUTO_CONF = Path("/etc/dnf/automatic.conf")
-DNF_AUTO_TIMER = "dnf5-automatic.timer"
-DNF_AUTO_PKG = "dnf5-plugin-automatic"
+
+
+def _auto_timer() -> str:
+    return "dnf5-automatic.timer" if distro.has_dnf5() else "dnf-automatic.timer"
+
+
+def _auto_pkg() -> str:
+    return "dnf5-plugin-automatic" if distro.has_dnf5() else "dnf-automatic"
 
 
 class UpdateError(RuntimeError):
@@ -38,15 +45,22 @@ def _run(argv, timeout=600) -> subprocess.CompletedProcess:
         return subprocess.CompletedProcess(argv, 1, "", str(e))
 
 
+def parse_advisories(text: str) -> set[str]:
+    """Package names from a list of security advisories, in dnf 5's wording or dnf 4's."""
+    names = set()
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) >= 4 and parts[1] == "security":  # dnf 5: ID  security  Severity  name-version-release.arch  date time
+            names.add(parts[3].rsplit("-", 2)[0])
+        elif len(parts) == 3 and parts[1].endswith("/Sec."):  # dnf 4: ID  Severity/Sec.  name-version-release.arch
+            names.add(parts[2].rsplit("-", 2)[0])
+    return names
+
+
 def _dnf_security_packages() -> set[str]:
     """Names of the packages that have a security advisory waiting."""
-    names = set()
-    for line in _run(["dnf", "-q", "advisory", "list", "--updates", "--security"], 180).stdout.splitlines():
-        # ID  security  Severity  name-version-release.arch  date time
-        parts = line.split()
-        if len(parts) >= 4 and parts[1] == "security":
-            names.add(parts[3].rsplit("-", 2)[0])
-    return names
+    word = "advisory" if distro.has_dnf5() else "updateinfo"
+    return parse_advisories(_run(["dnf", "-q", word, "list", "--updates", "--security"], 180).stdout)
 
 
 def _dnf_upgradable() -> list[dict]:
@@ -123,7 +137,7 @@ def reboot_info() -> dict:
 
 def _dnf_auto_status() -> dict:
     installed = DNF_AUTO_CONF.exists()
-    on = _run(["systemctl", "is-enabled", DNF_AUTO_TIMER], 15).stdout.strip() == "enabled"
+    on = _run(["systemctl", "is-enabled", _auto_timer()], 15).stdout.strip() == "enabled"
     mode, reboot, reboot_time = "security", False, "04:00"
     try:
         t = DNF_AUTO_CONF.read_text()
@@ -182,17 +196,17 @@ def _dnf_set_auto(enabled: bool, mode: str, reboot: bool, reboot_time: str) -> j
                                  f'reboot_command = "shutdown -r {reboot_time} Restart after automatic updates"\n'
                                  "[emitters]\n"
                                  "emit_via = stdio\n", encoding="utf-8")
-        r = _run(["systemctl", "enable" if enabled else "disable", "--now", DNF_AUTO_TIMER], 60)
+        r = _run(["systemctl", "enable" if enabled else "disable", "--now", _auto_timer()], 60)
         if r.returncode != 0:
-            raise UpdateError(r.stderr.strip() or f"Could not change {DNF_AUTO_TIMER}")
+            raise UpdateError(r.stderr.strip() or f"Could not change {_auto_timer()}")
 
     if enabled and not DNF_AUTO_CONF.exists():
         def fn(log):
-            log.progress(5, f"Installing {DNF_AUTO_PKG}")
-            r = _run(["dnf", "-y", "install", DNF_AUTO_PKG], 900)
+            log.progress(5, f"Installing {_auto_pkg()}")
+            r = _run(["dnf", "-y", "install", _auto_pkg()], 900)
             log((r.stdout or r.stderr).strip()[-2000:])
             if r.returncode != 0:
-                raise UpdateError(f"dnf install {DNF_AUTO_PKG} failed")
+                raise UpdateError(f"dnf install {_auto_pkg()} failed")
             write()
             log.progress(100, "Automatic updates on")
             log("✓ Automatic updates are on")

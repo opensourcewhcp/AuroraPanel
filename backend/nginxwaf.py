@@ -12,9 +12,10 @@ from __future__ import annotations
 import glob
 import json
 import re
+import subprocess
 from pathlib import Path
 
-from . import jobs, nginxsites, waf
+from . import distro, jobs, nginxsites, waf
 
 STATE = Path("/var/lib/aurora/nginx-waf.json")
 DIR = Path("/etc/nginx/aurora-waf")
@@ -133,6 +134,10 @@ def status() -> dict:
 def install(then_mode: str = "block") -> jobs.Job:
     if then_mode not in MODES:
         raise NginxWafError("Mode must be block, detect or off")
+    if distro.is_dnf():
+        policy = subprocess.run(["apt-cache", "policy", PACKAGES[0]], capture_output=True, text=True, timeout=120, env={"PATH": distro.PATH}).stdout
+        if "Candidate: (none)" in policy:
+            raise NginxWafError(f"{distro.name()}'s package repositories don't have ModSecurity for Nginx. Apache has a WAF here.")
 
     def fn(log):
         log.progress(5, "Installing ModSecurity for Nginx and the Core Rule Set")

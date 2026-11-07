@@ -171,7 +171,7 @@ def _gcloud_repo() -> list[str]:
         repo = Path("/etc/yum.repos.d/google-cloud-sdk.repo")
         if not repo.exists():
             repo.write_text("[google-cloud-cli]\nname=Google Cloud CLI\n"
-                            f"baseurl=https://packages.cloud.google.com/yum/repos/cloud-sdk-el9-{os.uname().machine}\n"
+                            f"baseurl=https://packages.cloud.google.com/yum/repos/cloud-sdk-el{distro.el_major() or 9}-{os.uname().machine}\n"
                             "enabled=1\ngpgcheck=1\nrepo_gpgcheck=0\n"
                             "gpgkey=https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg\n")
         return ["• Added Google's package source for the Google Cloud CLI"]
@@ -425,7 +425,7 @@ COMPONENTS: dict[str, dict] = {
         "pkgs": ["google-cloud-cli"],
         "pre": _gcloud_repo,
         # The Python bundled with the package crashes on some Raspberry Pi kernels; Debian's works.
-        "env": {"CLOUDSDK_PYTHON": "/usr/bin/python3"},
+        "env": {"CLOUDSDK_PYTHON": distro.system_python()},
         "check": lambda: shutil.which("gcloud", path=PATH) is not None,
     },
     "azurecli": {
@@ -499,10 +499,10 @@ def install(cid: str) -> jobs.Job:
             if not ok:
                 raise RequiresError(why)
     if distro.is_dnf():
-        # Say so up front when Fedora doesn't carry something. The Google Cloud repository is only added by the job.
+        # Say so up front when the system doesn't carry something. The Google Cloud repository is only added by the job.
         absent = [p for n in plan if n != "gcloud" for p in _pkgs(COMPONENTS[n]) if not _candidate(p)]
         if absent:
-            raise RequiresError(f"Fedora's package repositories don't have: {', '.join(absent)}")
+            raise RequiresError(f"{distro.name()}'s package repositories don't have: {', '.join(absent)}")
 
     def fn(log):
         pkgs = [p for n in plan for p in _pkgs(COMPONENTS[n])]
