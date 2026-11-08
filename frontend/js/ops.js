@@ -1881,7 +1881,9 @@ window.AuroraOps = (ui) => {
       let role = u ? u.role : "site";
       const name = el("input", { type: "text", value: u ? u.username : "", disabled: u ? "" : null, autocomplete: "off" });
       const pw = el("input", { type: "text", placeholder: u ? "(unchanged, leave empty)" : "at least 10 characters", autocomplete: "off" });
-      const gen = btn("Generate", () => { const a = new Uint32Array(16); crypto.getRandomValues(a); pw.value = Array.from(a, (n) => "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"[n % 57]).join(""); }, "btn-ghost");
+      const gen = btn("Generate", () => { const abc = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789", lim = 256 - (256 % abc.length), out = [];
+        while (out.length < 16) { for (const x of crypto.getRandomValues(new Uint8Array(32))) { if (x < lim && out.length < 16) out.push(abc[x % abc.length]); } }  // rejection sampling, no modulo bias
+        pw.value = out.join(""); }, "btn-ghost");
       const siteBox = el("div", { class: "op-destpick" }, d.sites.map((s) => { const c = el("input", { type: "checkbox", value: s }); c.checked = !!(u && u.sites && u.sites.includes(s)); return el("label", { class: "dm-check" }, [c, el("span", { text: s })]); }));
       const siteWrap = el("div", {}, [el("div", { class: "mx-sub" }, "Websites they manage"), d.sites.length ? siteBox : el("p", { class: "muted", text: "No websites yet, create one under Domains first." })]);
       const rc = el("div", { class: "em-rcards" });

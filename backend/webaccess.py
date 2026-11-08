@@ -63,12 +63,33 @@ def _store(p: Path, d: dict):
     p.chmod(0o600)
 
 
+def _site_docroots() -> dict[str, str]:
+    """server_name -> resolved document root of every site Apache serves. A subdomain is a site of
+    its own here, so protecting it means protecting its root."""
+    try:
+        from . import sites
+        out = {}
+        for s in sites.list_sites().get("sites", []):
+            root = s.get("docroot") or (s.get("settings") or {}).get("docroot")
+            if s.get("system") or not root:
+                continue
+            out[str(s["server_name"]).lower()] = str(Path(root).resolve())
+        return out
+    except Exception as quiet_exc:
+        from . import problems
+        problems.quiet(quiet_exc)
+        return {}
+
+
 def _folder(path: str, create: bool = False) -> Path:
     p = Path((path or "").strip())
     if not p.is_absolute() or ".." in p.parts:
         raise WebAccessError("Folder must be an absolute path, e.g. /var/www/html/private")
-    if not str(p).rstrip("/").startswith(tuple(a.rstrip("/") for a in _ALLOWED)) or str(p).rstrip("/") in ("/home", "/srv", "/var/www"):
-        raise WebAccessError("Pick a folder inside /var/www, /srv or /home/<user>")
+    # Inside one of the usual web roots, or anywhere inside a site's own document root (a site may live
+    # elsewhere, e.g. /opt/sites). The site check is per path component, so /srv/a never matches /srv/ab.
+    inside_site = any(p == Path(r) or Path(r) in p.parents for r in _site_docroots().values())
+    if not inside_site and (not str(p).rstrip("/").startswith(tuple(a.rstrip("/") for a in _ALLOWED)) or str(p).rstrip("/") in ("/home", "/srv", "/var/www")):
+        raise WebAccessError("Pick a folder inside one of your sites, /var/www, /srv or /home/<user>")
     if not p.exists():
         if not create:
             raise WebAccessError("Folder does not exist")
@@ -602,9 +623,31 @@ def _dp_render(dirs: dict) -> str:
 
 def privacy_list() -> dict:
     dirs = _load(DP_STATE)
+    by_root = {root: name for name, root in _site_docroots().items()}  # a protected docroot is a whole site
     return {"apache": bool(shutil.which("apache2ctl")),
             "folders": [{"path": p, "label": d.get("label"), "enabled": d.get("enabled", True), "users": sorted(d.get("users", [])),
-                         "exists": Path(p).is_dir()} for p, d in sorted(dirs.items())]}
+                         "exists": Path(p).is_dir(), "site": by_root.get(p)} for p, d in sorted(dirs.items())]}
+
+
+def privacy_sites() -> dict:
+    """Every site (domains and subdomains alike) and whether its whole document root is behind a login."""
+    dirs = _load(DP_STATE)
+    out = []
+    for name, root in sorted(_site_docroots().items()):
+        d = dirs.get(root) or {}
+        out.append({"server_name": name, "docroot": root, "protected": bool(d and d.get("enabled", True) and d.get("users")),
+                    "enabled": bool(d) and d.get("enabled", True), "label": d.get("label"), "users": sorted(d.get("users", []))})
+    return {"apache": bool(shutil.which("apache2ctl")), "sites": out}
+
+
+def privacy_protect_site(site: str, label: str, user: str, password: str) -> dict:
+    """Basic Auth in front of a whole domain or subdomain: protect its document root."""
+    site = (site or "").strip().lower().rstrip(".")
+    roots = _site_docroots()
+    if site not in roots:
+        raise WebAccessError("That domain isn't a site on this server (create it under Domains first)")
+    r = privacy_protect(roots[site], label or site, user, password)
+    return {**r, "site": site}
 
 
 def _dp_apply(dirs: dict):

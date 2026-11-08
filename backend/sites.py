@@ -1120,7 +1120,8 @@ def issue_letsencrypt(name: str, email: str, include_aliases: bool = True, force
 # which Apache applies on every site this Pi hosts.
 FOLDER_CONF = APACHE / "conf-available" / "zz-aurora-folders.conf"
 FOLDER_MARK = "# aurora-folders:"
-_FOLDER_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
+# Mixed case is allowed and kept as typed: the folder's name is the URL, and Linux paths are case-sensitive.
+_FOLDER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
 _RESERVED = {"phpmyadmin", "phppgadmin", "webdisk", "icons", "server-status", "server-info", "cgi-bin", "javascript", "manual", ".well-known"}
 
 
@@ -1217,7 +1218,7 @@ def _folders_found(base: Path, items: list[dict]) -> list[dict]:
             continue
         found.append({"name": d.name, "path": str(d), "entries": n, "mtime": mtime,
                       "has_index": any((d / f).is_file() for f in _INDEX_FILES),
-                      "addable": bool(_FOLDER_NAME.match(d.name)) and d.name not in _RESERVED})
+                      "addable": bool(_FOLDER_NAME.match(d.name)) and d.name.lower() not in _RESERVED})
     return found
 
 
@@ -1228,7 +1229,7 @@ def set_folder_site_indexes(name: str, on: bool) -> dict:
     """Turn Apache's automatic file list on or off for a folder site (used when it has no index page)."""
     _require()
     items = _folder_state()
-    it = next((x for x in items if x["name"] == (name or "").strip().strip("/").lower()), None)
+    it = next((x for x in items if x["name"] == (name or "").strip().strip("/")), None)
     if not it:
         raise SiteError("No folder site with that name")
     it["indexes"] = bool(on)
@@ -1238,8 +1239,8 @@ def set_folder_site_indexes(name: str, on: bool) -> dict:
 
 def create_folder_site(name: str, path: str = "") -> dict:
     _require()
-    name = (name or "").strip().strip("/").lower()
-    if not _FOLDER_NAME.match(name) or name in _RESERVED:
+    name = (name or "").strip().strip("/")
+    if not _FOLDER_NAME.match(name) or name.lower() in _RESERVED:
         raise SiteError("Use a short name of letters, numbers, dots, dashes or underscores, e.g. mysite")
     base = default_docroot()
     path = (path or "").strip().rstrip("/") or str(base / name)

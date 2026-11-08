@@ -194,6 +194,8 @@ const API = (() => {
     dirPrivacyUser: (body) => request("POST", "/api/dirprivacy/user", body),
     dirPrivacyToggle: (path, enabled) => request("POST", "/api/dirprivacy/toggle", { path, enabled }),
     dirPrivacyRemove: (path) => request("POST", "/api/dirprivacy/remove", { path }),
+    dirPrivacySites: () => request("GET", "/api/dirprivacy/sites"),
+    dirPrivacyProtectSite: (body) => request("POST", "/api/dirprivacy/site", body),
     git: () => request("GET", "/api/git"),
     gitDetails: (name) => request("GET", `/api/git/${encodeURIComponent(name)}`),
     gitKey: (name, owner) => request("POST", "/api/git/key", { name, owner }),

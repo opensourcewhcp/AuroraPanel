@@ -446,6 +446,8 @@ ROUTES = [
     R("POST", "/api/dirprivacy/user", "webaccess", "privacy_user", ("/srv/x", "bob", None, True), body={"path": "/srv/x", "name": "bob", "remove": True}),
     R("POST", "/api/dirprivacy/toggle", "webaccess", "privacy_toggle", ("/srv/x", True), body={"path": "/srv/x", "enabled": True}),
     R("POST", "/api/dirprivacy/remove", "webaccess", "privacy_remove", ("/srv/x",), body={"path": "/srv/x"}),
+    R("GET", "/api/dirprivacy/sites", "webaccess", "privacy_sites", err=None),
+    R("POST", "/api/dirprivacy/site", "webaccess", "privacy_protect_site", ("staging.example.com", "Staging", "bob", "pw"), body={"site": "staging.example.com", "label": "Staging", "name": "bob", "password": "pw"}),
     R("GET", "/api/git", "gitvc", "listing"),
     R("GET", "/api/git/site", "gitvc", "details", ("site",)),
     R("POST", "/api/git/key", "gitvc", "make_key", ("site", "bob"), body={"name": "site", "owner": "bob"}),

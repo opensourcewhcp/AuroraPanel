@@ -4347,12 +4347,13 @@
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
     root.append(el("p", { class: "muted", style: "margin:0 0 14px", text: "Password-protect folders of your websites. Visitors get a login prompt from the browser; only the users you add here get in." }), body);
     const load = () => guardedLoad(async () => {
-      const d = await API.dirPrivacy();
+      const [d, ss] = await Promise.all([API.dirPrivacy(), API.dirPrivacySites().catch(() => ({ sites: [] }))]);
+      const sites = (ss && ss.sites) || [];
       body.innerHTML = "";
       if (!d.apache) { body.append(el("p", { class: "empty", text: "Directory Privacy needs Apache (System Applications)." })); return; }
       body.append(el("h2", { class: "section-title", text: `Protected folders (${d.folders.length})` }));
       body.append(d.folders.length ? simpleTable(["Folder", "Prompt", "Users", "Status", ""], d.folders.map((f) => row(
-        el("span", {}, [el("code", { class: "net-mono", text: f.path }), f.exists ? null : pill("missing", "bad")]), f.label || "n/a",
+        el("span", {}, [el("code", { class: "net-mono", text: f.path }), f.site ? pill(`whole site: ${f.site}`, "good") : null, f.exists ? null : pill("missing", "bad")]), f.label || "n/a",
         el("div", { class: "net-chips" }, f.users.map((u) => el("button", { type: "button", class: "net-chip", title: "Remove user", text: `${u} ✕`, onclick: async () => {
           if (!confirmInline(`Remove ${u} from ${f.path}?`)) return; try { await API.dirPrivacyUser({ path: f.path, name: u, remove: true }); toast("Removed", "good"); load(); } catch (e) { toast(e.message, "bad"); } } }))),
         pill(f.enabled ? "protected" : "off", f.enabled ? "good" : "dim"),
@@ -4361,12 +4362,34 @@
           btn(f.enabled ? "Turn off" : "Turn on", async () => { try { await API.dirPrivacyToggle(f.path, !f.enabled); load(); } catch (e) { toast(e.message, "bad"); } }, "btn-ghost"),
           btn("Remove", async () => { if (!confirmInline(`Remove protection from ${f.path}? It becomes public again.`)) return; try { await API.dirPrivacyRemove(f.path); toast("Protection removed", "good"); load(); } catch (e) { toast(e.message, "bad"); } }, "btn-danger")]),
       ))) : el("p", { class: "empty", text: "No protected folders yet." }));
+      // Whole domain or subdomain: a login in front of the site's document root. Reached from the lock on the Domains page too.
+      const sSel = el("select", { class: "em-select" }, [el("option", { value: "", text: sites.length ? "Pick a domain or subdomain" : "No sites yet (create one under Domains)" }),
+        ...sites.map((s) => el("option", { value: s.server_name, text: `${s.server_name}${s.protected ? "  ·  protected" : ""}   ${s.docroot}` }))]);
+      const sLabel = el("input", { type: "text", placeholder: "defaults to the domain name", maxlength: 60 });
+      const sUser = el("input", { type: "text", placeholder: "username", maxlength: 32, autocomplete: "off" });
+      const sPw = passwordField();
+      const want = typeof state.viewArg === "string" ? state.viewArg.toLowerCase() : "";
+      if (want && sites.some((s) => s.server_name === want)) sSel.value = want;
+      const siteCard = el("div", { class: "card" }, [el("h3", { text: "Protect a whole domain or subdomain" }),
+        el("p", { class: "muted", text: "Puts a browser login (Basic Auth) in front of the entire site, handy for a staging copy or a private area. A subdomain is a site of its own, so it can be protected on its own." }),
+        el("div", { class: "net-form wide" }, [(() => { const f = field("Domain or subdomain", sSel); f.classList.add("span-all"); return f; })(),
+          field("Login prompt text", sLabel), field("First user", sUser), field("Password", sPw.node, "Leave empty to generate one.")]),
+        el("div", { style: "margin-top:12px" }, btn("Protect site", async () => {
+          if (!sSel.value) return toast("Pick a domain or subdomain", "bad");
+          const password = sPw.value() || genPassword();
+          try { await API.dirPrivacyProtectSite({ site: sSel.value, label: sLabel.value.trim(), name: sUser.value.trim(), password }); load(); showPw(sUser.value.trim(), password); } catch (e) { toast(e.message, "bad"); }
+        }, "btn-primary"))]);
+      body.append(siteCard);
+      if (want) siteCard.scrollIntoView({ block: "start", behavior: "smooth" });
       const path = el("input", { type: "text", class: "cw-mono", placeholder: "/var/www/html/private", spellcheck: "false" });
+      const fromSel = el("select", { class: "em-select" }, [el("option", { value: "", text: "Type a path, or start from a site" }),
+        ...sites.map((s) => el("option", { value: s.docroot, text: `${s.server_name}   ${s.docroot}` }))]);
+      fromSel.addEventListener("change", () => { if (fromSel.value) { path.value = fromSel.value.replace(/\/+$/, "") + "/"; path.focus(); } });
       const label = el("input", { type: "text", placeholder: "e.g. Staff area", maxlength: 60 });
       const user = el("input", { type: "text", placeholder: "username", maxlength: 32, autocomplete: "off" });
       const pw = passwordField();
       body.append(el("div", { class: "card" }, [el("h3", { text: "Protect a folder" }),
-        el("div", { class: "net-form wide" }, [(() => { const f = field("Folder", path, "Everything inside it (and sub-folders) needs a login."); f.classList.add("span-all"); return f; })(),
+        el("div", { class: "net-form wide" }, [field("Start from a site (optional)", fromSel, "Fills in that site's folder; add a sub-folder after it."), (() => { const f = field("Folder", path, "Everything inside it (and sub-folders) needs a login."); f.classList.add("span-all"); return f; })(),
           field("Login prompt text", label), field("First user", user), field("Password", pw.node, "Leave empty to generate one.")]),
         el("div", { style: "margin-top:12px" }, btn("Protect folder", async () => {
           const password = pw.value() || genPassword();
@@ -6174,6 +6197,7 @@
           el("td", { class: "actions" }, el("div", { class: "dm-acts" }, [
             el("button", { class: "btn btn-sm", onclick: () => openDomain(s.system ? s.conf : s.server_name) }, [icon("services", 13), " Manage"]),
             dmSlot(s.docroot, () => el("button", { class: "btn btn-sm btn-ghost dm-ico", title: `Files: open ${s.docroot} in the File Manager`, onclick: () => { fmState.cwd = s.docroot; navigate("files"); } }, icon("folder", 14))),
+            dmSlot(s.docroot && !s.system, () => el("button", { class: "btn btn-sm btn-ghost dm-ico", title: `Password protect ${s.server_name} (Basic Auth, Directory Privacy)`, onclick: () => navigate("dirprivacy", { arg: s.server_name }) }, icon("lock", 14))),
             dmSlot(!isIp(s.server_name), () => el("button", { class: "btn btn-sm btn-ghost dm-ico", title: "DNS zone", onclick: () => openZone(s.server_name.replace(/^www\./, "")) }, icon("zone", 14))),
             dmSlot(!isIp(s.server_name), () => el("button", { class: "btn btn-sm btn-ghost dm-ico", title: "DNS & WHOIS check", onclick: () => showDomainInfo(s.server_name) }, icon("search", 13))),
             dmSlot(s.docroot, () => shadowBtn(`site:${s.server_name}`)),
@@ -6241,7 +6265,7 @@
           el("td", { class: "actions" }, el("div", { class: "dm-acts" }, [
             el("button", { class: "btn btn-sm btn-ghost dm-ico", title: `Files: open ${f.path} in the File Manager`, onclick: () => { fmState.cwd = f.path; navigate("files"); } }, icon("folder", 14)),
             el("button", { class: "btn btn-sm btn-primary", disabled: f.addable ? null : "",
-              title: f.addable ? "Manage it here: file list, shadow copies, backup and removal. Nothing in the folder changes." : "Rename the folder first: lowercase letters, numbers, dots, dashes or underscores",
+              title: f.addable ? "Manage it here: file list, shadow copies, backup and removal. Nothing in the folder changes." : "Rename the folder first: letters, numbers, dots, dashes or underscores, no spaces",
               onclick: async (ev) => {
                 const b = ev.currentTarget; b.disabled = true;
                 try { await API.folderSiteCreate(f.name, f.path); toast(`/${f.name} is a folder site now`, "good"); load(); }
@@ -6402,14 +6426,17 @@
     fPath.addEventListener("input", () => { pathTouched = !!fPath.value.trim(); });
     drawWhere();
     f.append(kind, domainBox, folderBox);
+    domainBox.classList.add("nd-form");
     domainBox.innerHTML = `
       <label class="cw-lbl" id="nd-lbl">Domain<input id="nd-name" type="text" placeholder="example.com" autocomplete="off" /></label>
       <label class="cw-lbl">Document root<input id="nd-root" type="text" placeholder="/var/www/example.com" /></label>
-      <label class="dm-check"><input id="nd-www" type="checkbox" checked /> Also answer on <b id="nd-www-l">www.example.com</b></label>
-      <label class="dm-check"><input id="nd-ssl" type="checkbox" /> Create a self-signed certificate &amp; force HTTPS <span class="muted" id="nd-ssl-hint">(switch to Let's Encrypt later)</span></label>
-      <label class="dm-check"><input id="nd-zone" type="checkbox" /> Create a DNS zone for it in the Zone Editor</label>
-      <p class="muted" id="nd-hint-dom" style="font-size:12px;margin:4px 0 0">Local names like <code>mysite.test</code> work too, you'll get the hosts-file line to add on your computer.</p>
-      <p class="muted" id="nd-hint-ip" hidden style="font-size:12px;margin:4px 0 0">The site answers on <code>http://&lt;ip&gt;/</code>. For this Pi's own address (<code>${esc(location.hostname)}</code>), which Apache's built-in site already uses, enter a folder such as <code>/var/www/html/mysite</code> and it's served at <code>http://${esc(location.hostname)}/mysite/</code>, or use <b>Local</b>.</p>`;
+      <div class="nd-checks">
+        <label class="dm-check"><input id="nd-www" type="checkbox" checked /> Also answer on <b id="nd-www-l">www.example.com</b></label>
+        <label class="dm-check"><input id="nd-ssl" type="checkbox" /> Create a self-signed certificate &amp; force HTTPS <span class="muted" id="nd-ssl-hint">(switch to Let's Encrypt later)</span></label>
+        <label class="dm-check"><input id="nd-zone" type="checkbox" /> Create a DNS zone for it in the Zone Editor</label>
+      </div>
+      <p class="muted" id="nd-hint-dom" style="font-size:12px">Local names like <code>mysite.test</code> work too, you'll get the hosts-file line to add on your computer.</p>
+      <p class="muted" id="nd-hint-ip" hidden style="font-size:12px">The site answers on <code>http://&lt;ip&gt;/</code>. For this Pi's own address (<code>${esc(location.hostname)}</code>), which Apache's built-in site already uses, enter a folder such as <code>/var/www/html/mysite</code> and it's served at <code>http://${esc(location.hostname)}/mysite/</code>, or use <b>Local</b>.</p>`;
     const name = $("#nd-name", domainBox), rootIn = $("#nd-root", domainBox);
     // The document root fills itself in from the name until it's edited by hand.
     let rootTouched = false;
@@ -9366,8 +9393,10 @@
     };
     [cur, nw, nw2].forEach((f) => f.inp.addEventListener("input", refresh));
     const gen = el("button", { type: "button", class: "btn btn-sm btn-ghost ps-gen", title: "Make a strong random password", onclick: () => {
-      const abc = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789", r = crypto.getRandomValues(new Uint32Array(20));
-      const v = [...r].map((x) => abc[x % abc.length]).join("").replace(/(.{5})(?!$)/g, "$1-");
+      // Rejection sampling: a plain modulo on a random number favours the first few letters a little.
+      const abc = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789", lim = 256 - (256 % abc.length), out = [];
+      while (out.length < 20) { for (const x of crypto.getRandomValues(new Uint8Array(32))) { if (x < lim && out.length < 20) out.push(abc[x % abc.length]); } }
+      const v = out.join("").replace(/(.{5})(?!$)/g, "$1-");
       nw.inp.value = nw2.inp.value = v; nw.inp.type = nw2.inp.type = "text"; refresh();
       copyText(v).then((ok) => toast(ok ? "Strong password made and copied, save it in your password manager" : "Strong password made, save it in your password manager", "good"));
     } }, [icon("wand", 14), el("span", { text: "Generate" })]);

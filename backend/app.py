@@ -3909,6 +3909,7 @@ class WebAccessBody(BaseModel):
     label: str | None = None
     remove: bool = False
     enabled: bool | None = None
+    site: str | None = None  # a domain or subdomain, for whole-site protection
 
 
 class GitBody(BaseModel):
@@ -4012,6 +4013,17 @@ def api_dirprivacy_toggle(body: WebAccessBody, user: str = auth.CurrentUser):
 @app.post("/api/dirprivacy/remove")
 def api_dirprivacy_remove(body: WebAccessBody, user: str = auth.CurrentUser):
     return _files_call(lambda: webaccess.privacy_remove(body.path or ""))
+
+
+@app.get("/api/dirprivacy/sites")
+def api_dirprivacy_sites(user: str = auth.CurrentUser):
+    """Domains and subdomains with whether their whole document root is behind a login."""
+    return webaccess.privacy_sites()
+
+
+@app.post("/api/dirprivacy/site")
+def api_dirprivacy_site(body: WebAccessBody, user: str = auth.CurrentUser):
+    return _files_call(lambda: webaccess.privacy_protect_site(body.site or "", body.label or "", body.name or "", body.password or ""))
 
 
 @app.get("/api/git")

@@ -282,7 +282,10 @@ def phpmyadmin_install() -> jobs.Job:
                 "phpmyadmin phpmyadmin/dbconfig-install boolean true\n")
         subprocess.run(["debconf-set-selections"], input=seed, text=True, capture_output=True, timeout=30)
         log("• Installing phpMyAdmin (apt-get install phpmyadmin)…")
-        if log.apt(["install", "phpmyadmin"], (2, 95)) != 0:
+        log("• Refreshing package lists (apt-get update)…")
+        if log.apt(["update"], (1, 10)) != 0:
+            log("  Some package lists couldn't be refreshed; trying the install anyway.")
+        if log.apt(["install", "phpmyadmin"], (10, 95)) != 0:
             raise DatabaseError("apt-get install phpmyadmin failed")
         if not Path("/etc/apache2/conf-enabled/phpmyadmin.conf").exists() and Path("/etc/apache2/conf-available/phpmyadmin.conf").exists():
             subprocess.run(["a2enconf", "phpmyadmin"], capture_output=True, text=True, timeout=30)
@@ -673,9 +676,14 @@ def phppgadmin_set_lan(on: bool) -> dict:
 def phppgadmin_install() -> jobs.Job:
     """apt install phppgadmin, then open it to the local network."""
     def fn(log):
+        # Refresh the package lists first: a stale index asks for a package build the mirror has
+        # already replaced and the install dies with a 404 (seen with php-pgsql from packages.sury.org).
+        log("• Refreshing package lists (apt-get update)…")
+        if log.apt(["update"], (1, 10)) != 0:
+            log("  Some package lists couldn't be refreshed; trying the install anyway.")
         log("• Installing phpPgAdmin (apt-get install phppgadmin php-pgsql)…")
-        if log.apt(["install", "phppgadmin", "php-pgsql"], (2, 95)) != 0:
-            raise DatabaseError("apt-get install failed")
+        if log.apt(["install", "phppgadmin", "php-pgsql"], (10, 95)) != 0:
+            raise DatabaseError("apt-get install failed. If it reported a 404, the package mirror is behind; try again in a few minutes.")
         log("• Allowing access from your local network…")
         phppgadmin_set_lan(True)
         log("✔ phpPgAdmin is ready at /phppgadmin — log in with a PostgreSQL role that has a password.")

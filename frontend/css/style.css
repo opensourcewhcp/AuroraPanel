@@ -1889,6 +1889,15 @@ button.em-stat:hover { border-color: var(--accent); }
 }
 /* stacked cards on Email pages breathe */
 #view-root > .card + .card, #view-root > .card + div > .card:first-child, #view-root > div > .card + .card, #view-root > div > .card + div > .card:first-child { margin-top: 16px; }
+/* Create a new site (Domain mode): one column with an even rhythm between the mode switch, each field, the option group and the hint. */
+.nd-form { display: flex; flex-direction: column; gap: 14px; margin-top: 18px; }
+.nd-form .cw-lbl { margin: 0; }
+.nd-form .nd-checks { display: flex; flex-direction: column; gap: 9px; padding: 2px 0; }
+.nd-form .nd-checks .dm-check { margin: 0; }
+.nd-form p.muted { margin: 0; line-height: 1.45; }
+/* The reverse case: a plain wrapper div that holds a card (e.g. a slot a widget redraws into), followed by a card. */
+#view-root > div:has(> .card) + .card, #view-root > div:has(> .card) + div > .card:first-child,
+#view-root > div > div:has(> .card) + .card, #view-root > div > div:has(> .card) + div > .card:first-child { margin-top: 16px; }
 
 /* Databases: "Create database" and "Create user" side by side in one panel */
 .db-create { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); padding: 0; overflow: hidden; margin-bottom: 16px; }
@@ -2888,6 +2897,8 @@ tr.tok-expired td { opacity: .6; }
 .sh-btn { position: relative; }
 .sh-btn.on { color: var(--accent); border-color: rgba(255,122,26,.45); box-shadow: 0 0 0 1px rgba(255,122,26,.18), 0 0 14px rgba(255,122,26,.18); }
 .sh-badge { font-size: 10px; font-weight: 750; margin-left: 4px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: #140b04; line-height: 15px; }
+/* In a fixed-width action button the count sits in the corner as a bubble, so it never widens the button or spills into its neighbour. */
+.sh-btn .sh-badge { position: absolute; top: -6px; right: -7px; margin: 0; min-width: 16px; height: 16px; line-height: 16px; text-align: center; padding: 0 4px; box-shadow: 0 0 0 2px var(--bg, #0b0a0a); }
 .sh-hero { align-items: center; }
 .sh-hero .mx-hero-ico { background: rgba(255,122,26,.14); color: var(--accent); }
 .sh-hero.good .mx-hero-ico { background: rgba(63,208,143,.14); color: var(--good); }

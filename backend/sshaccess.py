@@ -18,6 +18,9 @@ from . import problems
 
 IS_LINUX = platform.system() == "Linux"
 _KEY_RE = re.compile(r"^(ssh-rsa|ssh-ed25519|ecdsa-sha2-\S+|ssh-dss)\s+([A-Za-z0-9+/=]+)(\s+(.*))?$")
+# add_key validates request input with these two anchored, backtracking-free patterns on the split parts.
+_KEY_TYPE_RE = re.compile(r"^(ssh-rsa|ssh-ed25519|ecdsa-sha2-[A-Za-z0-9-]+|ssh-dss)$")
+_KEY_B64_RE = re.compile(r"^[A-Za-z0-9+/=]+$")
 
 
 class SSHError(RuntimeError):
@@ -112,11 +115,12 @@ def add_key(user: str, public_key: str) -> dict:
     if not IS_LINUX:
         raise SSHError("Only available on Linux")
     pk = (public_key or "").strip()
-    # A public key is one line and never large. Bounding it first keeps the \s+/.* parts of _KEY_RE from
-    # backtracking on a crafted multi-megabyte input (polynomial ReDoS) and rejects multi-line payloads.
+    # A public key is one line and never large. Bound it, then validate with a linear split instead of
+    # _KEY_RE: that pattern's \s+ followed by .* backtracks polynomially on crafted input from the request.
     if len(pk) > 16384 or "\n" in pk or "\r" in pk:
         raise SSHError("That doesn't look like a valid SSH public key")
-    if not _KEY_RE.match(pk):
+    parts = pk.split(None, 2)  # type, base64 key, optional comment
+    if len(parts) < 2 or not _KEY_TYPE_RE.match(parts[0]) or not _KEY_B64_RE.match(parts[1]):
         raise SSHError("That doesn't look like a valid SSH public key")
     path = _authorized_keys_path(user)
     parent = path.parent
