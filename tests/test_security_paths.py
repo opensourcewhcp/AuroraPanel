@@ -97,7 +97,8 @@ def test_api_tokens_are_shown_once_and_stored_hashed():
     stored = config.load_config()["api_tokens"][0]
     assert made["token"] not in str(stored) and stored["hash"] == hashlib.sha256(made["token"].encode()).hexdigest()
     lst = apitokens.listing()["tokens"][0]
-    assert set(lst) == {"id", "name", "prefix", "created"} and lst["prefix"] == made["token"][:12]
+    assert set(lst) == {"id", "name", "prefix", "created", "allow_from", "expires", "last_used", "last_ip", "level", "expired"}
+    assert lst["prefix"] == made["token"][:12] and lst["level"] == "read" and "hash" not in lst
     assert apitokens.verify(made["token"]) == "backup script"
     assert apitokens.verify(made["token"][:-1] + "X") is None and apitokens.verify("") is None
     assert apitokens.revoke(made["id"]) == {"ok": True}

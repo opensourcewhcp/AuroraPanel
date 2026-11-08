@@ -23,7 +23,10 @@ self.addEventListener("fetch", (event) => {
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
     try {
-      const res = await fetch(req);
+      let res;
+      // Right after a panel update the first request can land on a connection the old process closed:
+      // try once more before giving up, so a page never comes up without its styles.
+      try { res = await fetch(req); } catch (e) { await new Promise((r) => setTimeout(r, 700)); res = await fetch(req); }
       if (res.ok && res.type === "basic") {
         // keep one copy per file: drop the previous version's ?v=… entry
         for (const old of await cache.keys()) {
@@ -36,6 +39,9 @@ self.addEventListener("fetch", (event) => {
     } catch (e) {
       const hit = await cache.match(isPage ? "/" : req);
       if (hit) return hit;
+      // The previous version's copy (another ?v=…) beats no stylesheet or script at all.
+      const any = isPage ? null : await cache.match(req, { ignoreSearch: true });
+      if (any) return any;
       throw e;
     }
   })());

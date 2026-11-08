@@ -11,6 +11,7 @@ import os
 import re
 import sys
 import threading
+import subprocess
 import time
 from pathlib import Path
 
@@ -2018,6 +2019,11 @@ def api_ssl_selfsigned(body: SelfSignedBody, user: str = auth.CurrentUser):
 # --------------------------------------------------------------------------- #
 class TokenNameBody(BaseModel):
     name: str
+    level: str = "read"
+    allow_from: str = ""
+    days: int | None = None
+    password: str = ""
+    otp: str = ""
 
 
 class TokenIdBody(BaseModel):
@@ -2030,9 +2036,11 @@ def api_tokens(user: str = auth.CurrentUser):
 
 
 @app.post("/api/tokens/create")
-def api_tokens_create(body: TokenNameBody, user: str = auth.CurrentUser):
+def api_tokens_create(body: TokenNameBody, request: Request, user: str = auth.CurrentUser):
+    if body.level == "admin":
+        _reconfirm(user, body.password, body.otp, request)
     try:
-        return apitokens.create(body.name)
+        return apitokens.create(body.name, body.level, body.allow_from, body.days)
     except apitokens.APITokenError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -4736,9 +4744,95 @@ def _srv_call(fn):
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+_CONFIRMED: dict[str, float] = {}  # user -> until when their last password re-entry counts for server control
+_CONFIRM_FOR = 600
+
+
+def _reconfirm(user: str, password: str, otp: str, request: Request, window: bool = False) -> None:
+    """The signed-in person types their password again (and their 2FA code when it's on) before
+    something that reaches far: a full admin token, or a change sent to another server. With window=True
+    one re-entry covers that person's server control for ten minutes."""
+    if user.startswith("token:"):
+        raise HTTPException(status_code=403, detail="This needs a person signed in, not an API token")
+    if window and not password and _CONFIRMED.get(user, 0) > time.time():
+        return
+    if not password:
+        raise HTTPException(status_code=400, detail="password_required")
+    ip = _client_ip(request)
+    wait = _login_begin(ip)
+    if wait:
+        raise HTTPException(status_code=429, detail=f"Too many wrong passwords. Try again in {(wait + 59) // 60} min.")
+    owner = config.verify_credentials(user, password or "")
+    if not owner and not panelusers.verify(user, password or ""):
+        _auth_log(False, user, request)
+        raise HTTPException(status_code=400, detail="That password isn't right")
+    if owner and twofa.is_enabled():
+        if not otp:
+            _login_forgive(ip)
+            raise HTTPException(status_code=400, detail="otp_required")
+        if not twofa.verify_login(otp):
+            raise HTTPException(status_code=400, detail="Invalid 2FA code")
+    _login_forgive(ip)
+    if window:
+        _CONFIRMED[user] = time.time() + _CONFIRM_FOR
+
+
+def _caller_token(request: Request) -> dict | None:
+    b = request.headers.get("authorization", "")
+    tok = b[7:].strip() if b.lower().startswith("bearer ") else request.headers.get("x-aurora-token", "")
+    return apitokens.lookup(tok) if tok else None
+
+
 @app.get("/api/fleet/self")
-def api_fleet_self(user: str = auth.CurrentUser):
-    return servers.self_summary()
+def api_fleet_self(request: Request, user: str = auth.CurrentUser):
+    t = _caller_token(request)
+    return {**servers.self_summary(), "access": apitokens.level(t) if t else "admin"}
+
+
+class FleetActionBody(BaseModel):
+    action: str
+    unit: str = ""
+    by: str = ""
+
+
+@app.post("/api/fleet/action")
+def api_fleet_action(body: FleetActionBody, user: str = auth.CurrentUser):
+    """What another panel's Servers page may ask for with a fleet control token. Nothing else."""
+    try:
+        if body.action in ("restart_service", "start_service"):
+            if not body.unit.endswith(".service"):
+                raise services.ServiceError("Only services can be started or restarted from another server")
+            return services.control_service(body.unit, body.action.split("_", 1)[0])
+        if body.action == "install_updates":
+            j = updates.install([])
+            return {"ok": True, "job": j.id}
+    except (services.ServiceError, updates.UpdateError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    raise HTTPException(status_code=400, detail="Unknown action")
+
+
+class FleetExecBody(BaseModel):
+    command: str
+    by: str = ""
+
+
+@app.post("/api/fleet/exec")
+def api_fleet_exec(body: FleetExecBody, user: str = auth.CurrentUser):
+    """One command from another panel's Servers page (full admin tokens only, see authz.py), with its output."""
+    cmd = (body.command or "").strip()
+    if not cmd or len(cmd) > 4000:
+        raise HTTPException(status_code=400, detail="Type a command (at most 4000 characters)")
+    t0 = time.time()
+    try:
+        r = subprocess.run(["bash", "-lc", cmd], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           timeout=120, cwd="/", env={**os.environ, "TERM": "dumb"})
+        code, out = r.returncode, r.stdout
+    except subprocess.TimeoutExpired as exc:
+        code, out = None, (exc.stdout or b"") + b"\n[stopped after 120 seconds: use the Terminal for long jobs]"
+    text = out.decode("utf-8", "replace")
+    if len(text) > 65536:
+        text = "[only the last 64 KB]\n" + text[-65536:]
+    return {"code": code, "output": text, "seconds": round(time.time() - t0, 1)}
 
 
 @app.get("/api/servers")
@@ -4765,6 +4859,42 @@ def api_servers_del(sid: str, user: str = auth.CurrentUser):
 @app.post("/api/servers/{sid}/repin")
 def api_servers_repin(sid: str, user: str = auth.CurrentUser):
     return _srv_call(lambda: servers.repin(sid))
+
+
+class ServerActionBody(BaseModel):
+    action: str
+    unit: str = ""
+    password: str = ""
+    otp: str = ""
+
+
+@app.post("/api/servers/{sid}/action")
+def api_servers_action(sid: str, body: ServerActionBody, request: Request, user: str = auth.CurrentUser):
+    """Restart a service or install updates on another server: the password again first."""
+    _reconfirm(user, body.password, body.otp, request, window=True)
+    return _srv_call(lambda: servers.act(sid, body.action, body.unit, user))
+
+
+class ServerExecBody(BaseModel):
+    command: str
+    password: str = ""
+    otp: str = ""
+
+
+@app.post("/api/servers/{sid}/exec")
+def api_servers_exec(sid: str, body: ServerExecBody, request: Request, user: str = auth.CurrentUser):
+    """Run a command on another server (its token must be full admin)."""
+    _reconfirm(user, body.password, body.otp, request, window=True)
+    return _srv_call(lambda: servers.run(sid, body.command, user))
+
+
+class ServerPinBody(BaseModel):
+    on: bool = True
+
+
+@app.post("/api/servers/{sid}/pin")
+def api_servers_pin(sid: str, body: ServerPinBody, user: str = auth.CurrentUser):
+    return _srv_call(lambda: servers.pin(sid, body.on))
 
 
 class FleetBanBody(BaseModel):

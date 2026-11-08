@@ -205,7 +205,7 @@ ROUTES = [
     R("GET", "/api/ssl/certs", "sslcerts", "list_certs"),
     R("POST", "/api/ssl/selfsigned", "sslcerts", "generate_self_signed", ("pi.local", 30), body={"common_name": "pi.local", "days": 30}),
     R("GET", "/api/tokens", "apitokens", "listing", err=None),
-    R("POST", "/api/tokens/create", "apitokens", "create", ("ci",), body={"name": "ci"}),
+    R("POST", "/api/tokens/create", "apitokens", "create", ("ci", "read", "", None), body={"name": "ci"}),
     R("POST", "/api/tokens/revoke", "apitokens", "revoke", ("t1",), body={"id": "t1"}),
     # ---- modsecurity, waf, fail2ban, perms
     R("GET", "/api/modsecurity", "modsecurity", "status", err=None),
@@ -515,7 +515,7 @@ ROUTES = [
     R("POST", "/api/migrate/fetch", "migrate", "fetch", ("https://x/b.tar.gz",), body={"url": "https://x/b.tar.gz"}, wrap="job"),
     R("POST", "/api/migrate/run", "migrate", "run", ("b.tar.gz", {"path": "b.tar.gz", "sites": ["a.com"], "databases": [], "mail": False, "zones": True}),
       body={"path": "b.tar.gz", "sites": ["a.com"], "mail": False, "zones": True}, wrap="job"),
-    R("GET", "/api/fleet/self", "servers", "self_summary", err=None),
+    R("GET", "/api/fleet/self", "servers", "self_summary", err=None, wrap="merge"),
     R("GET", "/api/servers", "servers", "overview", err=None),
     R("POST", "/api/servers", "servers", "add", ("ns3", "https://ns3:8088", "tok"), body={"name": "ns3", "url": "https://ns3:8088", "token": "tok"}),
     R("DELETE", "/api/servers/s1", "servers", "remove", ("s1",)),

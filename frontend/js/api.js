@@ -273,7 +273,7 @@ const API = (() => {
 
     // api tokens
     tokens: () => request("GET", "/api/tokens"),
-    tokenCreate: (name) => request("POST", "/api/tokens/create", { name }),
+    tokenCreate: (data) => request("POST", "/api/tokens/create", typeof data === "string" ? { name: data } : data),
     tokenRevoke: (id) => request("POST", "/api/tokens/revoke", { id }),
 
     // hotlink + redirects
@@ -669,6 +669,9 @@ const API = (() => {
     serverRemove: (id) => request("DELETE", `/api/servers/${encodeURIComponent(id)}`),
     serverRepin: (id) => request("POST", `/api/servers/${encodeURIComponent(id)}/repin`),
     serversBan: (data) => request("POST", "/api/servers/ban", data),
+    serverAction: (id, data) => request("POST", `/api/servers/${encodeURIComponent(id)}/action`, data),
+    serverExec: (id, data) => request("POST", `/api/servers/${encodeURIComponent(id)}/exec`, data),
+    serverPin: (id, on) => request("POST", `/api/servers/${encodeURIComponent(id)}/pin`, { on }),
     dockerInstall: (data) => request("POST", "/api/docker/install", data),
     dockerCtl: (name, action) => request("POST", `/api/docker/apps/${encodeURIComponent(name)}/${action}`),
     dockerLogs: (name) => request("GET", `/api/docker/apps/${encodeURIComponent(name)}/logs?lines=400`),

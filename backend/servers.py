@@ -14,6 +14,7 @@ import hashlib
 import http.client
 import ipaddress
 import json
+import re
 import os
 import secrets
 import socket
@@ -195,6 +196,17 @@ def remove(sid: str) -> dict:
     return {"ok": True}
 
 
+def pin(sid: str, on: bool) -> dict:
+    """Show (or stop showing) this server on the dashboard's Servers panel."""
+    d = _load()
+    srv = next((s for s in d["servers"] if s["id"] == sid), None)
+    if not srv:
+        raise ServerError("That server isn't in the list")
+    srv["pinned"] = bool(on)
+    _save(d)
+    return {"ok": True, "pinned": srv["pinned"]}
+
+
 def repin(sid: str) -> dict:
     """Accept a server's new certificate (after a renewal)."""
     d = _load()
@@ -214,7 +226,8 @@ def repin(sid: str) -> dict:
 
 
 def _public(s: dict) -> dict:
-    return {k: s[k] for k in ("id", "name", "url", "added", "hostname") if k in s} | {"fingerprint": s.get("fingerprint", "")[:16]}
+    return {k: s[k] for k in ("id", "name", "url", "added", "hostname") if k in s} | {"fingerprint": s.get("fingerprint", "")[:16],
+                                                                                    "pinned": bool(s.get("pinned")), "secure": s.get("url", "").startswith("https://")}
 
 
 def self_summary() -> dict:
@@ -259,12 +272,88 @@ def self_summary() -> dict:
     except Exception:
         out["failed_units"] = []
     try:
+        out["services"] = service_counts()
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
+    try:
         from . import guard
         g = guard.listing()
         out["bans"] = len(g["bans"]) + len(g["fail2ban"])
     except Exception as quiet_exc:
         problems.quiet(quiet_exc)
     return out
+
+
+# The services a server card shows by kind, with an icon each (frontend/js/ops.js).
+_KINDS = [
+    ("web", "Web", re.compile(r"^(apache2|httpd|nginx|caddy|lighttpd)\.service$")),
+    ("php", "PHP", re.compile(r"^php[\d.]*-fpm\.service$")),
+    ("db", "Database", re.compile(r"^(mariadb|mysql|mysqld|postgresql(@.+)?|redis(-server)?|mongod)\.service$")),
+    ("mail", "Mail", re.compile(r"^(postfix|dovecot|exim4|opendkim|rspamd)\.service$")),
+    ("dns", "DNS", re.compile(r"^(bind9|named|pdns|unbound|pihole-FTL|dnsmasq)\.service$")),
+    ("ssh", "SSH", re.compile(r"^(ssh|sshd)\.service$")),
+    ("docker", "Docker", re.compile(r"^(docker|containerd|podman)\.service$")),
+    ("vpn", "VPN", re.compile(r"^(wg-quick@.+|openvpn(@.+)?|openvpn-server@.+)\.service$")),
+    ("security", "Security", re.compile(r"^(fail2ban|crowdsec|clamav-daemon|ufw|firewalld)\.service$")),
+]
+
+
+def service_counts() -> dict:
+    """How many services run and how many failed, plus the well-known ones grouped by kind."""
+    from . import services as svc
+    rows = [r for r in svc.list_services() if r.get("load") == "loaded"]
+    kinds = []
+    for key, label, rx in _KINDS:
+        mine = [r for r in rows if rx.match(r["unit"])]
+        if mine:
+            kinds.append({"key": key, "label": label, "up": sum(r["active"] == "active" for r in mine),
+                          "down": [r["unit"] for r in mine if r["active"] == "failed"][:5], "units": [r["unit"] for r in mine][:8]})
+    return {"running": sum(r.get("sub") == "running" for r in rows), "failed": sum(r["active"] == "failed" for r in rows),
+            "total": len(rows), "kinds": kinds}
+
+
+def _controllable(sid: str) -> dict:
+    d = _load()
+    srv = next((x for x in d["servers"] if x["id"] == sid), None)
+    if not srv:
+        raise ServerError("That server isn't in the list")
+    if not srv["url"].startswith("https://"):
+        raise ServerError(f"{srv['name']} is reached over plain http, so it can be watched but not controlled. "
+                          "Turn on Panel HTTPS there (Security → Panel HTTPS) first.")
+    return srv
+
+
+def _answer(srv: dict, status: int, payload) -> dict:
+    if status == 200:
+        return {"ok": True, **(payload or {})}
+    if status in (404, 405):
+        raise ServerError(f"{srv['name']} needs AuroraPanel 1.2.3 or newer for this. Update it first.")
+    if status == 401:
+        raise ServerError(f"{srv['name']} didn't accept the token (revoked or expired?)")
+    detail = (payload or {}).get("detail") if isinstance(payload, dict) else ""
+    raise ServerError(f"{srv['name']}: {detail or f'answered {status}'}")
+
+
+def run(sid: str, command: str, by: str) -> dict:
+    """Run one command on an added server (its token must be full admin) and bring back the output."""
+    command = (command or "").strip()
+    if not command or len(command) > 4000:
+        raise ServerError("Type a command (at most 4000 characters)")
+    srv = _controllable(sid)
+    status, payload, _ = _call(srv, "POST", "/api/fleet/exec", {"command": command, "by": f"{by} on {socket.gethostname()}"}, timeout=140)
+    _save_moved([srv])
+    return _answer(srv, status, payload)
+
+
+def act(sid: str, action: str, unit: str, by: str) -> dict:
+    """Restart or start a service, or install updates, on an added server. Its token decides whether that's allowed;
+    a server reached over plain http is only watched, never told what to do."""
+    if action not in ("restart_service", "start_service", "install_updates"):
+        raise ServerError("Unknown action")
+    srv = _controllable(sid)
+    status, payload, _ = _call(srv, "POST", "/api/fleet/action", {"action": action, "unit": unit, "by": f"{by} on {socket.gethostname()}"}, timeout=30)
+    _save_moved([srv])
+    return _answer(srv, status, payload)
 
 
 def overview() -> dict:

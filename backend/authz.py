@@ -34,6 +34,11 @@ VIEWER_DENY_GET = re.compile(r"^/api/(files/(read|download)|backups/[^/]+/downlo
                              r"schedules/plans/[^/]+/passphrase|docker/apps/[^/]+/secret|ddns-hosts/[^/]+/key|"
                              r"mail/accounts/mobileconfig|tokens|apitokens|terminal|sysapps/[^/]+/file|wptoolkit)")
 VIEWER_ALLOW_POST = re.compile(r"^/api/(logout|me/password)$")
+# API tokens (apitokens.py). Fleet control: read, plus only these actions.
+TOKEN_FLEET_POST = re.compile(r"^/api/(fleet/action|guard/(ban|unban))$")
+# Full admin tokens can do everything except take over the panel itself: no tokens, panel users,
+# password, 2FA or Panel HTTPS (a leaked token mustn't be able to lock the owner out or make more tokens).
+TOKEN_ADMIN_DENY = re.compile(r"^/api/(tokens|panel-users|me/password|account/(password|rename)|2fa|panel/https)(/|$)")
 # The owner on the installer's random password: only what it takes to replace it.
 FIRST_LOGIN_ALLOW = re.compile(r"^/api/(me|status|logout|account/password)$")
 
@@ -130,6 +135,21 @@ def _decide(user: dict | None, method: str, path: str) -> str | None:
     return "Unknown role"
 
 
+def decide_token(level: str, method: str, path: str) -> str | None:
+    """None = this API token may make the call, else why not."""
+    if level == "legacy":  # made before levels existed: full access, as it always had
+        return None
+    if level == "admin":
+        return "A full admin API token can't manage tokens, panel users, the password, 2FA or Panel HTTPS" if TOKEN_ADMIN_DENY.match(path) else None
+    if method in ("GET", "HEAD"):
+        return "This API token can't open files, secrets, downloads or the terminal" if VIEWER_DENY_GET.match(path) else None
+    if method == "POST" and path == "/api/logout":
+        return None
+    if level == "fleet" and method == "POST" and TOKEN_FLEET_POST.match(path):
+        return None
+    return "This API token is read only" if level == "read" else "This API token can only ban, unban, restart services and install updates"
+
+
 class AuthzMiddleware:
     def __init__(self, app):
         self.app = app
@@ -143,6 +163,16 @@ class AuthzMiddleware:
         token = CURRENT.set(dict(user) if user else None)
         try:
             path = scope_.get("path", "")
+            if path.startswith("/api/") and name.startswith("token:"):
+                why = _token_refusal(scope_)
+                if why:
+                    if scope_["type"] == "websocket":
+                        await send({"type": "websocket.close", "code": 1008})
+                        return
+                    body = json.dumps({"detail": why}).encode()
+                    await send({"type": "http.response.start", "status": 403, "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]})
+                    await send({"type": "http.response.body", "body": body})
+                    return
             if path.startswith("/api/") and user:
                 is_ws = scope_["type"] == "websocket"
                 headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope_.get("headers", [])}
@@ -161,3 +191,22 @@ class AuthzMiddleware:
             await self.app(scope_, receive, send)
         finally:
             CURRENT.reset(token)
+
+
+def _token_refusal(scope_) -> str | None:
+    """An API token call: its address lock, HTTPS for full admin, and what its level allows."""
+    from . import apitokens
+    headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope_.get("headers", [])}
+    b = headers.get("authorization", "")
+    entry = apitokens.lookup(b[7:].strip() if b.lower().startswith("bearer ") else headers.get("x-aurora-token", ""))
+    if not entry:
+        return "Authentication required"
+    ip = (scope_.get("client") or (None,))[0]
+    is_ws = scope_["type"] == "websocket"
+    why = apitokens.refuse(entry, ip, scope_.get("scheme") in ("https", "wss"))         or decide_token(apitokens.level(entry), "WS" if is_ws else scope_.get("method", "GET"), scope_.get("path", ""))
+    if not why:
+        try:
+            apitokens.touch(entry, ip)
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
+    return why

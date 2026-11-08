@@ -1,6 +1,12 @@
 /* AuroraPanel single-page app. */
 (() => {
   "use strict";
+  // The stylesheet didn't load (a request lost while the panel restarted after an update): reload once.
+  try {
+    const css = [...document.styleSheets].some((sh) => /\/css\/style\.css/.test(sh.href || ""));
+    if (!css && !sessionStorage.getItem("aurora.cssRetry")) { sessionStorage.setItem("aurora.cssRetry", "1"); setTimeout(() => location.reload(), 600); return; }
+    if (css) sessionStorage.removeItem("aurora.cssRetry");
+  } catch (e) {}
 
   const $ = (sel, root = document) => root.querySelector(sel);
   // The interface was written for a Raspberry Pi; on any other machine "Pi" reads "server".
@@ -247,6 +253,7 @@
     at: '<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/>',
     listing: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/>',
     pin: '<path d="M12 21s-7-6.1-7-11.5A7 7 0 0 1 19 9.5C19 14.9 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>',
+    pushpin: '<path d="M9 3h6l-1 6 3 3v2H7v-2l3-3z"/><line x1="12" y1="14" x2="12" y2="21"/>',
     filter: '<polygon points="22 3 2 3 10 12.5 10 19 14 21 14 12.5 22 3"/>',
     inbox: '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.5 5h13l3.5 7v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/>',
     upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
@@ -1490,7 +1497,10 @@
     });
 
     // "All tools" header row: the title sits on the left, in line with the panel titles below; "Reset layout" on the right.
-    root.append(probBox, grid, el("div", { class: "dash-section-row" }, [el("h2", { class: "section-title dash-section", text: "All tools" }), resetBtn]), tilesWrap);
+    // Servers: other AuroraPanels added on the Servers page (hidden until there is one).
+    const srvBox = el("div", { id: "dash-servers", hidden: "" });
+    root.append(probBox, grid, srvBox, el("div", { class: "dash-section-row" }, [el("h2", { class: "section-title dash-section", text: "All tools" }), resetBtn]), tilesWrap);
+    const loadServers = () => { const f = opsViews().serversPanel; if (f && !document.querySelector("#modal")) f(srvBox); };
     renderTiles(tilesWrap, refreshReset);
     loadProblems();
     try {
@@ -1529,7 +1539,9 @@
 
     const t1 = setInterval(() => { fast().catch(() => {}); }, 3000);
     const t2 = setInterval(slow, 30000);
-    (state.cleanups = state.cleanups || []).push(() => { clearInterval(t1); clearInterval(t2); });
+    loadServers();
+    const t3 = setInterval(loadServers, 60000);
+    (state.cleanups = state.cleanups || []).push(() => { clearInterval(t1); clearInterval(t2); clearInterval(t3); });
   }
 
   // Virtual interfaces (Docker bridges + per-container veth, loopback, VPN/tunnels) are NOT the uplink.
@@ -5630,43 +5642,98 @@
   }
 
   // ---- Manage API Tokens ----
+  const TOKEN_LEVELS = {
+    read: { label: "Read only", ico: "eye", cls: "info", text: "Sees health, services, updates and lists, like a Viewer. Can't change anything, open files, secrets or the terminal." },
+    fleet: { label: "Fleet control", ico: "t_servers", cls: "med", text: "Read only, plus what another panel's Servers page sends: restart or start a service, install updates, ban and unban addresses." },
+    admin: { label: "Full admin", ico: "key", cls: "crit", text: "Everything, including commands as root. Extra locks: only from the addresses below, only over HTTPS, expires within 90 days, and it can't manage tokens, panel users, the password, 2FA or Panel HTTPS. Your password is asked to create one." },
+    legacy: { label: "Full access, older token", ico: "warning", cls: "med", text: "Made before access levels existed: it can do everything, from anywhere, forever. Replace it with a token of the level it needs." },
+  };
   function viewAPITokens(root) {
+    const name = el("input", { type: "text", placeholder: "e.g. ns1 servers page", maxlength: "60" });
+    const level = el("select", { class: "em-select" }, ["read", "fleet", "admin"].map((k) => el("option", { value: k, text: TOKEN_LEVELS[k].label })));
+    const allow = el("input", { type: "text", placeholder: "192.168.0.101, 10.0.0.0/24" });
+    const days = el("select", { class: "em-select" });
+    const levelNote = el("div", { class: "tok-level-note" });
+    const allowHelp = el("small", { class: "dm-hint" });
+    const fillDays = () => {
+      const adm = level.value === "admin";
+      const opts = adm ? [[7, "7 days"], [30, "30 days"], [90, "90 days"]] : [["", "Never"], [30, "30 days"], [90, "90 days"], [365, "1 year"]];
+      const was = days.value;
+      days.innerHTML = ""; opts.forEach(([v, l]) => days.append(el("option", { value: v, text: l })));
+      days.value = opts.some(([v]) => String(v) === was) ? was : String(opts[adm ? 1 : 0][0]);
+      const L = TOKEN_LEVELS[level.value];
+      levelNote.className = `tok-level-note srv-sev ${L.cls}`;
+      levelNote.innerHTML = ""; levelNote.append(icon(L.ico, 15), el("span", { text: L.text }));
+      allowHelp.textContent = adm ? "Required: the address of the panel or script that will use it (single addresses or ranges up to /16)." : "Optional, but recommended: the token then only works from these addresses. Leave empty for anywhere.";
+    };
+    level.addEventListener("change", fillDays);
     const form = el("div", { class: "card", style: "margin-bottom:16px" }, [
       el("h3", { text: "Create API token" }),
-      el("p", { class: "muted", style: "margin:0 0 10px;font-size:12px", text: "Tokens authenticate API calls via header  Authorization: Bearer <token>.  Shown once." }),
-      el("div", { class: "toolbar" }, [
-        el("input", { id: "tok-name", type: "text", placeholder: "token name", style: "max-width:240px" }),
-        el("button", { class: "btn btn-sm btn-primary", text: "Create", onclick: create }),
+      el("p", { class: "muted", style: "margin:0 0 12px;font-size:12px", text: "Tokens authenticate API calls and other panels' Servers pages, sent as  Authorization: Bearer <token>.  Each one is shown once." }),
+      el("div", { class: "tok-form" }, [
+        field("Name", name), field("Access", level), field("Expires", days),
+        el("label", { class: "net-field tok-wide" }, [el("span", { text: "Only from" }), allow, allowHelp]),
       ]),
+      levelNote,
+      el("div", { class: "toolbar" }, el("button", { class: "btn btn-sm btn-primary", text: "Create", onclick: () => create() })),
     ]);
+    fillDays();
     const body = el("div", { id: "tok-body" }, el("div", { class: "loading", text: "Loading…" }));
     root.append(form, body);
+    const when = (ts) => ts ? new Date(ts * 1000).toLocaleString() : "";
     const load = async () => {
       await guardedLoad(async () => {
         const d = await API.tokens();
         body.innerHTML = "";
         if (!d.tokens.length) { body.append(el("p", { class: "empty", text: "No tokens." })); return; }
-        const rows = d.tokens.map((t) => el("tr", {}, [
-          el("td", { text: t.name }), el("td", { class: "muted", style: "font-family:monospace", text: t.prefix + "…" }),
-          el("td", { class: "muted", text: new Date(t.created * 1000).toLocaleString() }),
-          el("td", { class: "actions" }, el("button", { class: "btn btn-sm btn-danger", text: "Revoke", onclick: async () => {
-            if (!confirmInline(`Revoke token "${t.name}"?`)) return;
-            try { await API.tokenRevoke(t.id); toast("Revoked", "good"); load(); } catch (e) { toast(e.message, "bad"); } } })),
-        ]));
-        body.append(simpleTable(["Name", "Prefix", "Created", ""], rows));
+        const old = d.tokens.filter((t) => t.level === "legacy").length;
+        if (old) body.append(el("div", { class: "dm-note warn", style: "margin-bottom:12px" }, [icon("warning", 15), el("span", { text: `${old} older token${old > 1 ? "s" : ""} can do everything, from anywhere, without expiring. Make a new token with only the access it needs, update the panel or script that uses it, then revoke the old one.` })]));
+        const rows = d.tokens.map((t) => {
+          const L = TOKEN_LEVELS[t.level] || TOKEN_LEVELS.legacy;
+          return el("tr", { class: t.expired ? "tok-expired" : "" }, [
+            el("td", {}, [el("b", { text: t.name }), el("div", { class: "muted", style: "font-family:monospace;font-size:11.5px", text: t.prefix + "…" })]),
+            el("td", {}, el("span", { class: `srv-sev ${L.cls}`, title: L.text }, [icon(L.ico, 13), el("span", { text: L.label })])),
+            el("td", { class: "muted", text: (t.allow_from || []).join(", ") || "anywhere" }),
+            el("td", { class: t.expired ? "" : "muted" }, t.expired ? el("span", { class: "srv-sev crit" }, [icon("error", 13), el("span", { text: "expired" })]) : el("span", { text: t.expires ? when(t.expires) : "never" })),
+            el("td", { class: "muted", text: t.last_used ? `${ago(t.last_used)}${t.last_ip ? ` from ${t.last_ip}` : ""}` : "never" }),
+            el("td", { class: "actions" }, el("button", { class: "btn btn-sm btn-danger", text: "Revoke", onclick: async () => {
+              if (!confirmInline(`Revoke token "${t.name}"?`)) return;
+              try { await API.tokenRevoke(t.id); toast("Revoked", "good"); load(); } catch (e) { toast(e.message, "bad"); } } })),
+          ]);
+        });
+        body.append(simpleTable(["Name", "Access", "Only from", "Expires", "Last used", ""], rows));
       });
     };
-    async function create() {
-      const name = $("#tok-name").value.trim(); if (!name) return;
+    async function create(extra) {
+      const data = { name: name.value.trim(), level: level.value, allow_from: allow.value.trim(), days: days.value ? +days.value : null, ...(extra || {}) };
+      if (!data.name) { toast("Give the token a name", "bad"); name.focus(); return; }
+      if (data.level === "admin" && !extra) return confirmAdmin();
       try {
-        const r = await API.tokenCreate(name);
+        const r = await API.tokenCreate(data);
+        const L = TOKEN_LEVELS[r.level] || TOKEN_LEVELS.read;
         const ta = el("input", { type: "text", value: r.token, readonly: "readonly", style: "font-family:monospace;width:100%" });
         openModal("API token created", el("div", {}, [
+          el("p", { class: `srv-sev ${L.cls}`, style: "margin:0 0 10px" }, [icon(L.ico, 14), el("span", { text: `${L.label}${(r.allow_from || []).length ? ` · only from ${r.allow_from.join(", ")}` : ""}${r.expires ? ` · expires ${when(r.expires)}` : ""}` })]),
           el("p", { class: "muted", text: "Copy this token now, it will not be shown again:" }),
           ta,
         ]), [el("button", { class: "btn btn-primary", text: "Copy", onclick: () => { ta.select(); try { document.execCommand("copy"); toast("Copied", "good"); } catch (e) {} } })]);
-        $("#tok-name").value = ""; load();
-      } catch (e) { toast(e.message, "bad"); }
+        name.value = ""; allow.value = ""; load();
+      } catch (e) {
+        if (e.message === "otp_required") return confirmAdmin(true);
+        toast(e.message, "bad");
+      }
+    }
+    function confirmAdmin(needOtp) {
+      const pw = el("input", { type: "password", autocomplete: "current-password" });
+      const otp = el("input", { type: "text", inputmode: "numeric", autocomplete: "one-time-code", placeholder: "123456" });
+      const go = () => { const x = { password: pw.value, otp: otp.value.trim() }; closeModal(); create(x); };
+      pw.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+      openModal("Confirm it's you", el("div", { class: "em-form" }, [
+        el("p", { class: "muted", text: "A full admin token can run anything on this server. Type your password to create it." }),
+        field("Password", pw),
+        needOtp ? field("2FA code", otp) : null,
+      ].filter(Boolean)), [el("button", { class: "btn btn-primary", text: "Create token", onclick: go })]);
+      setTimeout(() => (needOtp ? otp : pw).focus(), 50);
     }
     state.refreshHandler = load; load();
   }
@@ -9543,6 +9610,18 @@
 
       // One-click update: the server downloads + verifies the release and a background
       // job installs it; the panel restarts, so poll until the new version answers.
+      // After an update: reload only once the new page and its stylesheet both answer, so it never comes up unstyled.
+      async function reloadWhenReady() {
+        for (let i = 0; i < 20; i++) {
+          try {
+            const html = await (await fetch("/", { cache: "no-store" })).text();
+            const v = (html.match(/\/css\/style\.css\?v=[\w.-]+/) || [])[0];
+            if (v && (await fetch(v, { cache: "no-store" })).ok) break;
+          } catch (e) {}
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+        location.reload();
+      }
       async function installUpdate(r, box, run = API.aboutUpdate, back = false) {
         const ask = back
           ? `Go back to ${r.latest_label} now?\n\nThe panel restarts (about a minute). Your admin account, settings, VPNs and sites are kept; only the panel's own files are replaced with the saved copy, and this version is saved too so you can return to it.`
@@ -9586,7 +9665,7 @@
               clearInterval(t); title.textContent = done;
               pct = 100; label = `${done}, reloading`; prog.classList.add("ok"); draw("ok");
               toast(`${done}, reloading`, "good");
-              setTimeout(() => location.reload(), 1500);
+              reloadWhenReady();
               return;
             } else if (!s.running && s.log.some((l) => l.startsWith("✖"))) {
               const failed = back ? "Rollback failed, this version was kept" : "Update failed, the previous version was kept";

@@ -1256,7 +1256,159 @@ window.AuroraOps = (ui) => {
   // ======================================================================
   const meter = (label, pct, sub) => el("div", { class: "op-meter" }, [el("div", { class: "op-meter-l" }, [el("span", { text: label }), el("b", { text: pct == null ? "n/a" : `${Math.round(pct)}%` })]),
     el("div", { class: `op-meter-bar ${pct >= 90 ? "bad" : pct >= 75 ? "warn" : ""}` }, el("span", { style: `width:${Math.max(2, Math.min(100, pct || 0))}%` })), sub ? el("small", { class: "muted", text: sub }) : null]);
-  const upt = (s) => !s ? "n/a" : s < 3600 ? `${Math.round(s / 60)} min` : s < 86400 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86400)} days`;
+  const upt = (s) => !s ? "n/a" : s < 3600 ? `${Math.round(s / 60)} min` : s < 86400 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86400)} day${Math.round(s / 86400) === 1 ? "" : "s"}`;
+
+  // Severity: critical red, medium orange, low green, informative blue (alerts use critical / warning / info).
+  const SEV = { critical: ["crit", "error", "Critical"], high: ["crit", "error", "Critical"], warning: ["med", "warning", "Medium"], medium: ["med", "warning", "Medium"],
+    low: ["low", "check", "Low"], info: ["info", "info", "Info"] };
+  const sev = (level) => SEV[level] || SEV.info;
+  const sevChip = (level, text) => { const [cls, ico, word] = sev(level); return el("span", { class: `srv-sev ${cls}`, title: word }, [icon(ico, 13), el("span", { text: text || word })]); };
+  // Services by kind, each with its own icon.
+  const SVC_KIND_ICON = { web: "globe", php: "t_code", db: "database", mail: "mail", dns: "dns", ssh: "key", docker: "t_docker", vpn: "vpn", security: "shield" };
+  const ACCESS = { read: ["Read only", "info", "eye"], fleet: ["Fleet control", "med", "t_servers"], admin: ["Full admin", "crit", "key"], legacy: ["Full access, older token", "med", "warning"] };
+  const canAct = (s) => !s.local && s.ok && ["fleet", "admin", "legacy"].includes(s.access);
+  const canRun = (s) => !s.local && s.ok && ["admin", "legacy"].includes(s.access);
+
+  function svcRow(s) {
+    const v = s.services;
+    if (!v) return null;
+    return el("div", { class: "srv-svcs" }, [
+      el("div", { class: "srv-svc-head" }, [
+        el("span", { class: "srv-svc-sum", title: `${v.total} services loaded` }, [icon("services", 14), el("b", { text: String(v.running) }), el("span", { class: "muted", text: "running" })]),
+        v.failed ? el("span", { class: "srv-sev crit" }, [icon("error", 13), el("b", { text: String(v.failed) }), el("span", { text: "failed" })]) : sevChip("low", "none failed")]),
+      ...v.kinds.map((k) => el("span", { class: `srv-kind ${k.down.length ? "down" : k.up ? "up" : "idle"}`,
+        title: `${k.label}: ${k.units.map((u) => u.replace(/\.service$/, "")).join(", ")}${k.down.length ? ` (failed: ${k.down.map((u) => u.replace(/\.service$/, "")).join(", ")})` : ""}` },
+        [icon(SVC_KIND_ICON[k.key] || "services", 14), el("span", { text: k.label }), el("b", { text: `${k.up}/${k.units.length}` })])),
+    ]);
+  }
+
+  // Server control asks for the password again (once covers ten minutes). Returns the extra fields to send, or null if cancelled.
+  function askPassword(why) {
+    return new Promise((resolve) => {
+      const pw = el("input", { type: "password", autocomplete: "current-password", placeholder: "Your panel password" });
+      const otp = el("input", { type: "text", inputmode: "numeric", autocomplete: "one-time-code", placeholder: "123456" });
+      const otpWrap = field("2FA code", otp, "Only when two-factor sign-in is on.");
+      let done = false;
+      const finish = (v) => { if (!done) { done = true; closeModal(); resolve(v); } };
+      openModal("Confirm it's you", el("div", { class: "em-form" }, [el("p", { class: "muted", text: why }), field("Password", pw), otpWrap]),
+        [el("button", { class: "btn btn-primary", text: "Confirm", onclick: () => finish({ password: pw.value, otp: otp.value.trim() }) })]);
+      pw.addEventListener("keydown", (e) => { if (e.key === "Enter") finish({ password: pw.value, otp: otp.value.trim() }); });
+      const m = document.querySelector("#modal");
+      if (m) new MutationObserver((_, o) => { if (!document.body.contains(m)) { o.disconnect(); if (!done) { done = true; resolve(null); } } }).observe(document.body, { childList: true, subtree: true });
+      setTimeout(() => pw.focus(), 50);
+    });
+  }
+  async function confirmed(fn) {
+    try { return await fn({}); } catch (e) {
+      if (!/password_required|otp_required/.test(e.message)) throw e;
+      const creds = await askPassword("Controlling another server needs your password again. It counts for ten minutes.");
+      if (!creds) return null;
+      return fn(creds);
+    }
+  }
+  async function control(s, action, unit, label, after) {
+    try {
+      const r = await confirmed((c) => API.serverAction(s.id, { action, unit: unit || "", ...c }));
+      if (r) { toast(label, "good"); if (after) setTimeout(after, 1500); }
+    } catch (e) { toast(e.message, "bad"); }
+  }
+
+  // One-click terminal: a command box that runs on that server (full admin tokens only) and shows the output.
+  const QUICK = [["Uptime", "uptime"], ["Disk space", "df -h -x tmpfs -x devtmpfs"], ["Memory", "free -h"], ["Failed services", "systemctl --failed --no-pager"],
+    ["Top processes", "ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu | head -15"], ["Recent errors", "journalctl -p err -n 30 --no-pager"]];
+  function runDlg(s) {
+    const cmd = el("input", { type: "text", class: "srv-cmd", placeholder: "systemctl status nginx", autocomplete: "off", spellcheck: "false" });
+    const out = el("pre", { class: "log srv-out", text: `Commands run as root on ${s.name} (${(s.url || "").replace(/^https?:\/\//, "")}).` });
+    const status = el("span", { class: "muted mx-small" });
+    const hist = [];
+    let hi = -1;
+    const go = async (text) => {
+      const c = (text != null ? text : cmd.value).trim();
+      if (!c) return;
+      cmd.value = c; hist.unshift(c); hi = -1;
+      out.textContent += `\n\n$ ${c}\n`; status.textContent = "Running…"; runBtn.disabled = true;
+      try {
+        const r = await confirmed((x) => API.serverExec(s.id, { command: c, ...x }));
+        if (r) { out.textContent += (r.output || "").replace(/\s+$/, "") || "(no output)"; status.textContent = `exit ${r.code == null ? "timeout" : r.code} · ${r.seconds}s`; }
+        else status.textContent = "Cancelled";
+      } catch (e) { out.textContent += `! ${e.message}`; status.textContent = ""; }
+      runBtn.disabled = false; out.scrollTop = 1e9; cmd.select();
+    };
+    const runBtn = el("button", { class: "btn btn-primary", onclick: () => go() }, [icon("play", 14), " Run"]);
+    cmd.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") go();
+      else if (e.key === "ArrowUp" && hist.length) { hi = Math.min(hi + 1, hist.length - 1); cmd.value = hist[hi]; e.preventDefault(); }
+      else if (e.key === "ArrowDown" && hi > 0) { hi -= 1; cmd.value = hist[hi]; e.preventDefault(); }
+    });
+    openModal(`Terminal on ${s.name}`, el("div", { class: "em-form" }, [
+      el("div", { class: "srv-quick" }, QUICK.map(([l, c]) => el("button", { class: "btn btn-sm btn-ghost", text: l, title: c, onclick: () => go(c) }))),
+      el("div", { class: "srv-cmdrow" }, [el("span", { class: "srv-prompt", text: "#" }), cmd, runBtn]), status, out,
+      el("p", { class: "muted mx-small", text: "One command at a time, up to two minutes each. For long or interactive jobs use Open its panel → Terminal. Every command is written to that server's Activity Log." }),
+    ]), []);
+    modalWide();
+    setTimeout(() => cmd.focus(), 50);
+  }
+
+  // A server card: on the Servers page (full) and on the dashboard (compact).
+  function srvCard(s, reload, compact) {
+    const crit = (s.alerts || []).some((a) => a.level === "critical") || (s.failed_units || []).length;
+    const acc = ACCESS[s.access];
+    const ctl = [];
+    if (s.local) {
+      if ((s.failed_units || []).length) ctl.push(btn("Services", () => navigate("services"), "btn-ghost"));
+      if ((s.updates || {}).total) ctl.push(btn("Install updates", () => navigate("updates"), "btn-ghost"));
+    } else if (s.ok && s.secure && canAct(s)) {
+      (s.failed_units || []).slice(0, compact ? 1 : 3).forEach((u) => ctl.push(el("button", { class: "btn btn-sm btn-ghost", title: `Restart ${u} on ${s.name}`,
+        onclick: () => control(s, "restart_service", u, `${u} restarted on ${s.name}`, reload) }, [icon("refresh", 13), ` Restart ${u.replace(/\.service$/, "")}`])));
+      if ((s.updates || {}).total) ctl.push(armed(`Install ${s.updates.total} updates`, "Click again to install", () => control(s, "install_updates", "", `Installing updates on ${s.name}`, reload), "btn-ghost"));
+    }
+    if (canRun(s) && s.secure) ctl.push(el("button", { class: "btn btn-sm btn-primary", onclick: () => runDlg(s) }, [icon("terminal", 14), " Terminal"]));
+    const note = !s.local && s.ok ? (!s.access ? `It runs AuroraPanel ${s.version || "(older)"}: update it to see its services and control it from here.`
+      : !s.secure ? "Watch only: turn on Panel HTTPS on that server to control it from here."
+      : s.access === "read" ? "Read only token: make a Fleet control or Full admin token there to control it from here." : "") : "";
+    return el("div", { class: `card op-srv ${s.ok ? "" : "bad"} ${compact ? "compact" : ""}` }, [
+      el("div", { class: "op-srv-h" }, [el("span", { class: `op-dot ${s.ok ? (crit ? "warn" : "good") : "bad"}` }),
+        el("div", { class: "grow" }, [el("b", { text: s.name }), el("p", { class: "muted mx-small mx-ell", text: [s.hostname, s.model || (s.pi ? "Raspberry Pi" : ""), s.version ? `v${s.version}` : ""].filter(Boolean).join(" · ") })]),
+        s.local ? pill("this one", "good") : acc ? el("span", { class: `srv-sev ${acc[1]}`, title: "What this server's token allows" }, [icon(acc[2], 13), el("span", { text: acc[0] })]) : null,
+        !s.local && !compact ? el("button", { class: `srv-pin ${s.pinned ? "on" : ""}`, title: s.pinned ? "Shown on the dashboard. Click to unpin" : "Pin to the dashboard",
+          onclick: () => call(() => API.serverPin(s.id, !s.pinned), s.pinned ? "Unpinned from the dashboard" : "Pinned to the dashboard", reload) }, icon("pushpin", 15)) : null]),
+      s.ok ? el("div", { class: "op-srv-m" }, [meter("CPU", s.cpu, compact ? "" : `${s.cpus || "?"} cores · load ${s.load != null ? s.load.toFixed(2) : "n/a"}${s.temp ? ` · ${s.temp}°C` : ""}`),
+        meter("Memory", s.mem_pct, compact ? "" : s.mem_total ? fmtBytes(s.mem_total) : ""), meter("Disk", s.disk_pct, compact ? "" : s.disk_total ? fmtBytes(s.disk_total) : "")])
+        : el("div", { class: "mx-note" }, [icon("warning", 16), el("span", { text: s.error || "Unreachable" })]),
+      s.ok ? svcRow(s) : null,
+      s.ok ? el("div", { class: "op-srv-f" }, [
+        el("span", { class: "srv-up" }, [icon("clock", 13), el("span", { text: `Up ${upt(s.uptime)}` })]),
+        (s.updates || {}).total ? sevChip(s.updates.security ? "critical" : "warning", `${s.updates.total} updates${s.updates.security ? ` · ${s.updates.security} security` : ""}`) : sevChip("low", "up to date"),
+        (s.updates || {}).reboot ? sevChip("warning", "restart needed") : null,
+        s.bans ? sevChip("info", `${s.bans} banned`) : null]) : null,
+      (s.alerts || []).length ? el("div", { class: "op-srv-al" }, s.alerts.slice(0, compact ? 2 : 4).map((a) => el("div", {}, [sevChip(a.level), el("span", { class: "mx-ell", text: a.title })]))) : null,
+      note ? el("p", { class: "muted mx-small srv-note", text: note }) : null,
+      el("div", { class: "toolbar" }, [
+        ...ctl,
+        s.local || !s.url ? null : el("a", { class: "btn btn-sm btn-ghost", href: s.url, target: "_blank", rel: "noopener", text: "Open its panel ↗" }),
+        !compact && !s.local && s.error && /certificate changed/.test(s.error) ? armed("Trust its new certificate", "Click again", () => call(() => API.serverRepin(s.id), "Certificate accepted", reload), "btn-ghost") : null,
+        !compact && !s.local ? armed("Remove", "Click again", () => call(() => API.serverRemove(s.id), "Removed", reload), "btn-ghost") : null,
+      ]),
+    ]);
+  }
+
+  // Dashboard → Servers: shown once other servers are added; the pinned ones, or all of them when none is pinned.
+  async function serversPanel(box) {
+    let d;
+    try { d = await API.servers(); } catch (e) { return; }
+    const others = d.servers.filter((s) => !s.local);
+    box.innerHTML = "";
+    box.hidden = !others.length;
+    if (!others.length) return;
+    const pinned = others.filter((s) => s.pinned);
+    const show = pinned.length ? pinned : others;
+    const bad = others.filter((s) => !s.ok || (s.alerts || []).some((a) => a.level === "critical") || (s.failed_units || []).length).length;
+    box.append(el("div", { class: "dash-section-row" }, [el("h2", { class: "section-title dash-section", text: "Servers" }),
+      el("span", { class: "muted mx-small grow", text: `${others.length} added · ${others.filter((s) => s.ok).length} reachable${bad ? ` · ${bad} need attention` : ""}${pinned.length ? "" : " · pin servers on the Servers page to choose which show here"}` }),
+      el("button", { class: "btn btn-sm btn-ghost", onclick: () => navigate("servers") }, [icon("t_servers", 13), " All servers"])]),
+      el("div", { class: "op-srvs dash-srvs" }, show.map((s) => srvCard(s, () => serversPanel(box), true))));
+  }
+
   async function viewServers(root) {
     root.append(pageHead("Servers", "All your AuroraPanel servers on one page, Raspberry Pis at home, VPSs in the cloud. See which one needs attention, and act on all of them at once.",
       [btn("Add a server", () => addDlg(), "btn-primary")]));
@@ -1276,26 +1428,7 @@ window.AuroraOps = (ui) => {
         tile("Security updates", String(d.servers.reduce((a, s) => a + ((s.updates || {}).security || 0), 0)), "waiting across all servers", "t_update"),
         tile("Banned addresses", String(d.servers.reduce((a, s) => a + (s.bans || 0), 0)), "manual + fail2ban, all servers", "ban"),
       ]));
-      body.append(el("div", { class: "op-srvs" }, d.servers.map((s) => el("div", { class: `card op-srv ${s.ok ? "" : "bad"}` }, [
-        el("div", { class: "op-srv-h" }, [el("span", { class: `op-dot ${s.ok ? ((s.alerts || []).some((a) => a.level === "critical") || (s.failed_units || []).length ? "warn" : "good") : "bad"}` }),
-          el("div", { class: "grow" }, [el("b", { text: s.name + (s.local ? "" : "") }), el("p", { class: "muted mx-small mx-ell", text: [s.hostname, s.model || (s.pi ? "Raspberry Pi" : ""), s.version ? `v${s.version}` : ""].filter(Boolean).join(" · ") })]),
-          s.local ? pill("this one", "good") : null]),
-        s.ok ? el("div", { class: "op-srv-m" }, [meter("CPU", s.cpu, `${s.cpus || "?"} cores · load ${s.load != null ? s.load.toFixed(2) : "n/a"}${s.temp ? ` · ${s.temp}°C` : ""}`),
-          meter("Memory", s.mem_pct, s.mem_total ? fmtBytes(s.mem_total) : ""), meter("Disk", s.disk_pct, s.disk_total ? fmtBytes(s.disk_total) : "")])
-          : el("div", { class: "mx-note" }, [icon("warning", 16), el("span", { text: s.error || "Unreachable" })]),
-        s.ok ? el("div", { class: "op-srv-f" }, [
-          el("span", { text: `Up ${upt(s.uptime)}` }),
-          (s.updates || {}).total ? pill(`${s.updates.total} updates${s.updates.security ? ` · ${s.updates.security} security` : ""}`, s.updates.security ? "bad" : "warn") : pill("up to date", "good"),
-          (s.updates || {}).reboot ? pill("restart needed", "warn") : null,
-          (s.failed_units || []).length ? pill(`${s.failed_units.length} failed service${s.failed_units.length > 1 ? "s" : ""}`, "bad") : null,
-          s.bans ? el("span", { class: "muted", text: `${s.bans} banned` }) : null]) : null,
-        (s.alerts || []).length ? el("div", { class: "op-srv-al" }, s.alerts.slice(0, 3).map((a) => el("div", {}, [pill(a.level, a.level === "critical" ? "bad" : a.level === "warning" ? "warn" : "dim"), el("span", { class: "mx-ell", text: a.title })]))) : null,
-        el("div", { class: "toolbar" }, [
-          s.local ? null : el("a", { class: "btn btn-sm btn-ghost", href: s.url, target: "_blank", rel: "noopener", text: "Open its panel ↗" }),
-          !s.local && s.error && /certificate changed/.test(s.error) ? armed("Trust its new certificate", "Click again", () => call(() => API.serverRepin(s.id), "Certificate accepted", load), "btn-ghost") : null,
-          s.local ? null : armed("Remove", "Click again", () => call(() => API.serverRemove(s.id), "Removed", load), "btn-ghost"),
-        ]),
-      ]))));
+      body.append(el("div", { class: "op-srvs" }, d.servers.map((s) => srvCard(s, load, false))));
       // ban everywhere
       const ip = el("input", { type: "text", placeholder: "203.0.113.7 or 203.0.113.0/24" });
       const reason = el("input", { type: "text", placeholder: "e.g. SSH brute force" });
@@ -1305,7 +1438,7 @@ window.AuroraOps = (ui) => {
       const res = (r) => { out.innerHTML = ""; out.append(el("div", { class: "mx-list" }, [el("div", { class: "mx-list-row" }, [el("b", { class: "grow", text: "This server" }), pill(r.local.ok ? "done" : r.local.error, r.local.ok ? "good" : "warn")]),
         ...Object.entries(r.servers).map(([n, x]) => el("div", { class: "mx-list-row" }, [el("b", { class: "grow", text: n }), pill(x.ok ? "done" : x.error, x.ok ? "good" : "bad")]))])); };
       body.append(card("Ban or unban everywhere", [el("p", { class: "muted", text: d.servers.length > 1
-        ? `One click blocks an address on this server and on ${d.servers.length - 1} other${d.servers.length === 2 ? "" : "s"}, websites, mail, SSH, VPN, panels.`
+        ? `One click blocks an address on this server and on ${d.servers.length - 1} other${d.servers.length === 2 ? "" : "s"}, websites, mail, SSH, VPN, panels. Servers with a read only token are skipped.`
         : "Blocks an address on this server, websites, mail, SSH, VPN, the panel. Add your other servers above and it reaches them too." }),
         el("div", { class: "op-banrow" }, [field("Address or range", ip), field("Reason", reason), field("For", durSel)]),
         el("div", { class: "toolbar" }, [btn("Ban everywhere", () => call(() => API.serversBan({ ip: ip.value.trim(), reason: reason.value.trim(), duration: +durSel.value || null }), "", res), "btn-danger"),
@@ -1316,13 +1449,14 @@ window.AuroraOps = (ui) => {
       const url = el("input", { type: "text", placeholder: "192.168.0.100:8088" });
       const token = el("input", { type: "password", placeholder: "aur_…", autocomplete: "off" });
       openModal("Add a server", el("div", { class: "em-form" }, [
-        el("ol", { class: "op-steps" }, [el("li", { text: "On the other server's panel: Security → Manage API Tokens → create a token (name it after this server)." }),
+        el("ol", { class: "op-steps" }, [el("li", { text: "On the other server's panel: Security → Manage API Tokens → create a token named after this server, locked to this server's address." }),
+          el("li", { text: "Pick what this panel may do there: Read only (watch), Fleet control (also restart services, install updates, ban) or Full admin (also run commands)." }),
           el("li", { text: "Copy it and paste it below with that panel's address (the one you open it with)." })]),
-        field("Name", name), field("Panel address", url, "The address and port. HTTPS is used when that panel has it, and its certificate is remembered. A panel without HTTPS is only added on your own network."), field("API token", token),
+        field("Name", name), field("Panel address", url, "The address and port. HTTPS is used when that panel has it, and its certificate is remembered. A panel without HTTPS is only added on your own network, and can be watched but not controlled."), field("API token", token),
       ]), [el("button", { class: "btn btn-primary", text: "Add", onclick: () => call(() => API.serverAdd({ name: name.value.trim(), url: url.value.trim(), token: token.value.trim() }), "Server added", () => { closeModal(); load(); }) })]);
     }
     load();
-    const t = setInterval(load, 60000); state.cleanups.push(() => clearInterval(t));
+    const t = setInterval(() => { if (!document.querySelector("#modal")) load(); }, 60000); state.cleanups.push(() => clearInterval(t));
   }
 
   // ======================================================================
@@ -2224,6 +2358,6 @@ window.AuroraOps = (ui) => {
   }
 
   return { activity: viewActivity, alerts: viewAlerts, schedbackups: viewSchedBackups, updates: viewUpdates, autossl: viewAutoSSL, isolation: viewIsolation,
-    dockerapps: viewDockerApps, servers: viewServers, mysites: viewMySites, panelusers: viewPanelUsers, wptoolkit: viewWPToolkit, migrate: viewMigrate,
+    dockerapps: viewDockerApps, servers: viewServers, serversPanel, mysites: viewMySites, panelusers: viewPanelUsers, wptoolkit: viewWPToolkit, migrate: viewMigrate,
     globalsec: viewGlobalSecurity, secreport: viewSecReport, shadow: viewShadow };
 };
