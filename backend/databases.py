@@ -264,10 +264,56 @@ def mysql_wizard(db: str, user: str, password: str, host: str = "localhost") -> 
     return {"ok": True, "database": db, "user": f"{user}@{host}"}
 
 
+def _apache_state() -> dict:
+    """Is Apache serving, and if not, which other web server holds port 80 (nginx, Caddy, hiawatha, ...)?
+
+    phpMyAdmin and phpPgAdmin are Apache aliases: when another server owns port 80, Apache can't start
+    and their /phpmyadmin or /phppgadmin link answers 404 from that other server instead."""
+    if not IS_LINUX:
+        return {"apache": False, "other": None}
+    import re
+    from . import problems, sysapps
+    apache, other = False, None
+    try:
+        apache = bool(sysapps._active(["apache2"]).get("apache2"))
+        other = None if apache else sysapps._running_web_server("apache")
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
+    if not apache and not other and shutil.which("ss"):
+        try:  # not one of the catalogued servers: ask the kernel who listens on port 80
+            out = subprocess.run(["ss", "-ltnp"], capture_output=True, text=True, timeout=10).stdout
+            for line in out.splitlines():
+                if re.search(r":80\s", line):
+                    m = re.search(r'users:\(\("([^"]+)"', line)
+                    if m and m.group(1) != "apache2":
+                        other = m.group(1)
+                        break
+        except (OSError, subprocess.SubprocessError) as quiet_exc:
+            problems.quiet(quiet_exc)
+    return {"apache": apache, "other": other}
+
+
+def _web_tool_done(log, tool: str, path: str, ready_hint: str) -> dict:
+    """The last line of a phpMyAdmin / phpPgAdmin install: 'ready' only if Apache really serves it.
+    Otherwise say who holds port 80 and what to do, instead of a green tick that leads to a 404."""
+    st = _apache_state()
+    if not st["apache"] and IS_LINUX:
+        subprocess.run(["systemctl", "start", "apache2"], capture_output=True, timeout=60)  # a plain restart may be all it needs
+        st = _apache_state()
+    if st["apache"]:
+        log(f"✔ {tool} is ready at {path} — {ready_hint}")
+        return {"ok": True, "reachable": True}
+    who = f"{st['other']} is on port 80 instead of Apache" if st["other"] else "Apache isn't running"
+    log(f"⚠ {tool} is installed, but {who}, so {path} can't be opened yet. Stop that server or move it off port 80, "
+        f"start Apache under System Applications, then open {path}.")
+    return {"ok": True, "reachable": False, "other": st["other"]}
+
+
 def phpmyadmin_status() -> dict:
+    st = _apache_state()
     return {"installed": phpmyadmin_installed(), "path": "/phpmyadmin",
             "enabled": Path("/etc/apache2/conf-enabled/phpmyadmin.conf").exists(),
-            "apache": subprocess.run(["systemctl", "is-active", "--quiet", "apache2"]).returncode == 0 if IS_LINUX else False}
+            "apache": st["apache"], "other": st["other"]}
 
 
 def phpmyadmin_install() -> jobs.Job:
@@ -291,7 +337,7 @@ def phpmyadmin_install() -> jobs.Job:
             subprocess.run(["a2enconf", "phpmyadmin"], capture_output=True, text=True, timeout=30)
         from . import webaccess
         webaccess._reload_apache()
-        log("✔ phpMyAdmin is ready at /phpmyadmin")
+        _web_tool_done(log, "phpMyAdmin", "/phpmyadmin", "log in with a user that has a password.")
         return phpmyadmin_status()
 
     return jobs.launch_fn("install phpMyAdmin", fn)
@@ -650,8 +696,8 @@ def phppgadmin_status() -> dict:
         except OSError:
             pass
         lan = "Require local" not in txt  # someone opened it up by hand
-    return {"installed": installed, "enabled": enabled, "lan": lan, "path": "/phppgadmin",
-            "apache": subprocess.run(["systemctl", "is-active", "--quiet", "apache2"]).returncode == 0 if IS_LINUX else False}
+    st = _apache_state()
+    return {"installed": installed, "enabled": enabled, "lan": lan, "path": "/phppgadmin", "apache": st["apache"], "other": st["other"]}
 
 
 def phppgadmin_set_lan(on: bool) -> dict:
@@ -686,8 +732,7 @@ def phppgadmin_install() -> jobs.Job:
             raise DatabaseError("apt-get install failed. If it reported a 404, the package mirror is behind; try again in a few minutes.")
         log("• Allowing access from your local network…")
         phppgadmin_set_lan(True)
-        log("✔ phpPgAdmin is ready at /phppgadmin — log in with a PostgreSQL role that has a password.")
-        return {"ok": True}
+        return _web_tool_done(log, "phpPgAdmin", "/phppgadmin", "log in with a PostgreSQL role that has a password.")
     return jobs.launch_fn("Install phpPgAdmin", fn)
 
 

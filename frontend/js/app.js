@@ -8279,7 +8279,7 @@
           if (r && r.job) watchJob(jp, r.job, "Installing phpMyAdmin…", load);
         }, "btn-primary")];
       } else if (!p.apache) {
-        status = pill("Apache stopped", "warn");
+        status = pill(p.other ? `${p.other} is on port 80` : "Apache stopped", "warn");
         actions = [btn("Open System Applications", () => navigate("sysapps"), "btn-primary")];
       } else {
         status = pill("ready", "good");
@@ -8581,6 +8581,10 @@
             try { const j = await API.job(r.job); if (j.status !== "running") { clearInterval(t); load(); } } catch (e) { clearInterval(t); } }, 2000);
             state.cleanups.push(() => clearInterval(t)); }
         }, "btn-primary")];
+      } else if (!p.apache) {
+        // Installed, but Apache isn't serving: no green tick and no Open link, they'd lead to a 404 from whatever owns port 80.
+        status = pill(p.other ? `${p.other} is on port 80` : "Apache stopped", "warn");
+        actions = [btn("Open System Applications", () => navigate("sysapps"), "btn-primary")];
       } else if (!p.lan) {
         status = pill("only works on the Pi itself", "warn");
         actions = [btn("Allow from my network", () => call(() => API.phppgadminLan(true), "phpPgAdmin is now reachable from your network"), "btn-primary")];
@@ -8594,7 +8598,9 @@
         el("p", { class: "muted", style: "margin:6px 0 10px", text: p.installed
           ? "Web tool for browsing tables and running SQL. Log in with a user below that has a password, the built-in postgres account has none and is blocked. Tick “Superuser” on a user for full admin rights."
           : "Optional web tool for browsing tables and running SQL. It's opened to your local network and VPN automatically (never the internet)." }),
-        p.installed && !p.apache ? el("p", { class: "dm-hint", text: "Apache isn't running, start it in System Applications to use phpPgAdmin." }) : null,
+        p.installed && !p.apache ? el("p", { class: "dm-hint", text: p.other
+          ? `Apache isn't running because ${p.other} is on port 80, so phpPgAdmin can't be opened. Stop ${p.other} or move it off port 80, then start Apache in System Applications.`
+          : "Apache isn't running, start it in System Applications to use phpPgAdmin." }) : null,
         el("div", { class: "toolbar", style: "margin:0" }, actions),
       ]);
     }
