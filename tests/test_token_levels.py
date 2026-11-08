@@ -179,15 +179,6 @@ def test_control_and_commands_only_over_https(monkeypatch, tmp_path):
         servers.run("a1", "uptime", "me")
 
 
-def test_pin_is_saved_and_shown(monkeypatch, tmp_path):
-    monkeypatch.setattr(servers, "STATE", tmp_path / "servers.json")
-    servers._save({"servers": [{"id": "a1", "name": "ns2", "url": "https://192.168.0.102:8088", "token": "aur_x"}]})
-    assert servers.pin("a1", True)["pinned"] is True
-    assert servers._public(servers._load()["servers"][0])["pinned"] is True
-    with pytest.raises(servers.ServerError):
-        servers.pin("zz", True)
-
-
 def test_service_counts_group_services_by_kind(monkeypatch):
     from backend import services as svc
     rows = [("nginx.service", "active", "running"), ("mariadb.service", "failed", "failed"), ("postgresql@15-main.service", "active", "running"),

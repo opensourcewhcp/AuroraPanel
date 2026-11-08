@@ -671,7 +671,6 @@ const API = (() => {
     serversBan: (data) => request("POST", "/api/servers/ban", data),
     serverAction: (id, data) => request("POST", `/api/servers/${encodeURIComponent(id)}/action`, data),
     serverExec: (id, data) => request("POST", `/api/servers/${encodeURIComponent(id)}/exec`, data),
-    serverPin: (id, on) => request("POST", `/api/servers/${encodeURIComponent(id)}/pin`, { on }),
     dockerInstall: (data) => request("POST", "/api/docker/install", data),
     dockerCtl: (name, action) => request("POST", `/api/docker/apps/${encodeURIComponent(name)}/${action}`),
     dockerLogs: (name) => request("GET", `/api/docker/apps/${encodeURIComponent(name)}/logs?lines=400`),

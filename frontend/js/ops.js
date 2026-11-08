@@ -1349,7 +1349,7 @@ window.AuroraOps = (ui) => {
     setTimeout(() => cmd.focus(), 50);
   }
 
-  // A server card: on the Servers page (full) and on the dashboard (compact).
+  // A server card on the Servers page.
   function srvCard(s, reload, compact) {
     const crit = (s.alerts || []).some((a) => a.level === "critical") || (s.failed_units || []).length;
     const acc = ACCESS[s.access];
@@ -1369,9 +1369,7 @@ window.AuroraOps = (ui) => {
     return el("div", { class: `card op-srv ${s.ok ? "" : "bad"} ${compact ? "compact" : ""}` }, [
       el("div", { class: "op-srv-h" }, [el("span", { class: `op-dot ${s.ok ? (crit ? "warn" : "good") : "bad"}` }),
         el("div", { class: "grow" }, [el("b", { text: s.name }), el("p", { class: "muted mx-small mx-ell", text: [s.hostname, s.model || (s.pi ? "Raspberry Pi" : ""), s.version ? `v${s.version}` : ""].filter(Boolean).join(" · ") })]),
-        s.local ? pill("this one", "good") : acc ? el("span", { class: `srv-sev ${acc[1]}`, title: "What this server's token allows" }, [icon(acc[2], 13), el("span", { text: acc[0] })]) : null,
-        !s.local && !compact ? el("button", { class: `srv-pin ${s.pinned ? "on" : ""}`, title: s.pinned ? "Shown on the dashboard. Click to unpin" : "Pin to the dashboard",
-          onclick: () => call(() => API.serverPin(s.id, !s.pinned), s.pinned ? "Unpinned from the dashboard" : "Pinned to the dashboard", reload) }, icon("pushpin", 15)) : null]),
+        s.local ? pill("this one", "good") : acc ? el("span", { class: `srv-sev ${acc[1]}`, title: "What this server's token allows" }, [icon(acc[2], 13), el("span", { text: acc[0] })]) : null,]),
       s.ok ? el("div", { class: "op-srv-m" }, [meter("CPU", s.cpu, compact ? "" : `${s.cpus || "?"} cores · load ${s.load != null ? s.load.toFixed(2) : "n/a"}${s.temp ? ` · ${s.temp}°C` : ""}`),
         meter("Memory", s.mem_pct, compact ? "" : s.mem_total ? fmtBytes(s.mem_total) : ""), meter("Disk", s.disk_pct, compact ? "" : s.disk_total ? fmtBytes(s.disk_total) : "")])
         : el("div", { class: "mx-note" }, [icon("warning", 16), el("span", { text: s.error || "Unreachable" })]),
@@ -1390,23 +1388,6 @@ window.AuroraOps = (ui) => {
         !compact && !s.local ? armed("Remove", "Click again", () => call(() => API.serverRemove(s.id), "Removed", reload), "btn-ghost") : null,
       ]),
     ]);
-  }
-
-  // Dashboard → Servers: shown once other servers are added; the pinned ones, or all of them when none is pinned.
-  async function serversPanel(box) {
-    let d;
-    try { d = await API.servers(); } catch (e) { return; }
-    const others = d.servers.filter((s) => !s.local);
-    box.innerHTML = "";
-    box.hidden = !others.length;
-    if (!others.length) return;
-    const pinned = others.filter((s) => s.pinned);
-    const show = pinned.length ? pinned : others;
-    const bad = others.filter((s) => !s.ok || (s.alerts || []).some((a) => a.level === "critical") || (s.failed_units || []).length).length;
-    box.append(el("div", { class: "dash-section-row" }, [el("h2", { class: "section-title dash-section", text: "Servers" }),
-      el("span", { class: "muted mx-small grow", text: `${others.length} added · ${others.filter((s) => s.ok).length} reachable${bad ? ` · ${bad} need attention` : ""}${pinned.length ? "" : " · pin servers on the Servers page to choose which show here"}` }),
-      el("button", { class: "btn btn-sm btn-ghost", onclick: () => navigate("servers") }, [icon("t_servers", 13), " All servers"])]),
-      el("div", { class: "op-srvs dash-srvs" }, show.map((s) => srvCard(s, () => serversPanel(box), true))));
   }
 
   async function viewServers(root) {
@@ -2358,6 +2339,6 @@ window.AuroraOps = (ui) => {
   }
 
   return { activity: viewActivity, alerts: viewAlerts, schedbackups: viewSchedBackups, updates: viewUpdates, autossl: viewAutoSSL, isolation: viewIsolation,
-    dockerapps: viewDockerApps, servers: viewServers, serversPanel, mysites: viewMySites, panelusers: viewPanelUsers, wptoolkit: viewWPToolkit, migrate: viewMigrate,
+    dockerapps: viewDockerApps, servers: viewServers, mysites: viewMySites, panelusers: viewPanelUsers, wptoolkit: viewWPToolkit, migrate: viewMigrate,
     globalsec: viewGlobalSecurity, secreport: viewSecReport, shadow: viewShadow };
 };

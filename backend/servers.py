@@ -196,17 +196,6 @@ def remove(sid: str) -> dict:
     return {"ok": True}
 
 
-def pin(sid: str, on: bool) -> dict:
-    """Show (or stop showing) this server on the dashboard's Servers panel."""
-    d = _load()
-    srv = next((s for s in d["servers"] if s["id"] == sid), None)
-    if not srv:
-        raise ServerError("That server isn't in the list")
-    srv["pinned"] = bool(on)
-    _save(d)
-    return {"ok": True, "pinned": srv["pinned"]}
-
-
 def repin(sid: str) -> dict:
     """Accept a server's new certificate (after a renewal)."""
     d = _load()
@@ -227,7 +216,7 @@ def repin(sid: str) -> dict:
 
 def _public(s: dict) -> dict:
     return {k: s[k] for k in ("id", "name", "url", "added", "hostname") if k in s} | {"fingerprint": s.get("fingerprint", "")[:16],
-                                                                                    "pinned": bool(s.get("pinned")), "secure": s.get("url", "").startswith("https://")}
+                                                                                    "secure": s.get("url", "").startswith("https://")}
 
 
 def self_summary() -> dict:

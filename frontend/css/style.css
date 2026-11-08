@@ -2715,18 +2715,7 @@ label.op-rule { justify-content: flex-start; cursor: pointer; }
 .srv-kind.idle .ic { color: var(--text-faint); background: var(--w60); }
 .op-srv-f .srv-up { display: inline-flex; align-items: center; gap: 5px; color: var(--text-dim); }
 .srv-note { margin: 0; }
-.srv-pin { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 8px; cursor: pointer;
-  border: 1px solid var(--stroke); background: transparent; color: var(--text-faint); transition: color .15s, background .15s, border-color .15s; }
-.srv-pin:hover { color: var(--text); background: var(--glass-2); }
-.srv-pin.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .op-srv .toolbar .btn .ic { display: inline-flex; vertical-align: -2px; }
-/* Dashboard → Servers */
-#dash-servers { margin-top: 22px; }
-#dash-servers .dash-section-row { gap: 12px; flex-wrap: wrap; }
-#dash-servers .dash-section-row .grow { flex: 1 1 200px; }
-.dash-srvs { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
-.op-srv.compact { gap: 10px; }
-.op-srv.compact .op-meter small { display: none; }
 /* One-click terminal on another server */
 .srv-quick { display: flex; flex-wrap: wrap; gap: 6px; }
 .srv-cmdrow { display: flex; align-items: center; gap: 8px; }
@@ -2745,7 +2734,6 @@ tr.tok-expired td { opacity: .6; }
   .tok-form { grid-template-columns: 1fr; }
   .srv-cmdrow { flex-wrap: wrap; }
   .srv-cmdrow .srv-cmd { flex-basis: calc(100% - 30px); }
-  .dash-srvs { grid-template-columns: 1fr; }
 }
 .op-banrow { display: grid; grid-template-columns: 1.2fr 1.4fr auto; gap: 12px; align-items: end; }
 .op-steps { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 13px; }

@@ -253,7 +253,6 @@
     at: '<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/>',
     listing: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/>',
     pin: '<path d="M12 21s-7-6.1-7-11.5A7 7 0 0 1 19 9.5C19 14.9 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>',
-    pushpin: '<path d="M9 3h6l-1 6 3 3v2H7v-2l3-3z"/><line x1="12" y1="14" x2="12" y2="21"/>',
     filter: '<polygon points="22 3 2 3 10 12.5 10 19 14 21 14 12.5 22 3"/>',
     inbox: '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.5 5h13l3.5 7v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/>',
     upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
@@ -1497,10 +1496,7 @@
     });
 
     // "All tools" header row: the title sits on the left, in line with the panel titles below; "Reset layout" on the right.
-    // Servers: other AuroraPanels added on the Servers page (hidden until there is one).
-    const srvBox = el("div", { id: "dash-servers", hidden: "" });
-    root.append(probBox, grid, srvBox, el("div", { class: "dash-section-row" }, [el("h2", { class: "section-title dash-section", text: "All tools" }), resetBtn]), tilesWrap);
-    const loadServers = () => { const f = opsViews().serversPanel; if (f && !document.querySelector("#modal")) f(srvBox); };
+    root.append(probBox, grid, el("div", { class: "dash-section-row" }, [el("h2", { class: "section-title dash-section", text: "All tools" }), resetBtn]), tilesWrap);
     renderTiles(tilesWrap, refreshReset);
     loadProblems();
     try {
@@ -1539,9 +1535,7 @@
 
     const t1 = setInterval(() => { fast().catch(() => {}); }, 3000);
     const t2 = setInterval(slow, 30000);
-    loadServers();
-    const t3 = setInterval(loadServers, 60000);
-    (state.cleanups = state.cleanups || []).push(() => { clearInterval(t1); clearInterval(t2); clearInterval(t3); });
+    (state.cleanups = state.cleanups || []).push(() => { clearInterval(t1); clearInterval(t2); });
   }
 
   // Virtual interfaces (Docker bridges + per-container veth, loopback, VPN/tunnels) are NOT the uplink.

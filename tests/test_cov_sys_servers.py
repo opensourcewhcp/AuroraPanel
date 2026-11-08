@@ -212,7 +212,7 @@ def test_overview_shows_this_server_first_then_every_other_with_its_state(fleet)
     assert ov[0] == {"id": "", "name": "This server", "hostname": "me", "cpu": 1.0, "ok": True, "local": True}
     a, b, c = ov[1:]
     assert a["ok"] and a["cpu"] == 3.0 and a["hostname"] == "a" and "token" not in a and a["ms"] >= 0
-    assert b == {"id": "b2", "name": "B", "url": "https://b:8088", "added": 2, "fingerprint": "", "pinned": False, "secure": True, "ok": False, "error": "answered 401 (token revoked?)"}
+    assert b == {"id": "b2", "name": "B", "url": "https://b:8088", "added": 2, "fingerprint": "", "secure": True, "ok": False, "error": "answered 401 (token revoked?)"}
     assert c["ok"] is False and c["error"] == "Can't reach C: timed out"
     assert {(n, m, p) for n, m, p, _ in fleet} == {("A", "GET", "/api/fleet/self"), ("B", "GET", "/api/fleet/self"), ("C", "GET", "/api/fleet/self")}
 

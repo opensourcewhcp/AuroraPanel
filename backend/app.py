@@ -4888,15 +4888,6 @@ def api_servers_exec(sid: str, body: ServerExecBody, request: Request, user: str
     return _srv_call(lambda: servers.run(sid, body.command, user))
 
 
-class ServerPinBody(BaseModel):
-    on: bool = True
-
-
-@app.post("/api/servers/{sid}/pin")
-def api_servers_pin(sid: str, body: ServerPinBody, user: str = auth.CurrentUser):
-    return _srv_call(lambda: servers.pin(sid, body.on))
-
-
 class FleetBanBody(BaseModel):
     ip: str
     reason: str = ""
