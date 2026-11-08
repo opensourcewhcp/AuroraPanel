@@ -29,7 +29,7 @@ from pydantic import BaseModel
 from . import (
     abuse, alerts, cloudapps, connectors, slackbot, antivirus, audit, authz, autossl, dockerapps, isolate, migrate, panelusers, servers, wptoolkit, schedules, tasks, updates, apache, apitokens, appmanager, auth, backups, config, cron,
     apps, databases, diskusage, dmarc, dnszones, domains, fail2ban, netmgr, sites, files, firewall, ipblocker, jobs,
-    metrics, modsecurity, netdiag, waf, packages, perms, phpmgr, services, sslcerts, sshaccess,
+    metrics, modsecurity, netdiag, waf, packages, permissions, perms, phpmgr, services, sslcerts, sshaccess,
     proxysites, secreport, shadow, sysapps, system_info, terminal, twofa, users,
     appconfig, ddns, ddnshosts, ftp, gitvc, guard, images, ipsec, webaccess, netmon, openvpn, mail, panelhttps, phpsettings, portcheck, problems, requires, version, vpncommon, wireguard,
 )
@@ -531,21 +531,76 @@ class PanelUserBody(BaseModel):
     role: str | None = None
     sites: list[str] | None = None
     disabled: bool | None = None
+    group: str | None = None
 
 
 @app.post("/api/panel-users")
 def api_pu_create(body: PanelUserBody, user: str = auth.CurrentUser):
-    return _pu_call(lambda: panelusers.create(body.username, body.password or "", body.role or "viewer", body.sites))
+    return _pu_call(lambda: panelusers.create(body.username, body.password or "", body.role or "viewer", body.sites, body.group))
 
 
 @app.post("/api/panel-users/update")
 def api_pu_update(body: PanelUserBody, user: str = auth.CurrentUser):
-    return _pu_call(lambda: panelusers.update(body.username, body.role, body.sites, body.password, body.disabled))
+    return _pu_call(lambda: panelusers.update(body.username, body.role, body.sites, body.password, body.disabled, body.group))
 
 
 @app.post("/api/panel-users/delete")
 def api_pu_delete(body: PanelUserBody, user: str = auth.CurrentUser):
     return _pu_call(lambda: panelusers.delete(body.username))
+
+
+# --------------------------------------------------------------------------- #
+# Permissions — role capability toggles and named groups (administrators only;
+# deny-by-default keeps viewers and website managers out, and TOKEN_ADMIN_DENY keeps API tokens out).
+# --------------------------------------------------------------------------- #
+def _perm_call(fn):
+    try:
+        return fn()
+    except permissions.PermissionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/role-caps")
+def api_role_caps(user: str = auth.CurrentUser):
+    return permissions.catalogue()
+
+
+class RoleCapBody(BaseModel):
+    role: str
+    key: str
+    enabled: bool
+
+
+@app.post("/api/role-caps")
+def api_role_caps_set(body: RoleCapBody, user: str = auth.CurrentUser):
+    return _perm_call(lambda: permissions.set_cap(body.role, body.key, bool(body.enabled)))
+
+
+class PermGroupBody(BaseModel):
+    name: str
+    role: str | None = None
+    caps: dict | None = None
+    new_name: str | None = None
+
+
+@app.get("/api/perm-groups")
+def api_perm_groups(user: str = auth.CurrentUser):
+    return permissions.catalogue()
+
+
+@app.post("/api/perm-groups")
+def api_perm_groups_create(body: PermGroupBody, user: str = auth.CurrentUser):
+    return _perm_call(lambda: permissions.create_group(body.name, body.role or "site", body.caps))
+
+
+@app.post("/api/perm-groups/update")
+def api_perm_groups_update(body: PermGroupBody, user: str = auth.CurrentUser):
+    return _perm_call(lambda: permissions.update_group(body.name, body.role, body.caps, body.new_name))
+
+
+@app.post("/api/perm-groups/delete")
+def api_perm_groups_delete(body: PermGroupBody, user: str = auth.CurrentUser):
+    return _perm_call(lambda: permissions.delete_group(body.name))
 
 
 # --------------------------------------------------------------------------- #

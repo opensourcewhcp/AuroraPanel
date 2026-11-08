@@ -326,6 +326,8 @@ def restore_trash(tid: str, overwrite: bool = False) -> dict:
     data = TRASH_DIR / tid
     if not meta_file.exists() or not data.exists():
         raise FileError("Trash item not found")
+    if data.is_symlink():  # the stored blob must be a real file, never a link planted in the trash dir
+        raise FileError("Trash item is a symlink; refusing to restore it")
     m = json.loads(meta_file.read_text(encoding="utf-8"))
     dest = _resolve(m["original"])
     if dest.exists():
@@ -399,9 +401,11 @@ def zip_entries(rel_dir: str, names: list[str], archive_name: str, overwrite: bo
     with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
         for src in sources:
             if src.is_dir():
-                for root, _d, files in os.walk(src):
+                for root, _d, files in os.walk(src):  # os.walk does not descend symlinked dirs (followlinks=False)
                     for f in files:
                         fp = Path(root) / f
+                        if fp.is_symlink():
+                            continue  # a symlink inside the tree could point at a file outside the area; don't copy its target
                         zf.write(fp, str(fp.relative_to(parent)))
             else:
                 zf.write(src, src.name)
@@ -412,18 +416,26 @@ def unzip(rel_path: str, overwrite: bool = False) -> dict:
     target = _resolve(rel_path)
     if not target.is_file() or target.suffix.lower() != ".zip":
         raise FileError("Not a .zip file")
-    out_dir = target.with_suffix("")
-    # If a folder of that name exists, extract into it (optionally overwriting).
+    # The extraction folder is user-controlled too. If it is a symlink the zip-slip check below would
+    # compare against the link's target and pass, letting extractall write through it (e.g. a link to
+    # /etc). Refuse a symlinked folder, then resolve and scope-check it like any other path.
+    raw_out = target.with_suffix("")
+    if raw_out.is_symlink():
+        raise FileError("The extraction folder is a symlink; refusing to extract through it")
+    out_dir = _resolve(_rel(raw_out))
     if out_dir.exists() and not overwrite:
         raise FileError(f"'{out_dir.name}' already exists — enable overwrite to extract into it")
     out_dir.mkdir(exist_ok=True)
+    base = out_dir.resolve()
     extracted = 0
     with zipfile.ZipFile(target, "r") as zf:
         for member in zf.namelist():
-            # Guard against zip-slip.
-            dest_path = (out_dir / member).resolve()
-            if out_dir.resolve() != dest_path and out_dir.resolve() not in dest_path.parents:
+            # Guard against zip-slip, including a member that resolves through a symlinked subfolder.
+            dest_path = (base / member).resolve()
+            if dest_path != base and base not in dest_path.parents:
                 raise FileError("Unsafe path in archive")
+            if not _allowed(dest_path):
+                raise FileError("The archive would write outside your area")
         zf.extractall(out_dir)
         extracted = len(zf.namelist())
     return {"extracted_to": _rel(out_dir), "count": extracted}

@@ -5,7 +5,7 @@ Websites, email, VPN, backups, security and monitoring, all from one browser tab
 Free, open source, MIT licensed.</p>
 
 <p align="center">
-  <a href="https://github.com/opensourcewhcp/AuroraPanel/releases"><img alt="Version 1.2.5" src="https://img.shields.io/badge/version-1.2.5-ff7a1a"></a>
+  <a href="https://github.com/opensourcewhcp/AuroraPanel/releases"><img alt="Version 1.2.6" src="https://img.shields.io/badge/version-1.2.6-ff7a1a"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-green"></a>
   <img alt="Python 3.15" src="https://img.shields.io/badge/python-3.15-blue">
   <img alt="Runs on Raspberry Pi" src="https://img.shields.io/badge/runs%20on-Raspberry%20Pi-c51a4a">
@@ -53,6 +53,39 @@ Website: https://aurora51.com. Guides for the bigger features are in [`docs/`](d
 - **One-click apps.** WordPress, Nextcloud, Joomla, Drupal, phpBB, MediaWiki, OpenCart,
   Moodle and more, with Docker apps for everything else.
 
+## Unique features
+
+**Run a whole fleet from one panel.** The Servers page shows every machine running AuroraPanel on a
+single screen: CPU, memory, disk, temperature, uptime, how many services are up, which need attention,
+waiting updates and banned addresses, all side by side. You act on them from there too: restart a
+service, install updates, open a root terminal, or block an address on every server at once with Ban
+everywhere. One Raspberry Pi can watch and control a rack of servers.
+
+The link between panels is an API token you create on each server and paste into the controlling panel.
+You choose exactly how much that token may do, and the limit is enforced on the server itself, not just
+hidden in the interface:
+
+- **Read only.** Watch the server: CPU, memory, disk, services, alerts, waiting updates and bans. It
+  changes nothing. Optional address lock and expiry.
+- **Fleet control.** Everything Read only can, plus day-to-day care: restart services, install updates,
+  update AuroraPanel, and ban or unban addresses. No commands, files or settings.
+- **Full admin.** Everything Fleet control can, plus running commands as root from the terminal. It
+  carries extra locks: it asks for your password on the controlling panel again every 10 minutes
+  (double validation), works only from the addresses you name, only over HTTPS, and expires within
+  90 days.
+- **Unlimited.** Everything Full admin can, with no password prompt while controlling and the option to
+  never expire. This is the extreme setting, total access for convenience, so give it only to a panel
+  you fully trust.
+
+Every token is shown once, stored only as a hash, and can be revoked at any time.
+
+**Manage cloud and mixed servers from the same box.** From your Raspberry Pi or your own server you can
+also drive Amazon Web Services, Google Cloud and Microsoft Azure through their official command-line
+tools (installed in one click): list, start and stop virtual servers, browse and move storage, and see
+databases, Kubernetes, functions and containers side by side. AuroraPanel installs on Raspberry Pi OS,
+Debian and Ubuntu, and on Fedora Server and the Red Hat family, so one panel can look after a fleet that
+mixes small boards, your own servers and the cloud.
+
 ## Install in one minute
 
 ```bash
@@ -94,6 +127,23 @@ or website managers who only see their own sites. The panel can be installed as 
 browser (with a trusted certificate). Most system actions require the panel to run as **root** (the systemd
 unit does); features degrade gracefully where a tool (`ufw`, `systemctl`) is
 absent.
+
+## Screenshots
+
+<p align="center">
+  <img alt="App Installer: a Softaculous-style catalog of 40+ web apps (WordPress, Joomla, Drupal, Nextcloud, Moodle and more) with one-click setup" src="docs/screenshots/app-installer.jpg" width="900">
+  <br><em>App Installer: pick an app, choose where it lives, and AuroraPanel downloads the latest release, creates the database and sets it up.</em>
+</p>
+
+<p align="center">
+  <img alt="Docker: every container on the server in one place, with images, volumes and a one-click app catalog" src="docs/screenshots/docker.jpg" width="900">
+  <br><em>Docker: start, pause, open a root shell, change ports or remove any container, with a one-click catalog (Home Assistant, Jellyfin, Vaultwarden, Pi-hole and more).</em>
+</p>
+
+<p align="center">
+  <img alt="Google Drive: push and pull files between the server and your Drive, both ways" src="docs/screenshots/google-drive.jpg" width="900">
+  <br><em>Google Drive: push and pull files between your Raspberry Pi (or any server) and your Drive, both ways. Copies never delete anything.</em>
+</p>
 
 ## Quick start (development, Windows or Linux)
 

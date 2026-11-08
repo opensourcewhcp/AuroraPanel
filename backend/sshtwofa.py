@@ -99,10 +99,20 @@ def enroll(name: str) -> dict:
     secret = twofa._b32_secret()
     scratch = [f"{secrets.randbelow(10 ** 8):08d}" for _ in range(5)]
     text = "\n".join([secret, '" RATE_LIMIT 3 30', '" WINDOW_SIZE 3', '" DISALLOW_REUSE', '" TOTP_AUTH', *scratch]) + "\n"
+    # The panel runs as root. If the pending file is a symlink the user planted, f.write_text would follow
+    # it and overwrite an arbitrary root-owned file, then hand it to the user (a local privilege escalation).
+    # O_NOFOLLOW makes the open fail on a symlink; write/chmod/chown then act on the real file only.
     f = home / PENDING
-    f.write_text(text, encoding="utf-8")
-    os.chmod(f, 0o600)
-    os.chown(f, p.pw_uid, p.pw_gid)
+    try:
+        fd = os.open(str(f), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    except OSError:
+        raise SshTwofaError("Could not create the secret file (is it a symlink?)")
+    try:
+        os.write(fd, text.encode("utf-8"))
+        os.fchmod(fd, 0o600)
+        os.fchown(fd, p.pw_uid, p.pw_gid)
+    finally:
+        os.close(fd)
     issuer = f"SSH {socket.gethostname()}"
     uri = f"otpauth://totp/{quote(issuer)}:{quote(name)}?secret={secret}&issuer={quote(issuer)}&digits=6&period=30"
     return {"name": name, "secret": secret, "otpauth_uri": uri, "qr": twofa.qr_data_uri(uri), "scratch": scratch}

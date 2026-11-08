@@ -1353,10 +1353,14 @@ window.AuroraOps = (ui) => {
       return fn(creds);
     }
   }
+  // Updates started on another server, by id: the card shows them as running until the count drops to
+  // zero (or 30 minutes pass), and a server too busy to answer meanwhile is shown as busy, not broken.
+  const INSTALLING = {};
+  const installing = (s) => { const t0 = INSTALLING[s.id]; if (!t0) return 0; if (Date.now() - t0 > 30 * 60000 || (s.ok && !(s.updates || {}).total)) { delete INSTALLING[s.id]; return 0; } return t0; };
   async function control(s, action, unit, label, after) {
     try {
       const r = await confirmed((c) => API.serverAction(s.id, { action, unit: unit || "", ...c }));
-      if (r) { toast(label, "good"); if (after) setTimeout(after, 1500); }
+      if (r) { if (action === "install_updates") INSTALLING[s.id] = Date.now(); toast(label, "good"); if (after) setTimeout(after, 1500); }
     } catch (e) { toast(e.message, "bad"); }
   }
 
@@ -1438,18 +1442,23 @@ window.AuroraOps = (ui) => {
   // A server card on the Servers page.
   // A server card. Every card has the same six rows in the same order (header, meters, status, services,
   // alerts, actions), laid on a shared subgrid so the rows line up across a whole row of cards.
-  function srvCard(s, reload, all) {
+  function srvCard(s, reload, all, retry) {
     const newest = (all.find((x) => x.local) || {}).version || "";
     const failed = s.failed_units || [];
     const upd = s.updates || {};
     const crit = (s.alerts || []).some((a) => a.level === "critical") || failed.length;
-    const acc = s.local ? ["Here", "low", "home"] : ACCESS[s.access] || (s.ok ? ["Older panel", "info", "info"] : null);
+    // A level this panel doesn't know comes from a newer server: name it, and say to update this panel.
+    const acc = s.local ? ["Here", "low", "home"] : ACCESS[s.access]
+      || (s.ok && s.access ? [s.access.charAt(0).toUpperCase() + s.access.slice(1), "info", "info"] : s.ok ? ["Older panel", "info", "info"] : null);
     const hasUpgrade = !s.local && s.ok && vkey(s.version) && vkey(newest) > vkey(s.version);
+    const busy = !s.local && installing(s);
+    const mins = busy ? Math.max(1, Math.round((Date.now() - busy) / 60000)) : 0;
 
     // Why a control button can't act here ("" = it can).
     const why = (need) => s.local ? "" : !s.ok ? "the server isn't reachable"
       : !s.access ? `update AuroraPanel there first (it runs ${s.version || "an older version"})`
       : !s.secure ? "turn on Panel HTTPS on that server first (it's only watched over plain http)"
+      : !ACCESS[s.access] ? `its token level (${s.access}) is newer than this panel: update this panel first`
       : need === "run" && !canRun(s) ? "needs a Full admin or Unlimited token from that server"
       : need === "act" && !canAct(s) ? "needs a Fleet control or Full admin token from that server" : "";
     // Restart every failed service. One that fails again opens the terminal with its status and log, so the reason is right there.
@@ -1475,10 +1484,11 @@ window.AuroraOps = (ui) => {
       ib("terminal", `Terminal on ${s.name}`, () => runDlg(s, all), { cls: "prime", why: why("run") }),
       ib("t_update", upd.total ? `Install ${upd.total} updates on ${s.name}` : "No updates waiting",
         () => control(s, "install_updates", "", `Installing ${upd.total} updates on ${s.name}`, reload),
-        { badge: upd.total, badgeCls: upd.security ? "crit" : "med", confirm: `Install ${upd.total}?`, why: why("act") || (upd.total ? "" : "everything is up to date") }),
+        { badge: upd.total, badgeCls: upd.security ? "crit" : "med", cls: busy ? "busy" : "", confirm: `Install ${upd.total}?`, why: busy ? `already installing, started ${mins} min ago` : why("act") || (upd.total ? "" : "everything is up to date") }),
       ib("refresh", failed.length ? `Restart ${failed.map(unitName).join(", ")}` : "No failed services", restartAll,
         { badge: failed.length, badgeCls: "crit", confirm: "Restart?", why: why("act") || (failed.length ? "" : "nothing has failed") }),
     ];
+    if (!s.ok && !s.local && retry) left.unshift(ib("refresh", `Connect to ${s.name} again`, retry, { cls: "retry" }));
     const right = [
       !s.local && s.url ? el("a", { class: "srv-ib", href: s.url, target: "_blank", rel: "noopener", title: `Open ${s.name}'s panel`, "aria-label": `Open ${s.name}'s panel` }, icon("t_external", 17)) : null,
       !s.local && s.error && /certificate changed/.test(s.error) ? ib("lock", "Trust its new certificate", () => call(() => API.serverRepin(s.id), "Certificate accepted", reload), { confirm: "Trust?" }) : null,
@@ -1500,11 +1510,15 @@ window.AuroraOps = (ui) => {
       // 2 meters
       s.ok ? el("div", { class: "op-srv-m" }, [meter("CPU", s.cpu, `${s.cpus || "?"} cores${s.temp ? ` · ${s.temp}°C` : ""}`),
         meter("Memory", s.mem_pct, s.mem_total ? fmtBytes(s.mem_total) : ""), meter("Disk", s.disk_pct, s.disk_total ? fmtBytes(s.disk_total) : "")])
-        : el("div", { class: "mx-note" }, [icon("warning", 16), el("span", { text: s.error || "Unreachable" })]),
+        : busy ? el("div", { class: "mx-note srv-down srv-busy-note" }, [el("span", { class: "spinner" }), el("span", { class: "grow", text: `Installing updates (started ${mins} min ago). ${s.name} is too busy to answer right now, it comes back when they're done.` }),
+          retry ? el("button", { type: "button", class: "btn btn-sm btn-ghost srv-retry", onclick: retry }, [icon("refresh", 13), el("span", { text: "Check" })]) : null].filter(Boolean))
+        : el("div", { class: "mx-note srv-down" }, [icon("warning", 16), el("span", { class: "grow", text: s.error || "Unreachable" }),
+          retry ? el("button", { type: "button", class: "btn btn-sm btn-ghost srv-retry", onclick: retry }, [icon("refresh", 13), el("span", { text: "Try again" })]) : null].filter(Boolean)),
       // 3 status
       el("div", { class: "op-srv-f" }, s.ok ? [
         el("span", { class: "srv-up" }, [icon("clock", 13), el("span", { text: `Up ${upt(s.uptime)}` })]),
-        upd.total ? sevChip(upd.security ? "critical" : "warning", `${upd.total} updates${upd.security ? ` · ${upd.security} security` : ""}`) : sevChip("low", "up to date"),
+        busy ? el("span", { class: "srv-sev info srv-busy" }, [el("span", { class: "spinner" }), el("span", { text: `Installing ${upd.total} update${upd.total === 1 ? "" : "s"}…` })])
+          : upd.total ? sevChip(upd.security ? "critical" : "warning", `${upd.total} updates${upd.security ? ` · ${upd.security} security` : ""}`) : sevChip("low", "up to date"),
         upd.reboot ? sevChip("warning", "restart needed") : null,
         s.bans ? sevChip("info", `${s.bans} banned`) : null].filter(Boolean) : []),
       // 4 services
@@ -1565,7 +1579,7 @@ window.AuroraOps = (ui) => {
       const i = d.servers.findIndex((x) => key(x) === key(s));
       if (i >= 0) d.servers[i] = s;
       const old = cards.get(key(s));
-      const node = s.pending ? pendingCard(s) : srvCard(s, () => ask(s, true), d.servers);
+      const node = s.pending ? pendingCard(s) : srvCard(s, () => ask(s, true), d.servers, () => ask(s));
       cards.set(key(s), node);
       if (old) old.replaceWith(node); else grid.append(node);
       drawTiles();
@@ -1805,19 +1819,63 @@ window.AuroraOps = (ui) => {
       [btn("Add a user", () => editor(), "btn-primary")]));
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
     root.append(body);
-    let d;
+    let d, cat;
     async function load() {
       try { d = await API.panelUsers(); } catch (e) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); return; }
+      try { cat = await API.roleCaps(); } catch (e) { cat = null; }
       body.innerHTML = "";
       body.append(card(`Users (${d.users.length})`, [el("div", { class: "op-isos" }, d.users.map((u) => el("div", { class: `op-iso ${u.disabled ? "" : "on"}` }, [
         el("span", { class: "op-dapp-ico", style: `--h:${APP_HUE(u.username)}`, text: u.username[0].toUpperCase() }),
         el("div", { class: "grow" }, [el("b", { text: u.username }), el("p", { class: "muted mx-small mx-ell", text: u.owner ? "Owner, set up this panel" :
-          `${(ROLE_TXT[u.role] || ["No role"])[0]}${u.sites && u.sites.length ? ` · ${u.sites.join(", ")}` : ""}${u.last_login ? ` · last sign-in ${ago(u.last_login)}` : " · never signed in"}` })]),
+          `${(ROLE_TXT[u.role] || ["No role"])[0]}${u.group ? ` · group ${u.group}` : ""}${u.sites && u.sites.length ? ` · ${u.sites.join(", ")}` : ""}${u.last_login ? ` · last sign-in ${ago(u.last_login)}` : " · never signed in"}` })]),
+        u.group ? pill(u.group, "dim") : null,
         pill(u.disabled ? "disabled" : (ROLE_TXT[u.role] || ["No role, can't sign in"])[0], u.disabled ? "dim" : u.role === "admin" ? "warn" : u.role === "site" ? "good" : "dim"),
         u.owner ? null : btn("Edit", () => editor(u), "btn-ghost"),
         u.owner ? null : armed("Delete", "Click again", () => call(() => API.panelUserDelete(u.username), "User deleted, signed out at once", load), "btn-ghost"),
-      ])))]),
-      card("What each role can do", [el("div", { class: "mx-list" }, Object.entries(ROLE_TXT).map(([k, [l, h]]) => el("div", { class: "mx-list-row" }, [pill(l, k === "admin" ? "warn" : k === "site" ? "good" : "dim"), el("span", { class: "grow", text: h })])))]));
+      ].filter(Boolean))))]));
+      if (cat) { body.append(roleCapsCard()); body.append(groupsCard()); }
+      body.append(card("What each role can do", [el("div", { class: "mx-list" }, Object.entries(ROLE_TXT).map(([k, [l, h]]) => el("div", { class: "mx-list-row" }, [pill(l, k === "admin" ? "warn" : k === "site" ? "good" : "dim"), el("span", { class: "grow", text: h })])))]));
+    }
+    function capLabels(role) { const m = {}; (cat.capabilities[role] || []).forEach((c) => m[c.key] = c.label); return m; }
+    function roleCapsCard() {
+      const sections = Object.keys(cat.capabilities).map((role) => el("div", { class: "mx-list" }, [
+        el("div", { class: "mx-sub" }, cat.roles[role] || role),
+        ...cat.capabilities[role].map((c) => { const sw = el("input", { type: "checkbox" }); sw.checked = c.enabled;
+          sw.onchange = () => call(() => API.roleCapSet(role, c.key, sw.checked), `${c.label}: ${sw.checked ? "on" : "off"}`, load);
+          return el("label", { class: "mx-list-row dm-check" }, [sw, el("span", { class: "grow", text: c.label }), c.enabled === c.default ? null : pill("changed", "dim")].filter(Boolean)); }),
+      ]));
+      return card("Role permissions", [el("p", { class: "muted", text: "Turn capabilities on or off for a whole role. A website manager loses a capability when it is off; a viewer loses its matching pages. Users in a group follow the group instead of these defaults." }), ...sections]);
+    }
+    function groupsCard() {
+      const groups = cat.groups || [];
+      const rows = groups.length ? groups.map((g) => { const lbl = capLabels(g.role);
+        const summary = Object.entries(g.caps || {}).map(([k, v]) => `${lbl[k] || k} ${v ? "on" : "off"}`).join(", ") || "role defaults";
+        return el("div", { class: "mx-list-row" }, [pill(cat.roles[g.role] || g.role, g.role === "site" ? "good" : "dim"), el("b", { text: g.name }), el("span", { class: "grow muted mx-small mx-ell", text: summary }),
+          btn("Edit", () => groupEditor(g), "btn-ghost"), armed("Delete", "Click again", () => call(() => API.permGroupDelete(g.name), "Group deleted", load), "btn-ghost")]); })
+        : [el("p", { class: "muted", text: "No groups yet. Create one to give a set of users the same tailored access." })];
+      return card("Permission groups", [el("div", { class: "toolbar" }, [btn("New group", () => groupEditor(), "btn-primary")]), el("div", { class: "mx-list" }, rows)]);
+    }
+    function groupEditor(g = null) {
+      let role = g ? g.role : "site";
+      const name = el("input", { type: "text", value: g ? g.name : "", disabled: g ? "" : null, autocomplete: "off" });
+      const capWrap = el("div", { class: "op-destpick" });
+      let capInputs = {};
+      function renderCaps() { capWrap.innerHTML = ""; capInputs = {};
+        (cat.capabilities[role] || []).forEach((c) => { const base = (g && g.caps && c.key in g.caps) ? g.caps[c.key] : c.default;
+          const ch = el("input", { type: "checkbox" }); ch.checked = base; capInputs[c.key] = ch;
+          capWrap.append(el("label", { class: "dm-check" }, [ch, el("span", { text: c.label })])); }); }
+      const rc = el("div", { class: "em-rcards" });
+      ["site", "viewer"].forEach((k) => { const r = el("input", { type: "radio", name: "grole", value: k }); r.checked = k === role; if (g) r.disabled = "";
+        r.onchange = () => { role = k; renderCaps(); };
+        rc.append(el("label", { class: "em-rcard" }, [r, el("span", { class: "em-rcard-ico" }, icon(k === "site" ? "globe" : "search", 18)), el("div", {}, [el("div", { class: "em-rcard-t" }, el("b", { text: cat.roles[k] || k }))])])); });
+      renderCaps();
+      openModal(g ? `Edit group ${g.name}` : "New permission group", el("div", { class: "em-form" }, [
+        field("Group name", name), el("div", { class: "mx-sub" }, "Base role"), rc, el("div", { class: "mx-sub" }, "Capabilities"), capWrap,
+      ]), [el("button", { class: "btn btn-primary", text: g ? "Save" : "Create", onclick: () => {
+        const caps = {}; Object.entries(capInputs).forEach(([k, ch]) => caps[k] = ch.checked);
+        call(() => g ? API.permGroupUpdate({ name: g.name, role, caps }) : API.permGroupCreate({ name: name.value.trim(), role, caps }), g ? "Saved" : "Group created", () => { closeModal(); load(); });
+      } })]);
+      modalWide();
     }
     function editor(u = null) {
       let role = u ? u.role : "site";
@@ -1826,20 +1884,32 @@ window.AuroraOps = (ui) => {
       const gen = btn("Generate", () => { const a = new Uint32Array(16); crypto.getRandomValues(a); pw.value = Array.from(a, (n) => "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"[n % 57]).join(""); }, "btn-ghost");
       const siteBox = el("div", { class: "op-destpick" }, d.sites.map((s) => { const c = el("input", { type: "checkbox", value: s }); c.checked = !!(u && u.sites && u.sites.includes(s)); return el("label", { class: "dm-check" }, [c, el("span", { text: s })]); }));
       const siteWrap = el("div", {}, [el("div", { class: "mx-sub" }, "Websites they manage"), d.sites.length ? siteBox : el("p", { class: "muted", text: "No websites yet, create one under Domains first." })]);
-      siteWrap.hidden = role !== "site";
       const rc = el("div", { class: "em-rcards" });
       Object.entries(ROLE_TXT).forEach(([k, [l, h]]) => { const r = el("input", { type: "radio", name: "role", value: k }); r.checked = k === role; r.onchange = () => { role = k; siteWrap.hidden = role !== "site"; };
         rc.append(el("label", { class: "em-rcard" }, [r, el("span", { class: "em-rcard-ico" }, icon(k === "admin" ? "key" : k === "site" ? "globe" : "search", 18)), el("div", {}, [el("div", { class: "em-rcard-t" }, el("b", { text: l })), el("p", { class: "muted", text: h })])])); });
+      const roleWrap = el("div", {}, [el("div", { class: "mx-sub" }, "Role"), rc]);
+      const groups = cat ? (cat.groups || []) : [];
+      const groupSel = el("select", { class: "op-select" });
+      groupSel.append(el("option", { value: "" }, "None (use the role below)"));
+      groups.forEach((g) => groupSel.append(el("option", { value: g.name }, `${g.name} · ${cat.roles[g.role] || g.role}`)));
+      groupSel.value = (u && u.group) ? u.group : "";
+      const groupRole = (nm) => { const g = groups.find((x) => x.name === nm); return g ? g.role : null; };
+      function syncGroup() { const gr = groupRole(groupSel.value); if (gr) { role = gr; roleWrap.hidden = true; } else { roleWrap.hidden = false; } siteWrap.hidden = role !== "site"; }
+      groupSel.onchange = syncGroup;
       const dis = el("input", { type: "checkbox" }); dis.checked = !!(u && u.disabled);
       openModal(u ? `Edit ${u.username}` : "Add a user", el("div", { class: "em-form" }, [
         el("div", { class: "mx-grid2" }, [field("User name", name), field("Password", el("div", { class: "op-pwrow" }, [pw, gen]), "Share it with them privately; they can change it on their home page.")]),
-        el("div", { class: "mx-sub" }, "Role"), rc, siteWrap,
+        groups.length ? field("Permission group", groupSel, "A group gives a tailored set of capabilities. Pick None to use a plain role.") : null,
+        roleWrap, siteWrap,
         u ? el("label", { class: "dm-check" }, [dis, el("span", { text: "Disabled (can't sign in)" })]) : null,
-      ]), [el("button", { class: "btn btn-primary", text: u ? "Save" : "Add user", onclick: () => {
+      ].filter(Boolean)), [el("button", { class: "btn btn-primary", text: u ? "Save" : "Add user", onclick: () => {
         const sites = [...siteBox.querySelectorAll("input:checked")].map((c) => c.value);
-        call(() => u ? API.panelUserUpdate({ username: u.username, role, sites, password: pw.value || null, disabled: dis.checked })
-          : API.panelUserCreate({ username: name.value.trim(), password: pw.value, role, sites }), u ? "Saved" : "User added", () => { closeModal(); load(); });
+        const grp = groupSel.value;
+        const payload = u ? { username: u.username, sites, password: pw.value || null, disabled: dis.checked, ...(grp ? { group: grp } : { group: "", role }) }
+          : { username: name.value.trim(), password: pw.value, sites, ...(grp ? { group: grp } : { role }) };
+        call(() => u ? API.panelUserUpdate(payload) : API.panelUserCreate(payload), u ? "Saved" : "User added", () => { closeModal(); load(); });
       } })]);
+      syncGroup();
       modalWide();
     }
     load();

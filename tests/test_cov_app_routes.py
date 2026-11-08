@@ -565,8 +565,8 @@ ROUTES = [
     R("POST", "/api/ddns-hosts/h1/regenerate", "ddnshosts", "regenerate", ("h1",)),
     R("DELETE", "/api/ddns-hosts/h1", "ddnshosts", "delete", ("h1",)),
     # ---- panel users (the owner is signed in as "tester")
-    R("POST", "/api/panel-users", "panelusers", "create", ("ann", "", "viewer", None), body={"username": "ann"}),
-    R("POST", "/api/panel-users/update", "panelusers", "update", ("ann", "site", ["a.com"], "pw1234567890", True), body={"username": "ann", "role": "site", "sites": ["a.com"], "password": "pw1234567890", "disabled": True}),
+    R("POST", "/api/panel-users", "panelusers", "create", ("ann", "", "viewer", None, None), body={"username": "ann"}),
+    R("POST", "/api/panel-users/update", "panelusers", "update", ("ann", "site", ["a.com"], "pw1234567890", True, None), body={"username": "ann", "role": "site", "sites": ["a.com"], "password": "pw1234567890", "disabled": True}),
     R("POST", "/api/panel-users/delete", "panelusers", "delete", ("ann",), body={"username": "ann"}),
     R("POST", "/api/me/password", "panelusers", "change_own_password", ("tester", "old", "new"), body={"current": "old", "new": "new"}),
 ]

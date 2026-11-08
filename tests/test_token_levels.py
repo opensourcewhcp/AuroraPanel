@@ -271,3 +271,15 @@ def test_an_unlimited_server_is_controlled_without_the_password(admin, monkeypat
     levels["u1"] = "admin"   # the other server swapped the token for a full admin one: the prompt comes back
     admin.get("/api/servers/u1/status")
     assert not servers.no_prompt("u1")
+
+
+def test_a_stopped_exim_isnt_counted_while_postfix_runs(monkeypatch):
+    from backend import services as svc
+    rows = [("postfix.service", "active", "exited"), ("dovecot.service", "active", "running"), ("rspamd.service", "active", "running"),
+            ("exim4.service", "inactive", "dead")]
+    monkeypatch.setattr(svc, "list_services", lambda: [{"unit": u, "load": "loaded", "active": a, "sub": b, "description": ""} for u, a, b in rows])
+    mail = next(k for k in servers.service_counts()["kinds"] if k["key"] == "mail")
+    assert (mail["up"], len(mail["units"])) == (3, 3)
+    rows[0] = ("postfix.service", "inactive", "dead")   # no Postfix: a stopped Exim counts again
+    mail = next(k for k in servers.service_counts()["kinds"] if k["key"] == "mail")
+    assert (mail["up"], len(mail["units"])) == (2, 4)

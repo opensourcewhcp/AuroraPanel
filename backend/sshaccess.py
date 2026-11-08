@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import os
 import platform
 import re
 import shutil
@@ -111,25 +112,38 @@ def add_key(user: str, public_key: str) -> dict:
     if not IS_LINUX:
         raise SSHError("Only available on Linux")
     pk = (public_key or "").strip()
+    # A public key is one line and never large. Bounding it first keeps the \s+/.* parts of _KEY_RE from
+    # backtracking on a crafted multi-megabyte input (polynomial ReDoS) and rejects multi-line payloads.
+    if len(pk) > 16384 or "\n" in pk or "\r" in pk:
+        raise SSHError("That doesn't look like a valid SSH public key")
     if not _KEY_RE.match(pk):
         raise SSHError("That doesn't look like a valid SSH public key")
     path = _authorized_keys_path(user)
-    path.parent.mkdir(mode=0o700, exist_ok=True)
+    parent = path.parent
+    # The panel runs as root. If ~/.ssh or authorized_keys is a symlink the user planted, following it
+    # would let root write and chown an arbitrary file (e.g. /etc/shadow) as that user: a local privilege
+    # escalation. Refuse symlinks and open the file with O_NOFOLLOW so the final component is never followed.
+    if parent.is_symlink():
+        raise SSHError(".ssh is a symlink; refusing to write through it")
+    parent.mkdir(mode=0o700, exist_ok=True)
+    if path.is_symlink():
+        raise SSHError("authorized_keys is a symlink; refusing to write through it")
     existing = path.read_text(errors="replace").splitlines() if path.exists() else []
     if pk in [l.strip() for l in existing]:
         raise SSHError("Key already present")
-    with open(path, "a", encoding="utf-8") as fh:
-        fh.write(pk + "\n")
-    path.chmod(0o600)
-    # Best-effort correct ownership.
-    import pwd
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0), 0o600)
     try:
-        info = pwd.getpwnam(user)
-        import os
-        os.chown(path, info.pw_uid, info.pw_gid)
-        os.chown(path.parent, info.pw_uid, info.pw_gid)
-    except (KeyError, OSError):
-        pass
+        os.write(fd, (pk + "\n").encode("utf-8"))
+        os.fchmod(fd, 0o600)
+        import pwd
+        try:
+            info = pwd.getpwnam(user)
+            os.fchown(fd, info.pw_uid, info.pw_gid)
+            os.chown(parent, info.pw_uid, info.pw_gid, follow_symlinks=False)
+        except (KeyError, OSError):
+            pass
+    finally:
+        os.close(fd)
     return {"ok": True}
 
 

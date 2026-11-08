@@ -766,6 +766,21 @@ def adopt_system_conf(conf_name: str) -> dict:
     return {"ok": True, "changed": True, "backups": [f"{SITE_BAK}/{conf_name}.enabled.{ts}"] + ([f"{SITE_BAK}/{conf_name}.available.{ts}"] if old_avail is not None else [])}
 
 
+SNAKEOIL = Path("/etc/ssl/certs/ssl-cert-snakeoil.pem")
+
+
+def _https_first() -> None:
+    """Turn on default-ssl (with Debian's self-signed "snakeoil" certificate, made if missing) so https answers."""
+    ssl_conf = AVAIL / "default-ssl.conf"
+    if not ssl_conf.is_file():
+        return
+    if "ssl-cert-snakeoil" in ssl_conf.read_text(errors="replace") and not SNAKEOIL.exists():
+        if not shutil.which("make-ssl-cert"):
+            _run(["apt-get", "install", "-y", "-q", "ssl-cert"])
+        _run(["make-ssl-cert", "generate-default-snakeoil", "--force-overwrite"])
+    _set_system_enabled(ssl_conf, True)
+
+
 def _set_system_force_https(conf: Path, on: bool) -> dict:
     """Add/remove a marked redirect inside a stock conf's :80 VirtualHost; the rest of the file is untouched."""
     live = _live_conf(conf)
@@ -776,7 +791,12 @@ def _set_system_force_https(conf: Path, on: bool) -> dict:
         if not http:
             raise SiteError(f"{conf.name} has no http (port 80) part — turn on Force HTTPS on the default (http) site instead")
         if ":443" not in (lambda r: r.stdout + r.stderr)(_run(["apache2ctl", "-S"])):
-            raise SiteError("Nothing is serving HTTPS (port 443) yet — enable default-ssl or another HTTPS site first")
+            # A fresh server serves nothing on 443 yet: turn on Apache's own https site (self-signed until a
+            # Let's Encrypt certificate replaces it) instead of sending the owner off to find it.
+            _https_first()
+            if ":443" not in (lambda r: r.stdout + r.stderr)(_run(["apache2ctl", "-S"])):
+                raise SiteError("Nothing is serving HTTPS (port 443) yet, and the built-in https site couldn't be turned on. "
+                                "Add a certificate to a site first (Manage → SSL)")
         new = bare[:http.end()] + "\n".join([
             "", f"    {_FH_BEGIN}", "    RewriteEngine On",
             "    RewriteCond %{REQUEST_URI} !^/\\.well-known/acme-challenge/",

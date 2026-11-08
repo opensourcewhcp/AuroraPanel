@@ -38,8 +38,16 @@ def _htaccess(rel: str) -> Path:
     return _resolve_dir(rel) / ".htaccess"
 
 
+def _not_symlink(p: Path) -> None:
+    # A site's PHP (www-data) could plant <dir>/.htaccess as a symlink to /etc/shadow; following it would
+    # read or rewrite that file as root. Refuse the symlink so the panel only ever touches a real .htaccess.
+    if p.is_symlink():
+        raise ApacheError(".htaccess is a symlink; refusing to follow it")
+
+
 def _read_lines(rel: str) -> list[str]:
     p = _htaccess(rel)
+    _not_symlink(p)
     if not p.exists():
         return []
     try:
@@ -50,11 +58,16 @@ def _read_lines(rel: str) -> list[str]:
 
 def _write_lines(rel: str, lines: list[str]) -> None:
     p = _htaccess(rel)
+    _not_symlink(p)
     content = "\n".join(lines).rstrip("\n")
     if content:
         content += "\n"
     try:
-        p.write_text(content, encoding="utf-8")
+        fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o644)
+        try:
+            os.write(fd, content.encode("utf-8"))
+        finally:
+            os.close(fd)
     except OSError as exc:
         raise ApacheError(f"Cannot write .htaccess: {exc}") from exc
 

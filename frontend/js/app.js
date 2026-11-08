@@ -341,7 +341,7 @@
   const GROUP_ICONS = {
     System: "processes", Network: "network", Applications: "apps", Databases: "database", Domains: "globe", Email: "mail", Security: "shield",
     Metrics: "metrics", Files: "folder", Advanced: "terminal", Software: "packages", Preferences: "gear",
-    "Cloud Apps": "t_cloud",
+    "Cloud Apps": "t_cloud", "My Websites": "globe",
   };
   let NAV_GROUPS = [];
   function applyRole() {
@@ -6161,6 +6161,7 @@
           el("td", { class: s.redirect_url ? "" : "muted", text: s.redirect_url || "Not Redirected" }),
           s.system && !s.has_http ? el("td", { class: "muted", title: "This is the https site itself, Force HTTPS is set on the http (port 80) row", text: "already https" }) : el("td", {}, sw(s.force_https, async (v, inp) => {
             if (v && s.ssl === "none" && !s.system && !confirmInline(`${s.server_name} has no certificate yet.\n\nA self-signed certificate will be created so HTTPS works now (browsers will warn). You can switch to a free Let's Encrypt certificate in Manage.\n\nContinue?`)) { inp.checked = false; return; }
+            if (v && s.system && s.has_http && !s.https_via && !confirmInline("Nothing answers on HTTPS yet.\n\nApache's built-in HTTPS site will be turned on with a self-signed certificate (browsers warn until you add a free Let's Encrypt certificate in Manage), then every http:// visit goes to https://.\n\nContinue?")) { inp.checked = false; return; }
             try { await API.siteToggle(s.system ? s.conf : s.server_name, "force_https", v); toast(`Force HTTPS ${v ? "on" : "off"} · ${s.server_name}`, "good"); load(); }
             catch (e) { inp.checked = !v; toast(e.message, "bad"); }
           }, { title: "Redirect all HTTP traffic to HTTPS" })),

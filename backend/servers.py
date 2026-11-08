@@ -287,13 +287,20 @@ _KINDS = [
 ]
 
 
+# A stopped unit that another one replaces isn't missing: Debian ships Exim, and once Postfix runs Exim stays
+# off on purpose (only one of them can own port 25). Such a unit isn't counted while its replacement runs.
+_REPLACED_BY = {"exim4.service": "postfix.service"}
+
+
 def service_counts() -> dict:
     """How many services run and how many failed, plus the well-known ones grouped by kind."""
     from . import services as svc
     rows = [r for r in svc.list_services() if r.get("load") == "loaded"]
+    active = {r["unit"] for r in rows if r["active"] == "active"}
+    rows_k = [r for r in rows if not (r["active"] == "inactive" and _REPLACED_BY.get(r["unit"]) in active)]
     kinds = []
     for key, label, rx in _KINDS:
-        mine = [r for r in rows if rx.match(r["unit"])]
+        mine = [r for r in rows_k if rx.match(r["unit"])]
         if mine:
             kinds.append({"key": key, "label": label, "up": sum(r["active"] == "active" for r in mine),
                           "down": [r["unit"] for r in mine if r["active"] == "failed"][:5], "units": [r["unit"] for r in mine][:8]})
@@ -377,7 +384,13 @@ def _probe(srv: dict) -> dict:
     so no_prompt() knows which servers may be controlled without the password."""
     t0 = time.time()
     try:
-        status, payload, _ = _call(srv, "GET", "/api/fleet/self", timeout=6)
+        try:
+            status, payload, _ = _call(srv, "GET", "/api/fleet/self", timeout=6)
+        except ServerError as e:
+            # A busy or far-away server can miss the first few seconds (a slow TLS handshake): ask once more, longer.
+            if "timed out" not in str(e):
+                raise
+            status, payload, _ = _call(srv, "GET", "/api/fleet/self", timeout=15)
         if status != 200:
             return {**_public(srv), "ok": False, "error": f"answered {status}" + (" (token revoked?)" if status == 401 else "")}
         access = (payload or {}).get("access") or ""

@@ -16,6 +16,8 @@ class NetDiagError(RuntimeError):
 
 def _valid_host(host: str) -> str:
     host = (host or "").strip()
+    if host.startswith("-"):  # a leading dash would be read as an option by dig/ping/traceroute/whois
+        raise NetDiagError("Invalid hostname or IP")
     if not (_HOST_RE.match(host) or _IP_RE.match(host)):
         raise NetDiagError("Invalid hostname or IP")
     return host

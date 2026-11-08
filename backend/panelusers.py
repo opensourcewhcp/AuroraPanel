@@ -45,7 +45,11 @@ def name_taken(username: str) -> bool:
 
 
 def get(username: str) -> dict | None:
-    """{username, role, sites} for an active user (the owner included), else None."""
+    """{username, role, sites} for an active user (the owner included), else None.
+
+    When the user is in a permission group, their effective role is the group's base role and their
+    resolved capability toggles ride along as "_caps" for authz to read.
+    """
     if not username:
         return None
     if username.startswith("token:"):
@@ -54,7 +58,17 @@ def get(username: str) -> dict | None:
         return {"username": username, "role": "admin", "sites": [], "owner": True}
     for u in _all():
         if u["username"] == username and not u.get("disabled"):
-            return {"username": username, "role": u["role"], "sites": u.get("sites", [])}
+            role, sites, grp = u["role"], u.get("sites", []), u.get("group") or None
+            out = {"username": username, "role": role, "sites": sites}
+            if grp:
+                from . import permissions
+                res = permissions.resolve_group(grp)
+                if res:  # a live group: its base role and toggles win
+                    out["role"] = res["role"]
+                    out["group"] = grp
+                    out["_caps"] = res["caps"]
+                # a group that was deleted falls back to the user's stored role
+            return out
     return None
 
 
@@ -75,8 +89,36 @@ def retired(username: str) -> bool:
 def listing() -> dict:
     out = [{"username": owner(), "role": "admin", "owner": True, "sites": [], "created": None}]
     for u in _all():
-        out.append({k: u.get(k) for k in ("username", "role", "sites", "created", "disabled", "last_login")})
+        out.append({k: u.get(k) for k in ("username", "role", "sites", "group", "created", "disabled", "last_login")})
     return {"users": out, "roles": ROLES}
+
+
+def group_members(name: str) -> list[str]:
+    """Usernames currently assigned to a permission group."""
+    return [u["username"] for u in _all() if u.get("group") == name]
+
+
+def rename_group(old: str, new: str) -> None:
+    """Point every member of a renamed group at the new name (called by permissions.update_group)."""
+    users = _all()
+    changed = False
+    for u in users:
+        if u.get("group") == old:
+            u["group"] = new
+            changed = True
+    if changed:
+        _store(users)
+
+
+def _resolve_group(role: str, group: str | None) -> tuple[str, str | None]:
+    """A group pins the base role; without one, the given role stands."""
+    if group:
+        from . import permissions
+        g = permissions.group(group)
+        if not g:
+            raise PanelUserError("Unknown permission group")
+        return g["role"], group
+    return role, None
 
 
 def _sites_ok(sites: list[str]) -> list[str]:
@@ -88,12 +130,13 @@ def _sites_ok(sites: list[str]) -> list[str]:
     return sorted(set(sites))
 
 
-def create(username: str, password: str, role: str, sites: list[str] | None = None) -> dict:
+def create(username: str, password: str, role: str, sites: list[str] | None = None, group: str | None = None) -> dict:
     username = (username or "").strip()
     if not _NAME.match(username):
         raise PanelUserError("User name: 2–64 letters, digits, dot, dash, underscore or @")
     if username == owner() or any(u["username"] == username for u in _all()):
         raise PanelUserError("That user name is taken")
+    role, group = _resolve_group(role, group)
     if role not in ROLES:
         raise PanelUserError("Unknown role")
     if len(password or "") < 10:
@@ -102,22 +145,39 @@ def create(username: str, password: str, role: str, sites: list[str] | None = No
     if role == "site" and not sites:
         raise PanelUserError("Pick at least one website for a website manager")
     salt = secrets.token_hex(16)
+    entry = {"username": username, "role": role, "sites": sites, "salt": salt,
+             "hash": config._hash_password(password, salt), "created": int(time.time())}
+    if group:
+        entry["group"] = group
     users = _all()
-    users.append({"username": username, "role": role, "sites": sites, "salt": salt, "hash": config._hash_password(password, salt),
-                  "created": int(time.time())})
+    users.append(entry)
     _store(users)
     return {"ok": True}
 
 
-def update(username: str, role: str | None = None, sites: list[str] | None = None, password: str | None = None, disabled: bool | None = None) -> dict:
+def update(username: str, role: str | None = None, sites: list[str] | None = None, password: str | None = None,
+           disabled: bool | None = None, group: str | None = None) -> dict:
     users = _all()
     u = next((x for x in users if x["username"] == username), None)
     if not u:
         raise PanelUserError("Unknown user" if username != owner() else "The owner is changed under Password & Security")
+    # group: None leaves it as-is, "" clears it, a name assigns it (and pins the base role).
+    if group is not None:
+        if group == "":
+            u.pop("group", None)
+        else:
+            pinned_role, _ = _resolve_group(u["role"], group)
+            u["group"] = group
+            u["role"] = pinned_role
     if role is not None:
         if role not in ROLES:
             raise PanelUserError("Unknown role")
         u["role"] = role
+        if u.get("group"):  # an explicit role must agree with the assigned group's base role
+            from . import permissions
+            g = permissions.group(u["group"])
+            if g and g["role"] != role:
+                raise PanelUserError("That role does not match the assigned group; clear the group first")
     if sites is not None:
         u["sites"] = _sites_ok(sites) if u["role"] == "site" else []
     if u["role"] == "site" and not u.get("sites"):

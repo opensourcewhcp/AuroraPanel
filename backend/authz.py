@@ -14,31 +14,33 @@ from . import problems
 
 CURRENT: contextvars.ContextVar[dict | None] = contextvars.ContextVar("aurora_user", default=None)
 
-# Website managers: only these calls, each further limited to their own sites inside the module.
-SITE_ALLOW = [
+# Website managers always get these, whatever the capability toggles say: their own account, the
+# jobs they started and the list of sites they manage.
+SITE_BASE = [
     ("GET", r"/api/(me|status|requires)"),
     ("GET", r"/api/jobs/[\w-]+"),
     ("POST", r"/api/(logout|me/password)"),
     ("GET", r"/api/mysites"),
-    ("GET", r"/api/files/(list|read|download)"),
-    ("POST", r"/api/files/(write|delete|zip|unzip|mkdir|upload)"),
-    ("GET", r"/api/mail/accounts(/device|/mobileconfig)?"),
-    ("POST", r"/api/mail/accounts/(create|update|delete)"),
-    ("GET", r"/api/metrics/(sites|visitors|analytics|errors)"),
 ]
+
+# The capability catalogue, per-role defaults and named groups all live in permissions.py; this module
+# only enforces them. permissions.cap_for() says whether a route is gated by a capability, and the
+# caller's effective toggles ride on the user dict as "_caps" (resolved by panelusers).
+#
 # The security operator role is retired. Those accounts can sign out and nothing else: making them
 # viewers would quietly let them read the whole panel.
 RETIRED_ALLOW = re.compile(r"^/api/(me|status)$")
 # Viewers can read every page, but not these (secrets, file contents, downloads, a shell).
 VIEWER_DENY_GET = re.compile(r"^/api/(files/(read|download)|backups/[^/]+/download|backups/download|metrics/download|"
                              r"schedules/plans/[^/]+/passphrase|docker/apps/[^/]+/secret|ddns-hosts/[^/]+/key|"
-                             r"mail/accounts/mobileconfig|tokens|apitokens|terminal|sysapps/[^/]+/file|wptoolkit)")
+                             r"mail/accounts/mobileconfig|tokens|apitokens|role-caps|perm-groups|terminal|sysapps/[^/]+/file|wptoolkit)")
 VIEWER_ALLOW_POST = re.compile(r"^/api/(logout|me/password)$")
 # API tokens (apitokens.py). Fleet control: read, plus only these actions.
 TOKEN_FLEET_POST = re.compile(r"^/api/(fleet/action|guard/(ban|unban))$")
 # Full admin tokens can do everything except take over the panel itself: no tokens, panel users,
-# password, 2FA or Panel HTTPS (a leaked token mustn't be able to lock the owner out or make more tokens).
-TOKEN_ADMIN_DENY = re.compile(r"^/api/(tokens|panel-users|me/password|account/(password|rename)|2fa|panel/https)(/|$)")
+# role capabilities, password, 2FA or Panel HTTPS (a leaked token mustn't be able to lock the owner
+# out, make more tokens, or loosen who may do what).
+TOKEN_ADMIN_DENY = re.compile(r"^/api/(tokens|panel-users|role-caps|perm-groups|me/password|account/(password|rename)|2fa|panel/https)(/|$)")
 # The owner on the installer's random password: only what it takes to replace it.
 FIRST_LOGIN_ALLOW = re.compile(r"^/api/(me|status|logout|account/password)$")
 
@@ -119,18 +121,33 @@ def _decide(user: dict | None, method: str, path: str) -> str | None:
             return "password_change_required"
     if not user or user.get("role") == "admin":
         return None
+    from . import permissions
+    # A user may carry a group's capabilities (panelusers resolves them); otherwise use the role defaults.
+    eff = user.get("_caps")
+    if eff is None:
+        eff = permissions.capabilities(user["role"])
     if user["role"] == "viewer":
         if method in ("GET", "HEAD"):
-            return "This account can look but not open files, secrets or downloads" if VIEWER_DENY_GET.match(path) else None
+            if VIEWER_DENY_GET.match(path):
+                return "This account can look but not open files, secrets or downloads"
+            key = permissions.cap_for("viewer", "GET", path)
+            if key and not eff.get(key, permissions.default("viewer", key)):
+                return f"An administrator has turned off “{permissions.label('viewer', key)}” for this account"
+            return None
         return None if VIEWER_ALLOW_POST.match(path) else "This account is read-only"
     if user["role"] == "soc_operator":
         if (method in ("GET", "HEAD") and RETIRED_ALLOW.match(path)) or (method == "POST" and path == "/api/logout"):
             return None
         return "This account's role no longer exists. Ask an administrator to give it a new one."
     if user["role"] == "site":
-        for m, rx in SITE_ALLOW:
+        for m, rx in SITE_BASE:
             if m == method and re.fullmatch(rx, path):
                 return None
+        key = permissions.cap_for("site", method, path)
+        if key:
+            if eff.get(key, permissions.default("site", key)):
+                return None
+            return f"An administrator has turned off “{permissions.label('site', key)}” for this account"
         return "This account manages only its own websites"
     return "Unknown role"
 
@@ -142,7 +159,13 @@ def decide_token(level: str, method: str, path: str) -> str | None:
     if level in ("admin", "unlimited"):
         return "This API token can't manage tokens, panel users, the password, 2FA or Panel HTTPS" if TOKEN_ADMIN_DENY.match(path) else None
     if method in ("GET", "HEAD"):
-        return "This API token can't open files, secrets, downloads or the terminal" if VIEWER_DENY_GET.match(path) else None
+        if VIEWER_DENY_GET.match(path):
+            return "This API token can't open files, secrets, downloads or the terminal"
+        from . import permissions  # read/fleet tokens are bound by the same viewer capability toggles
+        key = permissions.cap_for("viewer", "GET", path)
+        if key and not permissions.capabilities("viewer").get(key, permissions.default("viewer", key)):
+            return "An administrator has turned off this capability for read-only access"
+        return None
     if method == "POST" and path == "/api/logout":
         return None
     if level == "fleet" and method == "POST" and TOKEN_FLEET_POST.match(path):

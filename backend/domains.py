@@ -134,6 +134,12 @@ def create_vhost(server_name: str, docroot: str = "", port: int = 80) -> dict:
     root = Path(docroot).expanduser() if docroot else (DEFAULT_DOCROOT_BASE / slug)
     if not root.is_absolute():
         raise DomainError("Doc root must be an absolute path")
+    # The doc root is written verbatim into the vhost config below. A newline or quote would let extra
+    # Apache directives be injected, and a bare system path (/ or /etc) would expose the whole machine.
+    if any(c in str(root) for c in "\n\r\t\"'<>$`\\") or ".." in root.parts:
+        raise DomainError("Doc root has characters that aren't allowed in a path")
+    if len(root.parts) < 3:
+        raise DomainError("Pick a dedicated folder for the site, e.g. /var/www/example.com")
     root.mkdir(parents=True, exist_ok=True)
     index = root / "index.html"
     if not index.exists():
@@ -282,6 +288,10 @@ def zone_content(name: str) -> dict:
     if BIND_DIR not in path.parents and path.parent != BIND_DIR:
         raise DomainError("Invalid path")
     if not path.is_file():
+        raise DomainError("Zone file not found")
+    # Only files the Zone Editor actually lists are zone files: a plain name match would otherwise hand
+    # back any file in /etc/bind (rndc.key, named.conf with its TSIG keys) to anyone who can read a zone.
+    if str(path) not in {z["path"] for z in zones()["zones"]}:
         raise DomainError("Zone file not found")
     return {"name": name, "content": path.read_text(errors="replace")[:20000]}
 
