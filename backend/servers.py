@@ -31,6 +31,27 @@ class ServerError(RuntimeError):
     pass
 
 
+class _PlainHttp(ServerError):
+    """The other panel answered plain HTTP on a https:// connection: Panel HTTPS is off there."""
+
+
+class _MovedToHttps(ServerError):
+    """The other panel redirected a http:// request to https://: Panel HTTPS is on there now."""
+
+    def __init__(self, url: str):
+        super().__init__(url)
+        self.url = url
+
+
+def _speaks_plain_http(host: str, port: int, timeout: float) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as s:
+            s.sendall(b"HEAD / HTTP/1.0\r\n\r\n")
+            return s.recv(5) == b"HTTP/"
+    except OSError:
+        return False
+
+
 def _load() -> dict:
     try:
         d = json.loads(STATE.read_text())
@@ -72,7 +93,12 @@ def _request(srv: dict, method: str, path: str, body: dict | None = None, timeou
     else:
         conn = http.client.HTTPConnection(host, port, timeout=timeout)
     try:
-        conn.connect()
+        try:
+            conn.connect()
+        except ssl.SSLError as e:
+            if _speaks_plain_http(host, port, timeout):
+                raise _PlainHttp(f"{srv.get('name', host)} answers plain HTTP, so Panel HTTPS is off there") from e
+            raise
         fp = ""
         if scheme == "https":
             der = conn.sock.getpeercert(binary_form=True)
@@ -86,6 +112,10 @@ def _request(srv: dict, method: str, path: str, body: dict | None = None, timeou
             headers["Content-Type"] = "application/json"
         conn.request(method, path, body=data, headers=headers)
         r = conn.getresponse()
+        if scheme == "http" and r.status in (301, 302, 307, 308):
+            loc = urlsplit(r.getheader("Location") or "")
+            if loc.scheme == "https" and loc.hostname == host and (loc.port or 443) == port:
+                raise _MovedToHttps(f"https://{host}:{port}")
         raw = r.read(4_000_000)
         try:
             payload = json.loads(raw or b"null")
@@ -98,13 +128,52 @@ def _request(srv: dict, method: str, path: str, body: dict | None = None, timeou
         conn.close()
 
 
+def _call(srv: dict, method: str, path: str, body: dict | None = None, timeout: float = 8.0):
+    """_request for a saved server. One that has turned Panel HTTPS on since is followed to https://
+    (its certificate is remembered then, and srv["_moved"] tells the caller to save it). One that has
+    turned it off is not followed back to plain http: that is what someone in between would do."""
+    try:
+        return _request(srv, method, path, body, timeout)
+    except _MovedToHttps as m:
+        srv["url"] = m.url
+        status, payload, fp = _request(srv, method, path, body, timeout, pin="")
+        srv["fingerprint"], srv["_moved"] = fp, True
+        return status, payload, fp
+    except _PlainHttp:
+        raise ServerError(f"{srv.get('name', '')} answers plain HTTP now. Turn Panel HTTPS back on there (Security → Panel HTTPS), "
+                          "or, on your own network, remove it here and add it again")
+
+
+def _save_moved(servers: list[dict]) -> None:
+    moved = {s["id"]: s for s in servers if s.pop("_moved", False)}
+    if moved:
+        d = _load()
+        for s in d["servers"]:
+            if s["id"] in moved:
+                s["url"], s["fingerprint"] = moved[s["id"]]["url"], moved[s["id"]]["fingerprint"]
+        _save(d)
+
+
 def add(name: str, url: str, token: str) -> dict:
     token = (token or "").strip()
     if not token.startswith("aur_"):
         raise ServerError("Paste an API token made on that server (Security → Manage API Tokens) — it starts with aur_")
     scheme, host, port = _parse(url)
     srv = {"id": secrets.token_hex(4), "name": (name or host).strip()[:60], "url": f"{scheme}://{host}:{port}", "token": token, "added": int(time.time())}
-    status, payload, fp = _request(srv, "GET", "/api/fleet/self", pin="")
+    try:
+        status, payload, fp = _request(srv, "GET", "/api/fleet/self", pin="")
+    except _MovedToHttps as m:
+        srv["url"] = m.url
+        status, payload, fp = _request(srv, "GET", "/api/fleet/self", pin="")
+    except _PlainHttp:
+        # Panels installed before HTTPS was the default keep plain http after updates. On your own network that's allowed.
+        try:
+            _parse(f"http://{host}:{port}")
+        except ServerError:
+            raise ServerError(f"{host} answers plain HTTP. Turn on HTTPS there (Security → Panel HTTPS) and add it again: "
+                              "the token mustn't cross the internet unencrypted")
+        srv["url"] = f"http://{host}:{port}"
+        status, payload, fp = _request(srv, "GET", "/api/fleet/self", pin="")
     if status == 401:
         raise ServerError("That server didn't accept the token")
     if status != 200:
@@ -132,7 +201,11 @@ def repin(sid: str) -> dict:
     srv = next((s for s in d["servers"] if s["id"] == sid), None)
     if not srv:
         raise ServerError("Unknown server")
-    status, payload, fp = _request(srv, "GET", "/api/fleet/self", pin="")
+    try:
+        status, payload, fp = _request(srv, "GET", "/api/fleet/self", pin="")
+    except _MovedToHttps as m:
+        srv["url"] = m.url
+        status, payload, fp = _request(srv, "GET", "/api/fleet/self", pin="")
     if status != 200:
         raise ServerError(f"It answered {status}")
     srv["fingerprint"] = fp
@@ -201,7 +274,7 @@ def overview() -> dict:
     def one(srv):
         t0 = time.time()
         try:
-            status, payload, _ = _request(srv, "GET", "/api/fleet/self", timeout=6)
+            status, payload, _ = _call(srv, "GET", "/api/fleet/self", timeout=6)
             if status != 200:
                 return {**_public(srv), "ok": False, "error": f"answered {status}" + (" (token revoked?)" if status == 401 else "")}
             return {**_public(srv), **payload, "ok": True, "ms": int((time.time() - t0) * 1000)}
@@ -210,6 +283,7 @@ def overview() -> dict:
 
     with ThreadPoolExecutor(max_workers=8) as ex:
         others = list(ex.map(one, d["servers"]))
+    _save_moved(d["servers"])
     return {"servers": [me] + others}
 
 
@@ -219,14 +293,16 @@ def ban_everywhere(ip: str, reason: str, duration: int | None) -> dict:
 
     def one(srv):
         try:
-            status, payload, _ = _request(srv, "POST", "/api/guard/ban", {"target": ip, "reason": reason, "duration": duration, "source": "Servers · ban everywhere"})
+            status, payload, _ = _call(srv, "POST", "/api/guard/ban", {"target": ip, "reason": reason, "duration": duration, "source": "Servers · ban everywhere"})
             return srv["name"], {"ok": status == 200, "error": "" if status == 200 else (payload or {}).get("detail", f"HTTP {status}")}
         except ServerError as e:
             return srv["name"], {"ok": False, "error": str(e)}
 
+    saved = _load()["servers"]
     with ThreadPoolExecutor(max_workers=8) as ex:
-        for name, r in ex.map(one, _load()["servers"]):
+        for name, r in ex.map(one, saved):
             res[name] = r
+    _save_moved(saved)
     return res
 
 
@@ -235,14 +311,16 @@ def unban_everywhere(ip: str) -> dict:
 
     def one(srv):
         try:
-            status, payload, _ = _request(srv, "POST", "/api/guard/unban", {"target": ip})
+            status, payload, _ = _call(srv, "POST", "/api/guard/unban", {"target": ip})
             return srv["name"], {"ok": status == 200, "error": "" if status == 200 else (payload or {}).get("detail", f"HTTP {status}")}
         except ServerError as e:
             return srv["name"], {"ok": False, "error": str(e)}
 
+    saved = _load()["servers"]
     with ThreadPoolExecutor(max_workers=8) as ex:
-        for name, r in ex.map(one, _load()["servers"]):
+        for name, r in ex.map(one, saved):
             res[name] = r
+    _save_moved(saved)
     return res
 
 

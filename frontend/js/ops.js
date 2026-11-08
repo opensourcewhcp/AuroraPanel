@@ -1313,12 +1313,12 @@ window.AuroraOps = (ui) => {
     }
     function addDlg() {
       const name = el("input", { type: "text", placeholder: "Home Pi" });
-      const url = el("input", { type: "text", placeholder: "https://192.168.0.100:8088" });
+      const url = el("input", { type: "text", placeholder: "192.168.0.100:8088" });
       const token = el("input", { type: "password", placeholder: "aur_…", autocomplete: "off" });
       openModal("Add a server", el("div", { class: "em-form" }, [
         el("ol", { class: "op-steps" }, [el("li", { text: "On the other server's panel: Security → Manage API Tokens → create a token (name it after this server)." }),
           el("li", { text: "Copy it and paste it below with that panel's address (the one you open it with)." })]),
-        field("Name", name), field("Panel address", url, "https:// with any certificate, it's remembered (pinned) on first contact. http:// only on your own network."), field("API token", token),
+        field("Name", name), field("Panel address", url, "The address and port. HTTPS is used when that panel has it, and its certificate is remembered. A panel without HTTPS is only added on your own network."), field("API token", token),
       ]), [el("button", { class: "btn btn-primary", text: "Add", onclick: () => call(() => API.serverAdd({ name: name.value.trim(), url: url.value.trim(), token: token.value.trim() }), "Server added", () => { closeModal(); load(); }) })]);
     }
     load();
