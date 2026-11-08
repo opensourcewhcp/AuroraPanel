@@ -233,7 +233,7 @@ const API = (() => {
     cloudVm: (p, id, action) => request("POST", `/api/cloud/${p}/vm`, { id, action }),
     cloudBrowse: (p, path) => request("GET", `/api/cloud/${p}/browse?path=${encodeURIComponent(path || "")}`),
     cloudTransfer: (p, direction, local, remote) => request("POST", `/api/cloud/${p}/transfer`, { direction, local, remote }),
-    // Third-party Apps (Google Drive, Google Photos)
+    // Cloud Apps, Google Drive
     connectors: () => request("GET", "/api/connect"),
     connectStart: (service, client_id, client_secret, label) => request("POST", "/api/connect/start", { service, client_id, client_secret, label }),
     connectFinish: (session, auth_response) => request("POST", "/api/connect/finish", { session, auth_response }),

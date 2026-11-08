@@ -1268,18 +1268,65 @@ window.AuroraOps = (ui) => {
   const ACCESS = { read: ["Read only", "info", "eye"], fleet: ["Fleet control", "med", "t_servers"], admin: ["Full admin", "crit", "key"], legacy: ["Full access, older token", "med", "warning"] };
   const canAct = (s) => !s.local && s.ok && ["fleet", "admin", "legacy"].includes(s.access);
   const canRun = (s) => !s.local && s.ok && ["admin", "legacy"].includes(s.access);
+  // Panels before 1.2.3 don't report a token level: their tokens all have full access, enough to update them.
+  const canUpgrade = (s) => !s.local && s.ok && (!s.access || ["fleet", "admin", "legacy"].includes(s.access));
+  const vkey = (v) => { const m = /^(\d+)\.(\d+)\.(\d+)/.exec(v || ""); return m ? (+m[1]) * 1e6 + (+m[2]) * 1e3 + (+m[3]) : 0; };
+  const unitName = (u) => u.replace(/\.service$/, "");
 
-  function svcRow(s) {
+  // An icon button with a tooltip, an optional count badge and an optional second click to confirm.
+  // A button that can't act here still explains why on click instead of sitting there dead.
+  function ib(ico, tip, fn, o = {}) {
+    const b = el("button", { type: "button", class: `srv-ib ${o.cls || ""} ${o.why ? "off" : ""}`, title: o.why ? `${tip}: ${o.why}` : tip, "aria-label": tip },
+      [icon(ico, 17), o.badge ? el("i", { class: `srv-badge ${o.badgeCls || ""}`, text: String(o.badge) }) : null].filter(Boolean));
+    let armedT = 0;
+    b.onclick = () => {
+      if (o.why) return toast(o.why, "warn");
+      if (o.confirm && !b.classList.contains("armed")) {
+        b.classList.add("armed"); b.append(el("span", { class: "srv-ib-t", text: o.confirm }));
+        armedT = setTimeout(() => { b.classList.remove("armed"); b.querySelector(".srv-ib-t")?.remove(); }, 4000);
+        return;
+      }
+      clearTimeout(armedT); b.classList.remove("armed"); b.querySelector(".srv-ib-t")?.remove();
+      fn(b);
+    };
+    return b;
+  }
+
+  // Services by kind: one tile per kind, its icon, how many run, red when one failed.
+  function svcBox(s, newest, reload) {
     const v = s.services;
-    if (!v) return null;
-    return el("div", { class: "srv-svcs" }, [
+    if (!v) {
+      const old = vkey(s.version) && vkey(newest) > vkey(s.version);
+      return el("div", { class: "srv-svcbox empty" }, [
+        el("span", { class: "srv-svc-ico" }, icon("t_rocket", 22)),
+        el("div", { class: "grow" }, [el("b", { text: old ? `AuroraPanel ${newest} is ready for ${s.name}` : "Services aren't reported" }),
+          el("p", { class: "muted mx-small", text: old ? `It runs ${s.version}. One click updates it, then its services show here and you can control it.` : "Update AuroraPanel on that server to see its services here." })]),
+        old && canUpgrade(s) ? upgradeBtn(s, newest, reload) : null,
+      ].filter(Boolean));
+    }
+    return el("div", { class: "srv-svcbox" }, [
       el("div", { class: "srv-svc-head" }, [
         el("span", { class: "srv-svc-sum", title: `${v.total} services loaded` }, [icon("services", 14), el("b", { text: String(v.running) }), el("span", { class: "muted", text: "running" })]),
-        v.failed ? el("span", { class: "srv-sev crit" }, [icon("error", 13), el("b", { text: String(v.failed) }), el("span", { text: "failed" })]) : sevChip("low", "none failed")]),
-      ...v.kinds.map((k) => el("span", { class: `srv-kind ${k.down.length ? "down" : k.up ? "up" : "idle"}`,
-        title: `${k.label}: ${k.units.map((u) => u.replace(/\.service$/, "")).join(", ")}${k.down.length ? ` (failed: ${k.down.map((u) => u.replace(/\.service$/, "")).join(", ")})` : ""}` },
-        [icon(SVC_KIND_ICON[k.key] || "services", 14), el("span", { text: k.label }), el("b", { text: `${k.up}/${k.units.length}` })])),
-    ]);
+        v.failed ? sevChip("critical", `${v.failed} failed`) : sevChip("low", "none failed")]),
+      v.kinds.length ? el("div", { class: "srv-kinds" }, v.kinds.map((k) => el("span", { class: `srv-kind ${k.down.length ? "down" : k.up ? "up" : "idle"}`,
+        title: `${k.label}: ${k.units.map(unitName).join(", ")}${k.down.length ? ` (failed: ${k.down.map(unitName).join(", ")})` : ""}` },
+        [el("span", { class: "srv-kind-ico" }, icon(SVC_KIND_ICON[k.key] || "services", 17)), el("span", { class: "srv-kind-l", text: k.label }), el("b", { text: `${k.up}/${k.units.length}` })]))) : null,
+    ].filter(Boolean));
+  }
+
+  function upgradeBtn(s, newest, reload) {
+    const b = el("button", { type: "button", class: "srv-upgrade", title: `Update AuroraPanel on ${s.name} from ${s.version} to ${newest}` }, [icon("t_rocket", 15), el("span", { text: `Update to ${newest}` })]);
+    b.onclick = async () => {
+      if (!b.classList.contains("armed")) { b.classList.add("armed"); b.lastChild.textContent = "Click to confirm"; setTimeout(() => { if (!b.disabled) { b.classList.remove("armed"); b.lastChild.textContent = `Update to ${newest}`; } }, 4000); return; }
+      b.disabled = true; b.classList.remove("armed"); b.classList.add("busy"); b.lastChild.textContent = "Updating…";
+      try {
+        const r = await confirmed((c) => API.serverAction(s.id, { action: "upgrade_panel", unit: "", ...c }));
+        if (!r) { b.disabled = false; b.classList.remove("busy"); b.lastChild.textContent = `Update to ${newest}`; return; }
+        toast(`${s.name} is updating to ${r.to || newest}. It restarts in about a minute.`, "good");
+        setTimeout(reload, 60000);
+      } catch (e) { toast(e.message, "bad"); b.disabled = false; b.classList.remove("busy"); b.lastChild.textContent = `Update to ${newest}`; }
+    };
+    return b;
   }
 
   // Server control asks for the password again (once covers ten minutes). Returns the extra fields to send, or null if cancelled.
@@ -1316,77 +1363,164 @@ window.AuroraOps = (ui) => {
   // One-click terminal: a command box that runs on that server (full admin tokens only) and shows the output.
   const QUICK = [["Uptime", "uptime"], ["Disk space", "df -h -x tmpfs -x devtmpfs"], ["Memory", "free -h"], ["Failed services", "systemctl --failed --no-pager"],
     ["Top processes", "ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu | head -15"], ["Recent errors", "journalctl -p err -n 30 --no-pager"]];
-  function runDlg(s) {
-    const cmd = el("input", { type: "text", class: "srv-cmd", placeholder: "systemctl status nginx", autocomplete: "off", spellcheck: "false" });
-    const out = el("pre", { class: "log srv-out", text: `Commands run as root on ${s.name} (${(s.url || "").replace(/^https?:\/\//, "")}).` });
-    const status = el("span", { class: "muted mx-small" });
-    const hist = [];
-    let hi = -1;
+  const histKey = (s) => `aurora.term.${s.id}`;
+  const loadHist = (s) => { try { return JSON.parse(localStorage.getItem(histKey(s)) || "[]").slice(0, 50); } catch { return []; } };
+  const saveHist = (s, h) => { try { localStorage.setItem(histKey(s), JSON.stringify(h.slice(0, 50))); } catch { /* private window */ } };
+
+  // A terminal window: the prompt sits at the bottom of the console like a real shell, every command
+  // gets its own block with its exit code and time, history is kept per server, and the server can be
+  // switched without closing it.
+  function runDlg(first, all, autorun) {
+    let s = first;
+    let hist = loadHist(s), hi = -1, busy = false;
+    const host = () => (s.hostname || s.name || "server").split(".")[0];
+    const ps = el("span", { class: "srv-ps" });
+    const cmd = el("input", { type: "text", class: "srv-cmd", autocomplete: "off", spellcheck: "false", "aria-label": "Command" });
+    const log = el("div", { class: "srv-log" });
+    const term = el("div", { class: "srv-term", onclick: (e) => { if (!window.getSelection().toString() && e.target.tagName !== "BUTTON") cmd.focus(); } },
+      [log, el("div", { class: "srv-line" }, [ps, cmd])]);
+    const where = el("span", { class: "srv-where" });
+    const draw = () => {
+      ps.textContent = `root@${host()}:~#`;
+      where.replaceChildren(el("span", { class: "op-dot good" }), el("b", { text: s.name }), el("span", { class: "muted", text: (s.url || "").replace(/^https?:\/\//, "") }));
+      cmd.placeholder = "Type a command and press Enter";
+    };
+    const banner = () => log.append(el("div", { class: "srv-sys", text: `Connected to ${s.name}. Commands run as root, one at a time, up to two minutes each, and are written to its Activity Log.` }));
     const go = async (text) => {
       const c = (text != null ? text : cmd.value).trim();
-      if (!c) return;
-      cmd.value = c; hist.unshift(c); hi = -1;
-      out.textContent += `\n\n$ ${c}\n`; status.textContent = "Running…"; runBtn.disabled = true;
+      if (!c || busy) return;
+      if (c === "clear") { log.replaceChildren(); cmd.value = ""; return; }
+      busy = true; cmd.value = ""; cmd.disabled = true;
+      hist = [c, ...hist.filter((x) => x !== c)]; hi = -1; saveHist(s, hist);
+      const st = el("span", { class: "srv-st run", text: "running" });
+      const out = el("pre", { class: "srv-o" });
+      const blk = el("div", { class: "srv-blk" }, [el("div", { class: "srv-c" }, [el("span", { class: "srv-ps", text: `root@${host()}:~#` }), el("span", { class: "srv-ctext", text: c }), st]), out]);
+      log.append(blk); term.scrollTop = 1e9;
       try {
         const r = await confirmed((x) => API.serverExec(s.id, { command: c, ...x }));
-        if (r) { out.textContent += (r.output || "").replace(/\s+$/, "") || "(no output)"; status.textContent = `exit ${r.code == null ? "timeout" : r.code} · ${r.seconds}s`; }
-        else status.textContent = "Cancelled";
-      } catch (e) { out.textContent += `! ${e.message}`; status.textContent = ""; }
-      runBtn.disabled = false; out.scrollTop = 1e9; cmd.select();
+        if (!r) { st.className = "srv-st"; st.textContent = "cancelled"; }
+        else {
+          out.textContent = (r.output || "").replace(/\s+$/, "");
+          if (!out.textContent) out.remove();
+          const ok = r.code === 0;
+          st.className = `srv-st ${ok ? "ok" : "bad"}`;
+          st.textContent = `${r.code == null ? "timed out" : ok ? "✓" : `exit ${r.code}`} · ${r.seconds}s`;
+        }
+      } catch (e) { out.textContent = e.message; out.classList.add("err"); st.className = "srv-st bad"; st.textContent = "error"; }
+      busy = false; cmd.disabled = false; cmd.focus(); term.scrollTop = 1e9;
     };
-    const runBtn = el("button", { class: "btn btn-primary", onclick: () => go() }, [icon("play", 14), " Run"]);
     cmd.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") go();
+      if (e.key === "Enter") { e.preventDefault(); go(); }
       else if (e.key === "ArrowUp" && hist.length) { hi = Math.min(hi + 1, hist.length - 1); cmd.value = hist[hi]; e.preventDefault(); }
-      else if (e.key === "ArrowDown" && hi > 0) { hi -= 1; cmd.value = hist[hi]; e.preventDefault(); }
+      else if (e.key === "ArrowDown") { hi = Math.max(hi - 1, -1); cmd.value = hi < 0 ? "" : hist[hi]; e.preventDefault(); }
+      else if (e.key === "l" && e.ctrlKey) { e.preventDefault(); log.replaceChildren(); }
     });
-    openModal(`Terminal on ${s.name}`, el("div", { class: "em-form" }, [
-      el("div", { class: "srv-quick" }, QUICK.map(([l, c]) => el("button", { class: "btn btn-sm btn-ghost", text: l, title: c, onclick: () => go(c) }))),
-      el("div", { class: "srv-cmdrow" }, [el("span", { class: "srv-prompt", text: "#" }), cmd, runBtn]), status, out,
-      el("p", { class: "muted mx-small", text: "One command at a time, up to two minutes each. For long or interactive jobs use Open its panel → Terminal. Every command is written to that server's Activity Log." }),
+    const others = (all || []).filter((x) => canRun(x) && x.secure);
+    const pick = others.length > 1 ? el("select", { class: "em-select srv-pick", "aria-label": "Server", onchange: (e) => {
+      s = others.find((x) => x.id === e.target.value) || s; hist = loadHist(s); hi = -1; draw();
+      log.append(el("div", { class: "srv-sys", text: `Switched to ${s.name}.` })); term.scrollTop = 1e9; cmd.focus();
+    } }, others.map((x) => el("option", { value: x.id, text: x.name, selected: x.id === s.id ? "" : null }))) : null;
+    const copyAll = ib("t_copy", "Copy everything", async () => toast(await copyText(log.innerText) ? "Copied" : "Copy failed", "good"));
+    const clearAll = ib("trash", "Clear (Ctrl+L)", () => { log.replaceChildren(); cmd.focus(); });
+    openModal("Terminal", el("div", { class: "srv-tdlg" }, [
+      el("div", { class: "srv-tbar" }, [pick || where, el("span", { class: "grow" }), copyAll, clearAll]),
+      el("div", { class: "srv-quick" }, QUICK.map(([l, c]) => el("button", { type: "button", class: "srv-chip", title: c, onclick: () => go(c) }, [icon("play", 11), el("span", { text: l })]))),
+      term,
+      el("div", { class: "srv-keys" }, [el("span", {}, [el("kbd", { text: "Enter" }), " run"]), el("span", {}, [el("kbd", { text: "↑" }), el("kbd", { text: "↓" }), " history"]),
+        el("span", {}, [el("kbd", { text: "Ctrl" }), el("kbd", { text: "L" }), " clear"]), el("span", { class: "grow" }), el("span", { text: "Long or interactive jobs: its own panel → Terminal" })]),
     ]), []);
     modalWide();
-    setTimeout(() => cmd.focus(), 50);
+    document.querySelector("#modal .modal")?.classList.add("srv-tmodal");
+    draw(); banner();
+    setTimeout(() => { cmd.focus(); if (autorun) go(autorun); }, 50);
   }
 
   // A server card on the Servers page.
-  function srvCard(s, reload, compact) {
-    const crit = (s.alerts || []).some((a) => a.level === "critical") || (s.failed_units || []).length;
-    const acc = ACCESS[s.access];
-    const ctl = [];
-    if (s.local) {
-      if ((s.failed_units || []).length) ctl.push(btn("Services", () => navigate("services"), "btn-ghost"));
-      if ((s.updates || {}).total) ctl.push(btn("Install updates", () => navigate("updates"), "btn-ghost"));
-    } else if (s.ok && s.secure && canAct(s)) {
-      (s.failed_units || []).slice(0, compact ? 1 : 3).forEach((u) => ctl.push(el("button", { class: "btn btn-sm btn-ghost", title: `Restart ${u} on ${s.name}`,
-        onclick: () => control(s, "restart_service", u, `${u} restarted on ${s.name}`, reload) }, [icon("refresh", 13), ` Restart ${u.replace(/\.service$/, "")}`])));
-      if ((s.updates || {}).total) ctl.push(armed(`Install ${s.updates.total} updates`, "Click again to install", () => control(s, "install_updates", "", `Installing updates on ${s.name}`, reload), "btn-ghost"));
-    }
-    if (canRun(s) && s.secure) ctl.push(el("button", { class: "btn btn-sm btn-primary", onclick: () => runDlg(s) }, [icon("terminal", 14), " Terminal"]));
-    const note = !s.local && s.ok ? (!s.access ? `It runs AuroraPanel ${s.version || "(older)"}: update it to see its services and control it from here.`
-      : !s.secure ? "Watch only: turn on Panel HTTPS on that server to control it from here."
-      : s.access === "read" ? "Read only token: make a Fleet control or Full admin token there to control it from here." : "") : "";
-    return el("div", { class: `card op-srv ${s.ok ? "" : "bad"} ${compact ? "compact" : ""}` }, [
-      el("div", { class: "op-srv-h" }, [el("span", { class: `op-dot ${s.ok ? (crit ? "warn" : "good") : "bad"}` }),
-        el("div", { class: "grow" }, [el("b", { text: s.name }), el("p", { class: "muted mx-small mx-ell", text: [s.hostname, s.model || (s.pi ? "Raspberry Pi" : ""), s.version ? `v${s.version}` : ""].filter(Boolean).join(" · ") })]),
-        s.local ? pill("this one", "good") : acc ? el("span", { class: `srv-sev ${acc[1]}`, title: "What this server's token allows" }, [icon(acc[2], 13), el("span", { text: acc[0] })]) : null,]),
-      s.ok ? el("div", { class: "op-srv-m" }, [meter("CPU", s.cpu, compact ? "" : `${s.cpus || "?"} cores · load ${s.load != null ? s.load.toFixed(2) : "n/a"}${s.temp ? ` · ${s.temp}°C` : ""}`),
-        meter("Memory", s.mem_pct, compact ? "" : s.mem_total ? fmtBytes(s.mem_total) : ""), meter("Disk", s.disk_pct, compact ? "" : s.disk_total ? fmtBytes(s.disk_total) : "")])
+  // A server card. Every card has the same six rows in the same order (header, meters, status, services,
+  // alerts, actions), laid on a shared subgrid so the rows line up across a whole row of cards.
+  function srvCard(s, reload, all) {
+    const newest = (all.find((x) => x.local) || {}).version || "";
+    const failed = s.failed_units || [];
+    const upd = s.updates || {};
+    const crit = (s.alerts || []).some((a) => a.level === "critical") || failed.length;
+    const acc = s.local ? ["Here", "low", "home"] : ACCESS[s.access] || (s.ok ? ["Older panel", "info", "info"] : null);
+    const hasUpgrade = !s.local && s.ok && vkey(s.version) && vkey(newest) > vkey(s.version);
+
+    // Why a control button can't act here ("" = it can).
+    const why = (need) => s.local ? "" : !s.ok ? "the server isn't reachable"
+      : !s.access ? `update AuroraPanel there first (it runs ${s.version || "an older version"})`
+      : !s.secure ? "turn on Panel HTTPS on that server first (it's only watched over plain http)"
+      : need === "run" && !canRun(s) ? "needs a Full admin token from that server"
+      : need === "act" && !canAct(s) ? "needs a Fleet control or Full admin token from that server" : "";
+    // Restart every failed service. One that fails again opens the terminal with its status and log, so the reason is right there.
+    const restartAll = async () => {
+      const bad = [];
+      for (const u of failed) {
+        try {
+          const r = await confirmed((c) => API.serverAction(s.id, { action: "restart_service", unit: u, ...c }));
+          if (!r) return;
+          toast(`${unitName(u)} restarted on ${s.name}`, "good");
+        } catch (e) { bad.push(u); toast(`${unitName(u)} on ${s.name} didn't start${canRun(s) ? ", here's why" : `: ${e.message}`}`, "bad"); }
+      }
+      if (bad.length && canRun(s) && s.secure) runDlg(s, all, bad.map((u) => `systemctl status ${u} --no-pager -l | head -20; journalctl -u ${u} -n 20 --no-pager -o cat`).join("; "));
+      setTimeout(reload, 1500);
+    };
+
+    const left = s.local ? [
+      ib("terminal", "Terminal", () => navigate("terminal"), { cls: "prime" }),
+      ib("t_update", upd.total ? `Install ${upd.total} updates` : "Updates: all installed", () => navigate("updates"), { badge: upd.total, badgeCls: upd.security ? "crit" : "med" }),
+      ib("refresh", failed.length ? `Services: ${failed.length} failed` : "Services", () => navigate("services"), { badge: failed.length, badgeCls: "crit" }),
+      ib("info", "About & Updates for AuroraPanel", () => navigate("about")),
+    ] : [
+      ib("terminal", `Terminal on ${s.name}`, () => runDlg(s, all), { cls: "prime", why: why("run") }),
+      ib("t_update", upd.total ? `Install ${upd.total} updates on ${s.name}` : "No updates waiting",
+        () => control(s, "install_updates", "", `Installing ${upd.total} updates on ${s.name}`, reload),
+        { badge: upd.total, badgeCls: upd.security ? "crit" : "med", confirm: `Install ${upd.total}?`, why: why("act") || (upd.total ? "" : "everything is up to date") }),
+      ib("refresh", failed.length ? `Restart ${failed.map(unitName).join(", ")}` : "No failed services", restartAll,
+        { badge: failed.length, badgeCls: "crit", confirm: "Restart?", why: why("act") || (failed.length ? "" : "nothing has failed") }),
+    ];
+    const right = [
+      !s.local && s.url ? el("a", { class: "srv-ib", href: s.url, target: "_blank", rel: "noopener", title: `Open ${s.name}'s panel`, "aria-label": `Open ${s.name}'s panel` }, icon("t_external", 17)) : null,
+      !s.local && s.error && /certificate changed/.test(s.error) ? ib("lock", "Trust its new certificate", () => call(() => API.serverRepin(s.id), "Certificate accepted", reload), { confirm: "Trust?" }) : null,
+      !s.local ? ib("trash", `Remove ${s.name} from this list`, () => call(() => API.serverRemove(s.id), "Removed", reload), { cls: "danger", confirm: "Remove?" }) : null,
+    ].filter(Boolean);
+
+    const note = s.local || !s.ok || !s.access ? "" : !s.secure ? "Watch only: turn on Panel HTTPS on that server to control it from here."
+      : s.access === "read" ? "Read only token: make a Fleet control or Full admin token there to control it from here." : "";
+    const sub = [s.hostname && s.hostname !== s.name ? s.hostname.split(".")[0] : "", s.model || (s.pi ? "Raspberry Pi" : "")].filter(Boolean).join(" · ");
+
+    return el("div", { class: `card op-srv ${s.ok ? "" : "bad"} ${s.local ? "local" : ""}` }, [
+      // 1 header
+      el("div", { class: "op-srv-h" }, [
+        el("span", { class: `srv-ava ${s.ok ? (crit ? "warn" : "good") : "bad"}` }, [icon(s.pi ? "t_cpu" : "server", 20), el("i")]),
+        el("div", { class: "grow" }, [el("div", { class: "srv-title" }, [el("b", { text: s.name }), s.version ? el("span", { class: `srv-ver ${hasUpgrade ? "old" : ""}`, title: hasUpgrade ? `${newest} is available` : "AuroraPanel version", text: `v${s.version}` }) : null].filter(Boolean)),
+          el("p", { class: "muted mx-small mx-ell", title: [s.hostname, s.model].filter(Boolean).join(" · "), text: sub || (s.url || "").replace(/^https?:\/\//, "") })]),
+        acc ? el("span", { class: `srv-sev ${acc[1]}`, title: s.local ? "The panel you're using" : "What this server's token allows" }, [icon(acc[2], 13), el("span", { text: acc[0] })]) : null,
+      ].filter(Boolean)),
+      // 2 meters
+      s.ok ? el("div", { class: "op-srv-m" }, [meter("CPU", s.cpu, `${s.cpus || "?"} cores${s.temp ? ` · ${s.temp}°C` : ""}`),
+        meter("Memory", s.mem_pct, s.mem_total ? fmtBytes(s.mem_total) : ""), meter("Disk", s.disk_pct, s.disk_total ? fmtBytes(s.disk_total) : "")])
         : el("div", { class: "mx-note" }, [icon("warning", 16), el("span", { text: s.error || "Unreachable" })]),
-      s.ok ? svcRow(s) : null,
-      s.ok ? el("div", { class: "op-srv-f" }, [
+      // 3 status
+      el("div", { class: "op-srv-f" }, s.ok ? [
         el("span", { class: "srv-up" }, [icon("clock", 13), el("span", { text: `Up ${upt(s.uptime)}` })]),
-        (s.updates || {}).total ? sevChip(s.updates.security ? "critical" : "warning", `${s.updates.total} updates${s.updates.security ? ` · ${s.updates.security} security` : ""}`) : sevChip("low", "up to date"),
-        (s.updates || {}).reboot ? sevChip("warning", "restart needed") : null,
-        s.bans ? sevChip("info", `${s.bans} banned`) : null]) : null,
-      (s.alerts || []).length ? el("div", { class: "op-srv-al" }, s.alerts.slice(0, compact ? 2 : 4).map((a) => el("div", {}, [sevChip(a.level), el("span", { class: "mx-ell", text: a.title })]))) : null,
-      note ? el("p", { class: "muted mx-small srv-note", text: note }) : null,
-      el("div", { class: "toolbar" }, [
-        ...ctl,
-        s.local || !s.url ? null : el("a", { class: "btn btn-sm btn-ghost", href: s.url, target: "_blank", rel: "noopener", text: "Open its panel ↗" }),
-        !compact && !s.local && s.error && /certificate changed/.test(s.error) ? armed("Trust its new certificate", "Click again", () => call(() => API.serverRepin(s.id), "Certificate accepted", reload), "btn-ghost") : null,
-        !compact && !s.local ? armed("Remove", "Click again", () => call(() => API.serverRemove(s.id), "Removed", reload), "btn-ghost") : null,
-      ]),
+        upd.total ? sevChip(upd.security ? "critical" : "warning", `${upd.total} updates${upd.security ? ` · ${upd.security} security` : ""}`) : sevChip("low", "up to date"),
+        upd.reboot ? sevChip("warning", "restart needed") : null,
+        s.bans ? sevChip("info", `${s.bans} banned`) : null].filter(Boolean) : []),
+      // 4 services
+      s.ok ? svcBox(s, newest, reload) : el("div"),
+      // 5 alerts and notes
+      el("div", { class: "op-srv-al" }, [...(s.alerts || []).slice(0, 3).map((a) => el("div", {}, [sevChip(a.level), el("span", { class: "mx-ell", title: a.title, text: a.title })])),
+        note ? el("p", { class: "muted mx-small srv-note", text: note }) : null].filter(Boolean)),
+      // 6 actions
+      el("div", { class: "srv-acts" }, [...left, el("span", { class: "grow" }), hasUpgrade && s.services && canUpgrade(s) ? ib("t_rocket", `Update AuroraPanel on ${s.name} to ${newest}`, async (b) => {
+        b.disabled = true; b.classList.add("busy");
+        try {
+          const r = await confirmed((c) => API.serverAction(s.id, { action: "upgrade_panel", unit: "", ...c }));
+          if (r) { toast(`${s.name} is updating to ${r.to || newest}. It restarts in about a minute.`, "good"); setTimeout(reload, 60000); return; }
+        } catch (e) { toast(e.message, "bad"); }
+        b.disabled = false; b.classList.remove("busy");
+      }, { cls: "upg", confirm: `Update to ${newest}?`, badge: "↑", badgeCls: "info" }) : null, ...right].filter(Boolean)),
     ]);
   }
 
@@ -1409,7 +1543,7 @@ window.AuroraOps = (ui) => {
         tile("Security updates", String(d.servers.reduce((a, s) => a + ((s.updates || {}).security || 0), 0)), "waiting across all servers", "t_update"),
         tile("Banned addresses", String(d.servers.reduce((a, s) => a + (s.bans || 0), 0)), "manual + fail2ban, all servers", "ban"),
       ]));
-      body.append(el("div", { class: "op-srvs" }, d.servers.map((s) => srvCard(s, load, false))));
+      body.append(el("div", { class: "op-srvs" }, d.servers.map((s) => srvCard(s, load, d.servers))));
       // ban everywhere
       const ip = el("input", { type: "text", placeholder: "203.0.113.7 or 203.0.113.0/24" });
       const reason = el("input", { type: "text", placeholder: "e.g. SSH brute force" });
@@ -1421,9 +1555,12 @@ window.AuroraOps = (ui) => {
       body.append(card("Ban or unban everywhere", [el("p", { class: "muted", text: d.servers.length > 1
         ? `One click blocks an address on this server and on ${d.servers.length - 1} other${d.servers.length === 2 ? "" : "s"}, websites, mail, SSH, VPN, panels. Servers with a read only token are skipped.`
         : "Blocks an address on this server, websites, mail, SSH, VPN, the panel. Add your other servers above and it reaches them too." }),
-        el("div", { class: "op-banrow" }, [field("Address or range", ip), field("Reason", reason), field("For", durSel)]),
-        el("div", { class: "toolbar" }, [btn("Ban everywhere", () => call(() => API.serversBan({ ip: ip.value.trim(), reason: reason.value.trim(), duration: +durSel.value || null }), "", res), "btn-danger"),
-          btn("Unban everywhere", () => call(() => API.serversBan({ ip: ip.value.trim(), unban: true }), "", res), "btn-ghost")]), out]));
+        // Fields and both buttons on one line, all the same height, bottoms aligned.
+        el("div", { class: "op-banrow op-banrow4" }, [field("Address or range", ip), field("Reason", reason), field("For", durSel),
+          el("div", { class: "op-banbtns" }, [
+            el("button", { type: "button", class: "btn btn-danger", onclick: () => call(() => API.serversBan({ ip: ip.value.trim(), reason: reason.value.trim(), duration: +durSel.value || null }), "", res) }, [icon("ban", 15), el("span", { text: "Ban everywhere" })]),
+            el("button", { type: "button", class: "btn btn-ghost", onclick: () => call(() => API.serversBan({ ip: ip.value.trim(), unban: true }), "", res) }, [icon("check", 15), el("span", { text: "Unban" })])])]),
+        out]));
     }
     function addDlg() {
       const name = el("input", { type: "text", placeholder: "Home Pi" });

@@ -198,50 +198,12 @@ def _gcloud_repo() -> list[str]:
     return ["• Added Google's package source for the Google Cloud CLI"]
 
 
-RCLONE_DEB = Path("/var/cache/aurora/rclone-upstream.deb")
-RCLONE_DL = "https://downloads.rclone.org"
-RCLONE_ARCH = {"arm64": "arm64", "amd64": "amd64", "armhf": "arm-v7", "i386": "386"}
-
-
 def rclone_version() -> tuple[int, ...]:
     """(1, 60, 1) for "rclone v1.60.1-DEV", () when rclone is missing or doesn't answer."""
     if not shutil.which("rclone", path=PATH):
         return ()
     m = re.search(r"rclone v(\d+)\.(\d+)\.(\d+)", _run(["rclone", "version"], 30).stdout or "")
     return tuple(int(x) for x in m.groups()) if m else ()
-
-
-def _rclone_download() -> list[str]:
-    """Fetch the current rclone release's .deb from rclone.org and check it against the published SHA-256.
-    Debian's own rclone is too old for Google Photos (Google retired the scopes it asks for in 2025)."""
-    arch = RCLONE_ARCH.get((_run(["dpkg", "--print-architecture"], 30).stdout or "").strip())
-    if not arch:
-        raise RequiresError("rclone.org has no package for this processor")
-    ver = (_run(["curl", "-fsSL", "--max-time", "30", f"{RCLONE_DL}/version.txt"], 60).stdout or "").strip()
-    m = re.fullmatch(r"rclone (v\d+\.\d+\.\d+)", ver)
-    if not m:
-        raise RequiresError("Could not read the current rclone version from rclone.org")
-    v = m.group(1)
-    name = f"rclone-{v}-linux-{arch}.deb"
-    sums = _run(["curl", "-fsSL", "--max-time", "30", f"{RCLONE_DL}/{v}/SHA256SUMS"], 60).stdout or ""
-    want = next((ln.split()[0] for ln in sums.splitlines() if ln.strip().endswith("  " + name)), "")
-    if not re.fullmatch(r"[0-9a-f]{64}", want):
-        raise RequiresError(f"rclone.org doesn't list a checksum for {name}")
-    RCLONE_DEB.parent.mkdir(parents=True, exist_ok=True)
-    r = _run(["curl", "-fsSL", "--max-time", "600", "-o", str(RCLONE_DEB), f"{RCLONE_DL}/{v}/{name}"], 660)
-    if r.returncode != 0:
-        raise RequiresError("Could not download rclone: " + (r.stderr or "no answer")[-200:])
-    import hashlib
-    got = hashlib.sha256(RCLONE_DEB.read_bytes()).hexdigest()
-    if got != want:
-        RCLONE_DEB.unlink(missing_ok=True)
-        raise RequiresError("The downloaded rclone doesn't match its published checksum, so it wasn't installed")
-    return [f"• Downloaded {name} from rclone.org, SHA-256 checked"]
-
-
-def _rclone_cleanup() -> list[str]:
-    RCLONE_DEB.unlink(missing_ok=True)
-    return []
 
 
 def _post_certbot() -> list[str]:
@@ -404,15 +366,6 @@ COMPONENTS: dict[str, dict] = {
         "desc": "Copies backups to cloud storage: S3, Cloudflare R2, Backblaze B2, SFTP, WebDAV/Nextcloud, Google Drive and more.",
         "pkgs": ["rclone"],
         "check": lambda: shutil.which("rclone", path=PATH) is not None,
-    },
-    "rclone-new": {
-        "name": "rclone 1.70 or newer", "icon": "backup", "size": "about 25 MB",
-        "desc": "Google Photos only works with a current rclone: Google retired the access the older Debian package asks for. "
-                "This installs the latest release from rclone.org, checked against its published SHA-256.",
-        "pkgs": [str(RCLONE_DEB)],
-        "pre": _rclone_download,
-        "post": _rclone_cleanup,
-        "check": lambda: rclone_version() >= (1, 70),
     },
     "docker": {
         "name": "Docker", "icon": "packages", "size": "about 120 MB",

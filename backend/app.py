@@ -4448,7 +4448,7 @@ def api_sch_dest_test(did: str, user: str = auth.CurrentUser):
 
 
 # --------------------------------------------------------------------------- #
-# Cloud Apps (AWS, Google Cloud, Azure) and Third-party Apps (Google Drive, Google Photos)
+# Cloud Apps (AWS, Google Cloud, Azure, Google Drive)
 # --------------------------------------------------------------------------- #
 def _cloud_call(fn):
     try:
@@ -4806,7 +4806,9 @@ def api_fleet_action(body: FleetActionBody, user: str = auth.CurrentUser):
         if body.action == "install_updates":
             j = updates.install([])
             return {"ok": True, "job": j.id}
-    except (services.ServiceError, updates.UpdateError) as exc:
+        if body.action == "upgrade_panel":
+            return version.apply_update()
+    except (services.ServiceError, updates.UpdateError, version.UpdateError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     raise HTTPException(status_code=400, detail="Unknown action")
 

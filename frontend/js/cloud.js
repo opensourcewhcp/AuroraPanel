@@ -1,4 +1,4 @@
-/* AuroraPanel, Cloud Apps (AWS, Google Cloud, Azure) and Third-party Apps (Google Drive, Google Photos).
+/* AuroraPanel, Cloud Apps (AWS, Google Cloud, Azure, Google Drive).
    Loaded before app.js; app.js calls window.AuroraCloud(ui) once with its helpers (and extras.js's). */
 window.AuroraCloud = (ui) => {
   "use strict";
@@ -126,18 +126,25 @@ window.AuroraCloud = (ui) => {
   //  Cloud Apps → Overview
   // ======================================================================
   async function viewCloud(root) {
-    root.append(pageHead("Cloud Apps", "Manage Amazon Web Services, Google Cloud and Microsoft Azure from this server. The servers, databases and computing run in the cloud, this Pi sends the commands through each provider's official command-line tool.", []));
+    root.append(pageHead("Cloud Apps", "Manage Amazon Web Services, Google Cloud and Microsoft Azure from this server, and copy files to and from Google Drive. The servers, databases and computing run in the cloud, this Pi sends the commands through each provider's official command-line tool.", []));
     const body = el("div", {}, loading());
     root.append(body);
-    let d;
-    try { d = await API.cloud(); } catch (e) { return fail(body, e); }
+    let d, gd;
+    try { [d, gd] = await Promise.all([API.cloud(), API.connectors().catch(() => null)]); } catch (e) { return fail(body, e); }
     body.innerHTML = "";
-    body.append(el("div", { class: "cl-cards" }, d.providers.map((p) => el("button", { type: "button", class: "card cl-prov", onclick: () => navigate(PROVIDER_VIEW[p.id]) }, [
+    const drives = gd ? gd.accounts.filter((a) => a.service === "drive") : [];
+    const driveCard = el("button", { type: "button", class: "card cl-prov", onclick: () => navigate("gdrive") }, [
+      el("div", { class: "cl-prov-h" }, [el("span", { class: "cl-badge" }, icon("folder", 22)), el("div", {}, [el("h3", { text: "Google Drive" }),
+        el("p", { class: "muted mx-small", text: drives.length ? drives.map((a) => a.email || a.label).join(", ") : "Copy folders to and from your Drive" })])]),
+      el("div", { class: "cl-prov-f" }, [el("span", { class: `pill ${drives.length ? "good" : "dim"}`, text: drives.length ? "Connected" : "Not connected" }),
+        el("span", { class: "grow" }), el("span", { class: "muted mx-small", text: "Open" }), icon("chevron", 14)]),
+    ]);
+    body.append(el("div", { class: "cl-cards" }, [...d.providers.map((p) => el("button", { type: "button", class: "card cl-prov", onclick: () => navigate(PROVIDER_VIEW[p.id]) }, [
       el("div", { class: "cl-prov-h" }, [el("span", { class: "cl-badge" }, icon("t_cloud", 22)), el("div", {}, [el("h3", { text: p.name }),
         el("p", { class: "muted mx-small", text: p.connected ? (p.account.identity || "Connected") : p.installed ? "Not connected yet" : "Command-line tool not installed" })])]),
       el("div", { class: "cl-prov-f" }, [el("span", { class: `pill ${p.connected ? "good" : p.installed ? "warn" : "dim"}`, text: p.connected ? "Connected" : p.installed ? "Ready to connect" : "Set up" }),
         el("span", { class: "grow" }), el("span", { class: "muted mx-small", text: "Open" }), icon("chevron", 14)]),
-    ]))));
+    ])), driveCard]));
     const svc = d.providers[0].services;
     body.append(el("div", { class: "card mx-card" }, [el("div", { class: "mx-card-h" }, [el("h3", { text: "The same job on each cloud" })]),
       el("div", { class: "cl-table-wrap" }, el("table", { class: "table cl-table cl-compare" }, [
@@ -296,55 +303,17 @@ window.AuroraCloud = (ui) => {
   }
 
   // ======================================================================
-  //  Third-party Apps → Overview, Google Drive, Google Photos
+  //  Cloud Apps → Google Drive
   // ======================================================================
-  const SVC_VIEW = { drive: "gdrive", photos: "gphotos" };
-
-  async function viewConnect(root) {
-    root.append(pageHead("Third-party Apps", "Connect online services to this server and copy files between them: back up a folder to Google Drive, bring a Drive folder down to a website, or put photos into a Google Photos album.", []));
-    const body = el("div", {}, loading());
-    root.append(body);
-    let d;
-    try { d = await API.connectors(); } catch (e) { return fail(body, e); }
-    body.innerHTML = "";
-    body.append(el("div", { class: "cl-cards" }, d.services.map((s) => {
-      const mine = d.accounts.filter((a) => a.service === s.id);
-      return el("button", { type: "button", class: "card cl-prov", onclick: () => navigate(SVC_VIEW[s.id]) }, [
-        el("div", { class: "cl-prov-h" }, [el("span", { class: "cl-badge" }, icon(s.icon, 22)), el("div", {}, [el("h3", { text: s.name }), el("p", { class: "muted mx-small", text: s.about })])]),
-        el("div", { class: "cl-prov-f" }, [el("span", { class: `pill ${mine.length ? "good" : "dim"}`, text: mine.length ? `${mine.length} connected` : "Not connected" }),
-          el("span", { class: "grow" }), el("span", { class: "muted mx-small", text: mine.length ? "Open" : "Connect" }), icon("chevron", 14)]),
-      ]);
-    })));
-    if (d.accounts.length) {
-      body.append(el("div", { class: "card mx-card" }, [el("div", { class: "mx-card-h" }, [el("h3", { text: "Connected accounts" })]),
-        el("div", { class: "cl-table-wrap" }, el("table", { class: "table cl-table" }, [el("tbody", {}, d.accounts.map((a) => el("tr", {}, [
-          el("td", {}, el("b", { text: a.label })), el("td", { text: a.name }), el("td", { class: "muted", text: a.email || "" }), el("td", { class: "muted", text: `connected ${ago(a.created)}` }),
-          el("td", { class: "cl-act" }, btn("Open", () => navigate(SVC_VIEW[a.service], { arg: a.id }), "btn-ghost")),
-        ])))]))]));
-    }
-  }
-
   function signInModal(svc, done) {
     const label = input({ placeholder: svc.name, maxlength: 60 });
     const cid = input({ placeholder: "…apps.googleusercontent.com" });
     const csec = input({ type: "password", placeholder: "Client secret" });
-    const needOwn = svc.id === "photos";
-    const own = needOwn
-      ? el("div", { class: "cl-own" }, [el("b", { text: "Your own Google app (required for Google Photos)" }),
-        el("p", { class: "dm-hint", text: "Google blocks the shared app for Photos, so it takes five minutes in the Google Cloud console, once:" }),
-        el("ol", { class: "cl-steps" }, [
-          el("li", {}, ["Open ", el("a", { href: "https://console.cloud.google.com/projectcreate", target: "_blank", rel: "noopener noreferrer", text: "console.cloud.google.com" }), " and create a project (any name)."]),
-          el("li", {}, ["APIs & Services, Library: enable the ", el("a", { href: "https://console.cloud.google.com/apis/library/photoslibrary.googleapis.com", target: "_blank", rel: "noopener noreferrer", text: "Photos Library API" }), "."]),
-          el("li", { text: "Google Auth Platform: Get started, choose External, give the app a name and your email. Under Audience add your own Google address as a test user, or press Publish app so the access doesn't expire after 7 days." }),
-          el("li", { text: "Data access, Add or remove scopes: add photoslibrary.appendonly, photoslibrary.readonly.appcreateddata and photoslibrary.edit.appcreateddata." }),
-          el("li", { text: "Clients, Create client, type Desktop app. Copy its client ID and secret into the two fields below." }),
-        ]),
-        field("Client ID", cid), field("Client secret", csec)])
-      : el("details", { class: "cl-own" }, [el("summary", { text: "Use my own Google app (optional)" }),
+    const own = el("details", { class: "cl-own" }, [el("summary", { text: "Use my own Google app (optional)" }),
         el("p", { class: "dm-hint", text: "Without one, the sign-in uses rclone's shared Google app, which works but is slower when many people use it. To make your own: Google Cloud console, APIs & Services, enable the Google Drive API, then Google Auth Platform, Clients, Create client, type Desktop app." }),
         field("Client ID", cid), field("Client secret", csec)]);
     const paste = el("textarea", { class: "cl-input", rows: 3, spellcheck: "false", placeholder: "http://127.0.0.1:53682/?state=…&code=…" });
-    const step1 = el("div", { class: "cl-step" }, [field("Name", label, "Shown on these pages, for example Family photos or Work drive"), own]);
+    const step1 = el("div", { class: "cl-step" }, [field("Name", label, "Shown on these pages, for example Work drive"), own]);
     const step2 = el("div", { class: "cl-step", hidden: "" }, [
       el("ol", { class: "cl-steps" }, [
         el("li", { text: "A Google tab opened. Sign in and allow access." }),
@@ -357,7 +326,6 @@ window.AuroraCloud = (ui) => {
     const go = el("button", { class: "btn btn-primary", text: "Sign in with Google" });
     go.onclick = async () => {
       if (!session) {
-        if (needOwn && !(cid.value.trim() && csec.value.trim())) { toast("Fill in your Google app's client ID and secret first", "bad"); cid.focus(); return; }
         const tab = window.open("about:blank", "_blank");
         go.disabled = true; go.textContent = "Starting…";
         try {
@@ -396,22 +364,13 @@ window.AuroraCloud = (ui) => {
         const mine = d.accounts.filter((a) => a.service === sid);
         const acct = mine.find((a) => a.id === pick) || mine[0];
         head.innerHTML = "";
-        head.append(pageHead(svc.name, svc.about, [d.rclone && (sid !== "photos" || d.photos_ok) ? btn(mine.length ? "Connect another" : "Connect", () => signInModal(svc, (a) => { pick = a.id; LS.set(`cl.${sid}.acct`, a.id); load(); }), mine.length ? "btn-ghost" : "btn-primary") : null]));
+        head.append(pageHead(svc.name, svc.about, [d.rclone ? btn(mine.length ? "Connect another" : "Connect", () => signInModal(svc, (a) => { pick = a.id; LS.set(`cl.${sid}.acct`, a.id); load(); }), mine.length ? "btn-ghost" : "btn-primary") : null]));
         body.innerHTML = "";
         if (!d.rclone) {
           const host = el("div");
           body.append(host);
           try { const st = await API.requires(["rclone"]); host.append(requireCard([st.components.rclone], svc.name, false, load)); } catch (e) { fail(host, e); }
           return;
-        }
-        if (sid === "photos" && !d.photos_ok) {
-          const host = el("div");
-          body.append(el("div", { class: "dm-note warn" }, [icon("info", 16), el("span", { text: `This server has rclone ${d.rclone_version || "(unknown version)"}. Google retired the access it asks for in March 2025 and blocks the sign-in ("This app is blocked"). Update rclone to the current release first.` })]), host);
-          try { const st = await API.requires(["rclone-new"]); host.append(requireCard([st.components["rclone-new"]], svc.name, false, load)); } catch (e) { fail(host, e); }
-          return;
-        }
-        if (sid === "photos") {
-          body.append(el("div", { class: "dm-note warn" }, [icon("info", 16), el("span", { text: "Google only lets apps see the photos and albums they uploaded themselves (since March 2025). Pushing works for all your photos and videos. Pulling brings back what this server uploaded." })]));
         }
         if (!acct) {
           body.append(el("div", { class: "card" }, empty(svc.icon, `Connect ${svc.name}`, "Sign in with Google once. The panel keeps the access on this server only, and you can disconnect it here or in your Google account at any time.",
@@ -433,22 +392,15 @@ window.AuroraCloud = (ui) => {
             toast("Disconnected. You can also remove the access in your Google account.", "good"); window.open(r.revoke, "_blank", "noopener"); pick = ""; load();
           }), "btn-ghost"),
         ])]));
-        const albumName = input({ placeholder: "New or existing album name", maxlength: 120 });
-        body.append(transferPane({ remoteName: svc.name, jp, pushAtRoot: sid === "drive",
+        body.append(transferPane({ remoteName: svc.name, jp, pushAtRoot: true,
           list: (path) => API.connectBrowse(acct.id, path),
           push: (local, remote) => API.connectTransfer(acct.id, "push", local, remote),
-          pull: (local, remote) => API.connectTransfer(acct.id, "pull", local, remote),
-          extra: sid === "photos" ? (path, refresh) => { albumName.oninput = refresh; return path === "album" ? el("div", { class: "cl-album" }, [field("Push into album", albumName, "Pick photos or a folder on the left, type an album name, then Push")]) : null; } : null,
-          pushTarget: sid === "photos" ? (path) => {
-            if (path === "upload" || /^album\/[^/]+$/.test(path)) return path;
-            if (path === "album") return albumName.value.trim() ? `album/${albumName.value.trim().replace(/\//g, "-")}` : new Error("Type an album name first");
-            return new Error("Open upload, or album and type an album name");
-          } : null }));
+          pull: (local, remote) => API.connectTransfer(acct.id, "pull", local, remote) }));
       }
       load();
     };
   }
 
   return { cloud: viewCloud, cloudaws: viewProvider("aws"), cloudgcp: viewProvider("gcp"), cloudazure: viewProvider("azure"),
-    connect: viewConnect, gdrive: viewService("drive"), gphotos: viewService("photos") };
+    gdrive: viewService("drive") };
 };

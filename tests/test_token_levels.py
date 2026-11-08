@@ -179,6 +179,36 @@ def test_control_and_commands_only_over_https(monkeypatch, tmp_path):
         servers.run("a1", "uptime", "me")
 
 
+def test_upgrade_uses_the_fleet_action_then_falls_back_for_older_panels(monkeypatch, tmp_path):
+    monkeypatch.setattr(servers, "STATE", tmp_path / "servers.json")
+    servers._save({"servers": [{"id": "a1", "name": "ns3", "url": "http://192.168.0.103:8088", "token": "aur_x"}]})
+    calls = []
+
+    def fake(answers):
+        def _call(srv, method, path, body=None, timeout=8.0):
+            calls.append(path)
+            return (*answers[path], "")
+        return _call
+    # 1.2.4 and newer: the fleet action does it (plain http on your own network is fine for this one)
+    monkeypatch.setattr(servers, "_call", fake({"/api/fleet/action": (200, {"ok": True, "to": "1.2.4"})}))
+    assert servers.act("a1", "upgrade_panel", "", "me")["to"] == "1.2.4" and calls == ["/api/fleet/action"]
+    # 1.2.2: no fleet action, its own About & Updates call
+    calls.clear()
+    monkeypatch.setattr(servers, "_call", fake({"/api/fleet/action": (404, {"detail": "Not Found"}), "/api/about/update": (200, {"ok": True, "to": "1.2.4"})}))
+    assert servers.upgrade("a1", "me")["ok"] and calls == ["/api/fleet/action", "/api/about/update"]
+    # 1.2.3 with a fleet token: it knows the action but not this one, and its token can't reach About & Updates
+    monkeypatch.setattr(servers, "_call", fake({"/api/fleet/action": (400, {"detail": "Unknown action"}), "/api/about/update": (403, {"detail": "no"})}))
+    with pytest.raises(servers.ServerError, match="can't update AuroraPanel"):
+        servers.upgrade("a1", "me")
+
+
+def test_fleet_token_can_start_a_panel_upgrade(client, monkeypatch):
+    from backend import version
+    monkeypatch.setattr(version, "apply_update", lambda: {"ok": True, "from": "1.2.3", "to": "1.2.4"})
+    r = client.post("/api/fleet/action", json={"action": "upgrade_panel"}, headers=_hdr(apitokens.create("f", "fleet")["token"]))
+    assert r.status_code == 200 and r.json()["to"] == "1.2.4"
+
+
 def test_service_counts_group_services_by_kind(monkeypatch):
     from backend import services as svc
     rows = [("nginx.service", "active", "running"), ("mariadb.service", "failed", "failed"), ("postgresql@15-main.service", "active", "running"),

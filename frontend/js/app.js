@@ -190,6 +190,9 @@
     rawlog: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><polyline points="9 17 12 20 15 17"/>',
     dashboard: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/>',
     terminal: '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
+    t_external: '<path d="M14 4h6v6"/><line x1="10" y1="14" x2="20" y2="4"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>',
+    t_copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/>',
+    t_rocket: '<path d="M5 15c-1.5 1.3-2 4-2 6 2 0 4.7-.5 6-2"/><path d="M9 18l-3-3c1-4 4.5-9.5 12-12 0 0 .5 6-6 12z"/><circle cx="14.5" cy="9.5" r="1.5"/><path d="M8 13H4l2.5-3.5L10 9M11 16v4l3.5-2.5L15 14"/>',
     services: '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>',
     processes: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
     packages: '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.3 7 12 12 20.7 7"/><line x1="12" y1="22" x2="12" y2="12"/>',
@@ -289,7 +292,7 @@
     vpn: "vpn", wireguard: "tunnel", openvpn: "key", ipsec: "shield", portcheck: "plug", netmon: "radar",
     images: "image", dirprivacy: "lock", webdisk: "disk", ftpaccounts: "folder", backupwiz: "wizard", git: "git", inodes: "indexes",
     about: "info",
-    cloud: "t_cloud", cloudaws: "t_cloud", cloudgcp: "t_cloud", cloudazure: "t_cloud", connect: "plug", gdrive: "folder", gphotos: "image",
+    cloud: "t_cloud", cloudaws: "t_cloud", cloudgcp: "t_cloud", cloudazure: "t_cloud", gdrive: "folder",
   };
   function decorateNav() {
     document.querySelectorAll("#nav .nav-item").forEach((btn) => {
@@ -338,7 +341,7 @@
   const GROUP_ICONS = {
     System: "processes", Network: "network", Applications: "apps", Databases: "database", Domains: "globe", Email: "mail", Security: "shield",
     Metrics: "metrics", Files: "folder", Advanced: "terminal", Software: "packages", Preferences: "gear",
-    "Cloud Apps": "t_cloud", "Third-party Apps": "plug",
+    "Cloud Apps": "t_cloud",
   };
   let NAV_GROUPS = [];
   function applyRole() {
@@ -882,7 +885,7 @@
     backupwiz: "Backup Wizard", git: "Git Version Control", inodes: "Inodes Usage",
     about: "About & Updates",
     cloud: "Cloud Apps", cloudaws: "Amazon Web Services", cloudgcp: "Google Cloud", cloudazure: "Microsoft Azure",
-    connect: "Third-party Apps", gdrive: "Google Drive", gphotos: "Google Photos",
+    gdrive: "Google Drive",
     email: "Email", mailaccounts: "Email Accounts", forwarders: "Forwarders", mailrouting: "Email Routing", autoresponders: "Autoresponders",
     defaultaddress: "Default Address", mailinglists: "Mailing Lists", trackdelivery: "Track Delivery", globalfilters: "Global Email Filters",
     emailfilters: "Email Filters", deliverability: "Email Deliverability", addressimporter: "Address Importer", spamfilters: "Spam Filters",
@@ -1268,11 +1271,7 @@
       { label: "Amazon Web Services", icon: "t_cloud", view: "cloudaws" },
       { label: "Google Cloud", icon: "t_cloud", view: "cloudgcp" },
       { label: "Microsoft Azure", icon: "t_cloud", view: "cloudazure" },
-    ]},
-    { name: "Third-party Apps", icon: "plug", tiles: [
-      { label: "Connected Apps", icon: "plug", view: "connect" },
       { label: "Google Drive", icon: "folder", view: "gdrive" },
-      { label: "Google Photos", icon: "image", view: "gphotos" },
     ]},
     { name: "Advanced", icon: "terminal", tiles: [
       { label: "Terminal", icon: "terminal", view: "terminal" },
@@ -9308,48 +9307,111 @@
   // ======================================================================
   // ---- Preferences: Password & Security ----
   function viewPassword(root) {
-    const form = el("div", { class: "card" }, [
-      el("h3", { text: "Change panel password" }),
-      el("div", { style: "display:flex;flex-direction:column;gap:12px;max-width:380px" }, [
-        labeledInput("pw-cur", "Current password", "", "", "password"),
-        labeledInput("pw-new", "New password (min 8)", "", "", "password"),
-        labeledInput("pw-new2", "Confirm new password", "", "", "password"),
-        el("button", { class: "btn btn-primary", style: "align-self:flex-start", text: "Update password", onclick: async () => {
-          const cur = $("#pw-cur").value, nw = $("#pw-new").value, nw2 = $("#pw-new2").value;
-          if (nw !== nw2) { toast("Passwords don't match", "bad"); return; }
-          try { await API.passwordChange(cur, nw); toast("Password updated", "good"); $("#pw-cur").value = $("#pw-new").value = $("#pw-new2").value = ""; }
-          catch (e) { toast(e.message, "bad"); } } }),
+    // A password field with a show / hide eye.
+    const pwField = (id, label, auto) => {
+      const inp = el("input", { id, type: "password", autocomplete: auto, spellcheck: "false" });
+      const eye = el("button", { type: "button", class: "ps-eye", title: "Show", "aria-label": "Show password", onclick: () => {
+        const show = inp.type === "password"; inp.type = show ? "text" : "password"; eye.classList.toggle("on", show); eye.title = show ? "Hide" : "Show"; inp.focus();
+      } }, icon("eye", 16));
+      return { inp, node: el("label", { class: "ps-field" }, [el("span", { text: label }), el("div", { class: "ps-inwrap" }, [inp, eye])]) };
+    };
+    const cur = pwField("pw-cur", "Current password", "current-password");
+    const nw = pwField("pw-new", "New password", "new-password");
+    const nw2 = pwField("pw-new2", "Confirm new password", "new-password");
+    // Strength: length counts most, a mix of kinds helps; a passphrase of 20+ characters scores high on length alone.
+    const score = (v) => {
+      if (!v) return 0;
+      let s = v.length >= 20 ? 4 : v.length >= 14 ? 3 : v.length >= 10 ? 2 : v.length >= 8 ? 1 : 0;
+      const kinds = [/[a-z]/, /[A-Z]/, /\d/, /[^A-Za-z0-9]/].filter((r) => r.test(v)).length;
+      if (kinds >= 3 && s < 4 && v.length >= 8) s += 1;
+      if (/^(.)\1+$/.test(v) || /^(password|12345678|qwerty)/i.test(v)) s = Math.min(s, 1);
+      return s;
+    };
+    const LV = [["Too short", "bad"], ["Weak", "bad"], ["Fair", "warn"], ["Strong", "good"], ["Very strong", "good"]];
+    const bars = el("div", { class: "ps-meter" }, [0, 1, 2, 3].map(() => el("i")));
+    const word = el("span", { class: "ps-meter-w" });
+    const match = el("span", { class: "ps-match" });
+    const save = el("button", { class: "btn btn-primary", text: "Update password" });
+    const refresh = () => {
+      const v = nw.inp.value, sc = score(v), [w, tone] = LV[sc];
+      bars.className = `ps-meter ${v ? tone : ""}`;
+      [...bars.children].forEach((b, i) => b.classList.toggle("on", !!v && i < Math.max(1, sc)));
+      word.textContent = v ? `${w} · ${v.length} characters` : "At least 8 characters";
+      const same = !!nw2.inp.value && nw2.inp.value === v;
+      match.replaceChildren(...(nw2.inp.value ? [icon(same ? "check" : "error", 13), el("span", { text: same ? "Passwords match" : "Passwords don't match" })] : []));
+      match.className = `ps-match ${nw2.inp.value ? (same ? "good" : "bad") : ""}`;
+      save.disabled = !(cur.inp.value && v.length >= 8 && same);
+    };
+    [cur, nw, nw2].forEach((f) => f.inp.addEventListener("input", refresh));
+    const gen = el("button", { type: "button", class: "btn btn-sm btn-ghost ps-gen", title: "Make a strong random password", onclick: () => {
+      const abc = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789", r = crypto.getRandomValues(new Uint32Array(20));
+      const v = [...r].map((x) => abc[x % abc.length]).join("").replace(/(.{5})(?!$)/g, "$1-");
+      nw.inp.value = nw2.inp.value = v; nw.inp.type = nw2.inp.type = "text"; refresh();
+      copyText(v).then((ok) => toast(ok ? "Strong password made and copied, save it in your password manager" : "Strong password made, save it in your password manager", "good"));
+    } }, [icon("wand", 14), el("span", { text: "Generate" })]);
+    save.onclick = async () => {
+      save.disabled = true;
+      try {
+        await API.passwordChange(cur.inp.value, nw.inp.value);
+        toast("Password updated. Other browsers are signed out.", "good");
+        [cur, nw, nw2].forEach((f) => { f.inp.value = ""; f.inp.type = "password"; });
+      } catch (e) { toast(e.message, "bad"); }
+      refresh();
+    };
+    nw2.inp.addEventListener("keydown", (e) => { if (e.key === "Enter" && !save.disabled) save.click(); });
+    refresh();
+    const head = (ico, title, sub, extra, tone) => el("div", { class: "ps-head" }, [el("span", { class: `ps-ico ${tone || ""}` }, icon(ico, 20)),
+      el("div", { class: "grow" }, [el("h3", { text: title }), sub ? el("p", { class: "muted", text: sub }) : null].filter(Boolean)), extra || null].filter(Boolean));
+    const form = el("div", { class: "card ps-card" }, [
+      head("key", "Panel password", "The password you sign in to this panel with."),
+      el("div", { class: "ps-form" }, [
+        cur.node,
+        el("div", { class: "ps-sep" }),
+        el("div", { class: "ps-field-row" }, [nw.node, gen]),
+        el("div", { class: "ps-strength" }, [bars, word]),
+        nw2.node, match,
       ]),
-      el("p", { class: "muted", style: "margin-top:14px;font-size:12px", text: "A long passphrase of a few words beats a short, complicated one. Changing it signs out every other browser; this one stays signed in." }),
+      el("div", { class: "ps-foot" }, [save, el("p", { class: "muted", text: "Changing it signs out every other browser. This one stays signed in." })]),
+      el("ul", { class: "ps-tips" }, [
+        ["A few random words beat a short, complicated password.", "check"],
+        ["Use it only here, and keep it in a password manager.", "check"],
+        ["Turn on two-factor so a leaked password alone can't get in.", "shield"],
+      ].map(([t, i]) => el("li", {}, [icon(i, 14), el("span", { text: t })]))),
     ]);
     // Two-factor, right next to the password: what it does, whether it's on, and the switch.
-    const tfa = el("div", { class: "card ps-tfa" }, el("div", { class: "loading", text: "Loading…" }));
+    const tfa = el("div", { class: "card ps-card ps-tfa" }, el("div", { class: "loading", text: "Loading…" }));
     API.twofaStatus().then((s) => {
       tfa.innerHTML = "";
       const on = !!s.enabled, pend = !!s.pending;
-      tfa.classList.toggle("good", on);
+      tfa.classList.toggle("good", on); tfa.classList.toggle("warn", !on);
       tfa.append(
-        el("div", { class: "net-card-h" }, [icon("shield", 20), el("h3", { text: "Two-factor authentication" }), el("span", { style: "flex:1" }), pill(on ? "on" : pend ? "not finished" : "off", on ? "good" : pend ? "warn" : "dim")]),
-        el("p", { class: "muted", text: on
-          ? "Signing in asks for a 6-digit code from your phone on top of the password, so a stolen password alone can't open this panel."
-          : "A 6-digit code from your phone on top of the password. A stolen password alone then can't open this panel. It takes a minute: scan a QR code, type one code, done." }),
-        el("div", { class: "toolbar", style: "margin:12px 0 0" }, [
-          btn(on ? "Manage two-factor" : pend ? "Finish setting up" : "Turn on two-factor", () => navigate("security"), on ? "btn-ghost" : "btn-primary"),
-        ]),
+        head("shield", "Two-factor sign-in", on ? "On, signing in asks for a 6-digit code from your phone." : "A 6-digit code from your phone on top of the password.",
+          pill(on ? "on" : pend ? "not finished" : "off", on ? "good" : pend ? "warn" : "dim"), on ? "good" : "warn"),
+        el("p", { class: "muted ps-tfa-t", text: on
+          ? "A stolen password alone can't open this panel. Keep your recovery codes somewhere safe."
+          : "A stolen password alone then can't open this panel. It takes a minute: scan a QR code, type one code, done." }),
+        el("div", { class: "ps-foot" }, [btn(on ? "Manage two-factor" : pend ? "Finish setting up" : "Turn on two-factor", () => navigate("security"), on ? "btn-ghost" : "btn-primary")]),
       );
-    }).catch((e) => { tfa.innerHTML = ""; tfa.append(el("div", { class: "net-card-h" }, [icon("shield", 20), el("h3", { text: "Two-factor authentication" })]), el("p", { class: "muted", text: e.message })); });
-    // The other doors that guard this account.
-    const links = el("div", { class: "card" }, [
-      el("h3", { text: "More ways to protect this panel" }),
+    }).catch((e) => { tfa.innerHTML = ""; tfa.append(head("shield", "Two-factor sign-in", e.message)); });
+    // The other doors that guard this account, with their state where the browser knows it.
+    const https = location.protocol === "https:";
+    const links = el("div", { class: "card ps-card" }, [
+      head("lock", "More ways to protect this panel"),
       el("div", { class: "ps-links" }, [
-        ["Panel HTTPS", "Encrypt the connection to this panel, so the password never travels in the clear.", "panelhttps"],
-        ["Panel users", "Give other people their own login instead of sharing yours.", "panelusers"],
-        ["API tokens", "Keys for scripts and other servers; revoke one without touching your password.", "tokens"],
-        ["Activity log", "Who signed in and what changed, from where.", "activity"],
-        ["SSH access", "Keys versus passwords for the shell, and who may use it.", "ssh"],
-      ].map(([t, d, v]) => el("button", { type: "button", class: "ps-link", onclick: () => navigate(v) }, [el("b", { text: t }), el("span", { text: d })]))),
+        ["lock", "Panel HTTPS", "Encrypts the connection, so the password never travels in the clear.", "panelhttps", https ? ["on", "good"] : ["off", "warn"]],
+        ["users", "Panel users", "Give other people their own login instead of sharing yours.", "panelusers"],
+        ["token", "API tokens", "Keys for scripts and other servers, revoked without touching your password.", "tokens"],
+        ["t_activity", "Activity log", "Who signed in and what changed, from where.", "activity"],
+        ["key", "SSH access", "Keys versus passwords for the shell, and who may use it.", "ssh"],
+      ].map(([ic, t, d, v, st]) => el("button", { type: "button", class: "ps-link", onclick: () => navigate(v) }, [
+        el("span", { class: "ps-link-ico" }, icon(ic, 17)),
+        el("span", { class: "ps-link-t" }, [el("b", { text: t }), el("span", { text: d })]),
+        st ? pill(st[0], st[1]) : null,
+        el("span", { class: "ps-chev" }, icon("chevron", 14)),
+      ].filter(Boolean)))),
     ]);
     root.append(el("div", { class: "ps-grid" }, [form, el("div", { class: "ps-col" }, [tfa, links])]));
+    setTimeout(() => cur.inp.focus(), 50);
   }
 
   // ---- Preferences: Account ----
@@ -10325,7 +10387,7 @@
     return OPSV || {};
   }
 
-  // ---- Cloud Apps and Third-party Apps (frontend/js/cloud.js) ----
+  // ---- Cloud Apps (frontend/js/cloud.js) ----
   let CADDYV = null;
   function caddyViews() {
     if (!CADDYV && window.AuroraCaddy) CADDYV = window.AuroraCaddy({ el, icon, btn, pill, field, toast, API, openModal, closeModal, navigate });

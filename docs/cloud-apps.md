@@ -1,4 +1,4 @@
-# Cloud Apps and Third-party Apps
+# Cloud Apps
 
 ## Cloud Apps
 
@@ -56,10 +56,10 @@ either side. The Pi side is limited to the folders the File Manager may open.
 Each page lists what the provider offers for free, with a link to its current terms. Free amounts
 have limits, and anything beyond them is billed.
 
-## Third-party Apps
+## Google Drive
 
-Third-party Apps connects **Google Drive** and **Google Photos** to the Pi. Copies run through
-rclone, which the page installs in one click.
+Cloud Apps → Google Drive connects a Drive to the Pi. Copies run through rclone, which the page
+installs in one click.
 
 ### Signing in
 
@@ -74,18 +74,6 @@ Google Drive works with rclone's shared Google app. For better speed, use your o
 Google Cloud console enable the Google Drive API, create an OAuth client of type **Desktop app**,
 and paste its ID and secret under **Use my own Google app**.
 
-Google Photos needs two things, because Google retired the old Photos access on 31 March 2025 and
-answers the shared app with "This app is blocked":
-
-- **rclone 1.70 or newer.** Debian's package is older. The Photos page offers the current release
-  from rclone.org in one click, checked against its published SHA-256.
-- **Your own Google app.** In the Google Cloud console create a project and enable the Photos
-  Library API. Under Google Auth Platform choose External and add your own Google address as a
-  test user, or publish the app so the access doesn't expire after 7 days. Under Data access add the
-  scopes `photoslibrary.appendonly`, `photoslibrary.readonly.appcreateddata` and
-  `photoslibrary.edit.appcreateddata`. Then create a client of type **Desktop app** and paste its ID
-  and secret into the sign-in window.
-
 Tokens are kept in `/var/lib/aurora/connectors/`, readable by root only. **Disconnect** removes
 them from the server. To withdraw the access at Google as well, open
 [your Google account's connections](https://myaccount.google.com/connections).
@@ -95,10 +83,5 @@ them from the server. To withdraw the access at Google as well, open
 Pick a file or folder on one side, open the folder it should go to on the other, then **Push**
 (to Google) or **Pull** (to the Pi). New and changed files are copied, and nothing is deleted.
 
-### Google Photos limits
-
-Since 31 March 2025 Google lets apps see only the photos and albums they uploaded themselves.
-
-- **Push** works for all your photos and videos. Push into `upload` to add them to your library, or
-  into `album/<name>` to make or fill an album.
-- **Pull** brings back what this server uploaded, from `album` or `media`.
+Google Photos isn't offered: since 31 March 2025 Google lets apps see only the photos they uploaded
+themselves, so no app can show your library. Use Google Takeout to export it.

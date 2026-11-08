@@ -337,10 +337,33 @@ def run(sid: str, command: str, by: str) -> dict:
 def act(sid: str, action: str, unit: str, by: str) -> dict:
     """Restart or start a service, or install updates, on an added server. Its token decides whether that's allowed;
     a server reached over plain http is only watched, never told what to do."""
-    if action not in ("restart_service", "start_service", "install_updates"):
+    if action not in ("restart_service", "start_service", "install_updates", "upgrade_panel"):
         raise ServerError("Unknown action")
+    if action == "upgrade_panel":
+        return upgrade(sid, by)
     srv = _controllable(sid)
     status, payload, _ = _call(srv, "POST", "/api/fleet/action", {"action": action, "unit": unit, "by": f"{by} on {socket.gethostname()}"}, timeout=30)
+    _save_moved([srv])
+    return _answer(srv, status, payload)
+
+
+def upgrade(sid: str, by: str) -> dict:
+    """Update AuroraPanel on an added server to the latest release. That server downloads it from the official site
+    and checks it itself, so nothing secret or executable crosses from here: allowed over plain http on your own
+    network too (http is only ever accepted for private addresses). Panels older than 1.2.4 don't know the fleet
+    action yet, so their own About & Updates call is used (their tokens all have full access)."""
+    d = _load()
+    srv = next((x for x in d["servers"] if x["id"] == sid), None)
+    if not srv:
+        raise ServerError("That server isn't in the list")
+    status, payload, _ = _call(srv, "POST", "/api/fleet/action", {"action": "upgrade_panel", "by": f"{by} on {socket.gethostname()}"}, timeout=90)
+    detail = str((payload or {}).get("detail", "")) if isinstance(payload, dict) else ""
+    if status in (404, 405) or (status == 400 and detail == "Unknown action"):
+        status, payload, _ = _call(srv, "POST", "/api/about/update", {}, timeout=90)
+        if status == 403:
+            _save_moved([srv])
+            raise ServerError(f"{srv['name']}'s token can't update AuroraPanel. Update it once in its own panel "
+                              "(About & Updates), after that this button works from here.")
     _save_moved([srv])
     return _answer(srv, status, payload)
 

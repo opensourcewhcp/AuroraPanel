@@ -1,4 +1,4 @@
-"""Third-party Apps: connect Google Drive and Google Photos, then copy files both ways.
+"""Cloud Apps, Google Drive: connect a Drive, then copy files both ways.
 
 Transfers run through rclone, which the panel installs on request. Signing in uses rclone's own
 OAuth flow in its "remote machine" form, because Google only sends a sign-in back to a public
@@ -13,12 +13,9 @@ address or to 127.0.0.1 on the computer with the browser, never to a home server
      the one-time code for a token and prints it, and the panel saves it as an rclone remote.
 
 Google Drive works with rclone's built-in Google app or the owner's own OAuth client (client ID + secret,
-type "Desktop app"). Google Photos needs the owner's own client and rclone 1.70 or newer: Google retired
-the scopes older rclone asks for on 31 March 2025, and blocks the shared app for Photos.
-
-Google Photos: since 31 March 2025 Google lets apps see only the photos and albums they uploaded
-themselves. Pushing to Google Photos works for everything, pulling brings back what this panel
-(or rclone) uploaded. The page says so.
+type "Desktop app"). Google Photos was removed in 1.2.4: since 31 March 2025 Google lets apps see only
+the photos they uploaded themselves, so a library could never be shown. Connections made before are
+removed the next time the page loads.
 
 Copies never delete anything: a push or pull adds new and changed files and leaves the rest.
 """
@@ -50,11 +47,6 @@ SERVICES = {
     "drive": {"name": "Google Drive", "backend": "drive", "icon": "t_cloud",
               "about": "Files and folders in your Drive, both ways.",
               "roots": []},
-    "photos": {"name": "Google Photos", "backend": "google photos", "icon": "image",
-               "about": "Upload photos and videos into albums, and bring back what this server uploaded.",
-               "roots": [["album", "Albums you created here. Push into album/<name> to make or fill one"],
-                         ["upload", "Push here to add to your library without an album"],
-                         ["media", "Everything this server uploaded, by year and month"]]},
 }
 
 
@@ -107,9 +99,6 @@ def rclone_ok() -> bool:
     return shutil.which("rclone", path=PATH) is not None
 
 
-PHOTOS_MIN = (1, 70)  # older rclone asks for the Photos scopes Google retired on 31 March 2025
-
-
 def rclone_version() -> tuple[int, ...]:
     from . import requires
     return requires.rclone_version()
@@ -145,12 +134,26 @@ def _public(a: dict) -> dict:
     return {k: a.get(k) for k in ("id", "service", "label", "email", "created", "own_client")} | {"name": SERVICES[a["service"]]["name"]}
 
 
+def _forget_retired(d: dict) -> dict:
+    """Drop connections to services that are gone (Google Photos, removed in 1.2.4), rclone remote included."""
+    gone = [a for a in d["accounts"] if a.get("service") not in SERVICES]
+    if gone:
+        for a in gone:
+            try:
+                _drop_remote(_remote(a["id"]))
+            except Exception:  # rclone missing or the remote already gone: the account goes anyway
+                pass
+        d["accounts"] = [a for a in d["accounts"] if a.get("service") in SERVICES]
+        _save(d)
+    return d
+
+
 def listing() -> dict:
-    d = load()
+    d = _forget_retired(load())
     with _LOCK:
         pending = {s["service"]: True for s in _SESSIONS.values()}
     ver = rclone_version() if rclone_ok() else ()
-    return {"rclone": rclone_ok(), "rclone_version": ".".join(map(str, ver)), "photos_ok": ver >= PHOTOS_MIN,
+    return {"rclone": rclone_ok(), "rclone_version": ".".join(map(str, ver)),
             "services": [{"id": k, "name": v["name"], "icon": v["icon"], "about": v["about"], "roots": v["roots"],
                           "signing_in": pending.get(k, False)} for k, v in SERVICES.items()],
             "accounts": [_public(a) for a in d["accounts"]]}
@@ -245,11 +248,6 @@ def start(service: str, client_id: str = "", client_secret: str = "", label: str
     if not rclone_ok():
         raise ConnectError("Install rclone first (one click on this page)")
     client_id, client_secret = (client_id or "").strip(), (client_secret or "").strip()
-    if service == "photos":
-        if rclone_version() < PHOTOS_MIN:
-            raise ConnectError("Google Photos needs rclone 1.70 or newer. Update rclone on this page first")
-        if not client_id:
-            raise ConnectError("Google Photos needs your own Google app: Google no longer lets the shared one in. Fill in the client ID and secret")
     if client_id or client_secret:
         if not _CLIENT_ID.fullmatch(client_id):
             raise ConnectError("The client ID ends in .apps.googleusercontent.com")
@@ -362,25 +360,15 @@ def finish(sid: str, auth_response: str) -> dict:
 
 def _create(service: str, token: str, client_id: str, client_secret: str, label: str) -> dict:
     acct_id = secrets.token_hex(4)
-    kv = {"type": "drive" if service == "drive" else "google photos", "client_id": client_id, "client_secret": client_secret, "token": token}
-    if service == "drive":
-        kv["scope"] = "drive"
-    else:
-        kv["read_only"] = "false"
+    kv = {"type": "drive", "client_id": client_id, "client_secret": client_secret, "token": token, "scope": "drive"}
     _set_remote(_remote(acct_id), kv)
     email = ""
-    if service == "drive":
-        r = _rclone(["config", "userinfo", f"{_remote(acct_id)}:", "--json"], 60)
-        if r.returncode == 0:
-            try:
-                email = json.loads(r.stdout or "{}").get("Email", "")
-            except ValueError:
-                email = ""
-    else:
-        r = _rclone(["lsjson", f"{_remote(acct_id)}:album", "--max-depth", "1"], 60)
-        if r.returncode != 0:
-            _drop_remote(_remote(acct_id))
-            raise ConnectError("Signed in, but Google Photos refused access: " + _err(r))
+    r = _rclone(["config", "userinfo", f"{_remote(acct_id)}:", "--json"], 60)
+    if r.returncode == 0:
+        try:
+            email = json.loads(r.stdout or "{}").get("Email", "")
+        except ValueError:
+            email = ""
     d = load()
     acct = {"id": acct_id, "service": service, "label": label or SERVICES[service]["name"], "email": email,
             "created": time.time(), "own_client": bool(client_id)}
@@ -428,8 +416,6 @@ def _clean_remote_path(path: str) -> str:
 def browse(acct_id: str, path: str = "") -> dict:
     a = _account(acct_id)
     p = _clean_remote_path(path)
-    if a["service"] == "photos" and not p:
-        return {"path": "", "entries": [{"name": n, "dir": True, "size": None, "detail": why} for n, why in SERVICES["photos"]["roots"]]}
     r = _rclone(["lsjson", f"{_remote(acct_id)}:{p}", "--max-depth", "1", "--no-mimetype", "--fast-list"], 120)
     if r.returncode != 0:
         msg = _err(r)
@@ -467,15 +453,10 @@ def transfer(acct_id: str, direction: str, local: str, remote: str) -> dict:
     lp = _local(local)
     rp = _clean_remote_path(remote)
     svc = SERVICES[a["service"]]["name"]
-    if a["service"] == "photos":
-        if direction == "push" and not (rp == "upload" or re.fullmatch(r"album/[^/]+", rp)):
-            raise ConnectError("In Google Photos, push into upload, or into album/<name> (a new name makes the album)")
-        if direction == "pull" and not (rp == "album" or rp.startswith(("album/", "media"))):
-            raise ConnectError("In Google Photos, pull from an album or from media")
     if direction == "push":
         if not lp.exists():
             raise ConnectError("That file or folder doesn't exist on this server")
-        if lp.is_dir() and a["service"] == "drive":
+        if lp.is_dir():
             dst = "/".join(x for x in (rp, lp.name) if x)
         else:
             dst = rp
@@ -485,15 +466,11 @@ def transfer(acct_id: str, direction: str, local: str, remote: str) -> dict:
         if not lp.is_dir():
             raise ConnectError("Pull into a folder on this server")
         src = f"{_remote(acct_id)}:{rp}"
-        leaf = rp.rsplit("/", 1)[-1] if rp else ("Google Drive" if a["service"] == "drive" else "Google Photos")
+        leaf = rp.rsplit("/", 1)[-1] if rp else "Google Drive"
         target = str(lp / leaf)
         title = f"Pull {svc} /{rp} to {target}"
     argv = ["rclone", "--config", str(_conf()), "copy", src, target, "--stats", "2s", "--stats-one-line", "--stats-log-level", "NOTICE",
             "--retries", "3", "--low-level-retries", "10"]
-    if a["service"] == "photos" and direction == "pull":
-        argv += ["--ignore-existing"]
-    if a["service"] == "photos" and direction == "push":
-        argv += ["--include", "*.{jpg,jpeg,png,gif,webp,heic,heif,bmp,tif,tiff,avif,raw,dng,mp4,mov,m4v,avi,3gp,mkv,webm,mpg,wmv}", "--ignore-case"]
 
     def fn(log):
         log(f"• {title}")

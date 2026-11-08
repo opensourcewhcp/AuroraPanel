@@ -435,16 +435,19 @@ def test_api_lists_and_reports_errors_as_400(admin, fake):
 
 
 def test_frontend_wires_both_panels():
-    """Cloud Apps and Third-party Apps: a sidebar group each, dashboard tiles, titles, and cloud.js loaded before app.js."""
+    """Cloud Apps, Google Drive included: one sidebar group, dashboard tiles, titles, and cloud.js loaded before app.js.
+    Google Photos and the Third-party Apps group were removed in 1.2.4."""
     from pathlib import Path
     front = Path(__file__).resolve().parent.parent / "frontend"
     html = (front / "index.html").read_text(encoding="utf-8")
     assert html.index("/js/cloud.js") < html.index("/js/app.js")
-    for view in ("cloud", "cloudaws", "cloudgcp", "cloudazure", "connect", "gdrive", "gphotos"):
+    for view in ("cloud", "cloudaws", "cloudgcp", "cloudazure", "gdrive"):
         assert f'data-view="{view}"' in html, view
-    assert '<div class="nav-group">Cloud Apps</div>' in html and '<div class="nav-group">Third-party Apps</div>' in html
+    assert '<div class="nav-group">Cloud Apps</div>' in html and "Third-party Apps" not in html
+    assert 'data-view="gphotos"' not in html and 'data-view="connect"' not in html
     app_js = (front / "js" / "app.js").read_text(encoding="utf-8")
-    assert "cloudViews()[view]" in app_js and '"Cloud Apps": "t_cloud"' in app_js and '{ name: "Third-party Apps", icon: "plug", tiles: [' in app_js
+    assert "cloudViews()[view]" in app_js and '"Cloud Apps": "t_cloud"' in app_js and "Third-party Apps" not in app_js and "gphotos" not in app_js
+    assert '{ label: "Google Drive", icon: "folder", view: "gdrive" },\n    ]},' in app_js  # the last Cloud Apps tile
     cloud_js = (front / "js" / "cloud.js").read_text(encoding="utf-8")
     for needle in ("API.cloudTransfer(pid, \"push\"", "API.connectStart(", "API.connectFinish(", "requireCard(", "Nothing is ever deleted"):
         assert needle in cloud_js, needle
@@ -484,43 +487,10 @@ def test_google_cloud_cli_installs_with_debians_python(monkeypatch):
     assert cloudapps.env("gcp")["CLOUDSDK_PYTHON"] == "/usr/bin/python3"
 
 
-def test_current_rclone_comes_from_rclone_org_with_its_checksum_checked(tmp_path, monkeypatch):
-    """Debian's rclone 1.60 asks for the Google Photos scopes Google retired; "rclone-new" installs the
-    current release's .deb from rclone.org after checking it against the published SHA-256."""
-    import hashlib
-    from pathlib import Path
+def test_rclone_version_reads_the_installed_release(monkeypatch):
     from backend import requires
-    deb = b"fake deb bytes"
-    good = hashlib.sha256(deb).hexdigest()
-    monkeypatch.setattr(requires, "RCLONE_DEB", tmp_path / "rclone.deb")
-    answers = {"version": "rclone v1.60.1-DEV\n- os/version: debian 13", "--print-architecture": "arm64\n",
-               "version.txt": "rclone v1.75.2\n", "SHA256SUMS": f"{good}  rclone-v1.75.2-linux-arm64.deb\n0000  rclone-v1.75.2-linux-amd64.deb\n"}
-    calls = []
-
-    def run(argv, timeout=120, env=None):
-        calls.append(argv)
-        if "-o" in argv:
-            Path(argv[argv.index("-o") + 1]).write_bytes(deb)
-            return subprocess.CompletedProcess(argv, 0, "", "")
-        for k, v in answers.items():
-            if any(a.endswith(k) for a in argv):
-                return subprocess.CompletedProcess(argv, 0, v, "")
-        return subprocess.CompletedProcess(argv, 1, "", "no")
-    monkeypatch.setattr(requires, "_run", run)
+    monkeypatch.setattr(requires, "_run", lambda argv, timeout=120, env=None: subprocess.CompletedProcess(argv, 0, "rclone v1.60.1-DEV\n- os/version: debian 13", ""))
     monkeypatch.setattr(requires.shutil, "which", lambda n, path=None: "/usr/bin/" + n)
-    assert requires.rclone_version() == (1, 60, 1) and not requires.COMPONENTS["rclone-new"]["check"]()
-    assert "SHA-256 checked" in requires._rclone_download()[0]
-    assert calls[-1][-1] == "https://downloads.rclone.org/v1.75.2/rclone-v1.75.2-linux-arm64.deb"
-    deb = b"tampered"
-    with pytest.raises(requires.RequiresError, match="checksum"):
-        requires._rclone_download()
-    assert not (tmp_path / "rclone.deb").exists()
-    answers["--print-architecture"] = "s390x"
-    with pytest.raises(requires.RequiresError, match="no package"):
-        requires._rclone_download()
-    answers["--print-architecture"] = "arm64"
-    answers["version.txt"] = "<html>oops"
-    with pytest.raises(requires.RequiresError, match="current rclone version"):
-        requires._rclone_download()
+    assert requires.rclone_version() == (1, 60, 1)
     monkeypatch.setattr(requires.shutil, "which", lambda n, path=None: None)
     assert requires.rclone_version() == ()

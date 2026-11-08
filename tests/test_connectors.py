@@ -1,4 +1,4 @@
-"""Third-party Apps (backend/connectors.py): Google Drive and Google Photos through rclone.
+"""Cloud Apps, Google Drive (backend/connectors.py), through rclone.
 
 No Google account and no real rclone are involved. `rclone authorize` is a fake process whose
 output the tests write line by line, the local listener it would run is a fake GET, and other
@@ -114,9 +114,6 @@ def conn(tmp_path, monkeypatch):
 
 
 def _sign_in(conn, service="drive", token_line=None, **kw):
-    if service == "photos":
-        kw.setdefault("client_id", CID)
-        kw.setdefault("client_secret", SEC)
     r = connectors.start(service, **kw)
     proc = conn["procs"][-1]
     conn["on_code"] = lambda: proc.feed("Paste the following into your remote machine --->", token_line or json.dumps(TOKEN), "<---End paste")
@@ -136,7 +133,7 @@ def test_token_is_read_from_json_or_base64_between_the_markers():
 
 def test_remotes_are_kept_in_a_private_rclone_conf(conn):
     connectors._set_remote("c_a", {"type": "drive", "token": "{}", "client_id": ""})
-    connectors._set_remote("c_b", {"type": "google photos"})
+    connectors._set_remote("c_b", {"type": "drive", "scope": "drive"})
     text = connectors._conf().read_text()
     assert "[c_a]\ntype = drive\ntoken = {}\n" in text and "client_id" not in text and "[c_b]" in text
     connectors._drop_remote("c_a")
@@ -146,24 +143,13 @@ def test_remotes_are_kept_in_a_private_rclone_conf(conn):
 
 # ------------------------------------------------------------------ sign-in
 def test_start_runs_rclone_authorize_and_returns_the_google_page(conn):
-    r = connectors.start("photos", label="Family", client_id=CID, client_secret=SEC)
+    r = connectors.start("drive", label="Work", client_id=CID, client_secret=SEC)
     assert r["url"] == GOOGLE and r["session"] and r["expires"] == connectors.AUTH_TIMEOUT
     argv = conn["procs"][-1].argv
-    assert argv[argv.index("authorize") + 1] == "google photos" and argv[-1] == "--auth-no-open-browser"
+    assert argv[argv.index("authorize") + 1] == "drive" and argv[-1] == "--auth-no-open-browser"
     assert conn["gets"][-1] == "http://127.0.0.1:53682/auth?state=ST"
     d = connectors.listing()
-    assert d["services"][1]["signing_in"] is True and d["photos_ok"] and d["rclone_version"] == "1.75.2"
-
-
-def test_photos_needs_a_current_rclone_and_an_own_google_app(conn, monkeypatch):
-    with pytest.raises(connectors.ConnectError, match="your own Google app"):
-        connectors.start("photos")
-    monkeypatch.setattr(connectors, "rclone_version", lambda: (1, 60, 1))
-    with pytest.raises(connectors.ConnectError, match="1.70 or newer"):
-        connectors.start("photos", client_id=CID, client_secret=SEC)
-    d = connectors.listing()
-    assert not d["photos_ok"] and d["rclone_version"] == "1.60.1"
-    assert connectors.start("drive")["url"] == GOOGLE  # Drive still works with the shared app
+    assert d["services"][0]["signing_in"] is True and d["rclone_version"] == "1.75.2"
 
 
 def test_a_new_sign_in_replaces_the_old_one(conn):
@@ -240,17 +226,18 @@ def test_finish_explains_what_went_wrong(conn):
     assert not connectors._SESSIONS
 
 
-def test_photos_connection_is_checked_and_dropped_when_refused(conn):
-    conn["on"]("lsjson", "album", rc=1, err="2026/11/03 ERROR : couldn't list albums: Error 403: insufficient scopes")
-    r, _ = _sign_in(conn, "photos")
-    with pytest.raises(connectors.ConnectError, match="refused access"):
-        connectors.finish(r["session"], "state=ST&code=abc")
-    assert connectors._read_conf() == {} and connectors.load()["accounts"] == []
-    conn["rules"].clear()
-    r, _ = _sign_in(conn, "photos", client_id="123-abc.apps.googleusercontent.com", client_secret="GOCSPX-abcdefghij")
-    a = connectors.finish(r["session"], "state=ST&code=abc")
-    conf = connectors._conf().read_text()
-    assert a["own_client"] and "type = google photos" in conf and "read_only = false" in conf and "client_id = 123-abc" in conf
+def test_google_photos_connections_from_before_are_removed(conn):
+    """Google Photos was removed in 1.2.4: a connection made before goes, its rclone remote with it."""
+    d = _account(conn)
+    connectors._set_remote("c_old", {"type": "google photos"})
+    saved = connectors.load()
+    saved["accounts"].append({"id": "old", "service": "photos", "label": "Family", "email": "", "created": 1, "own_client": True})
+    connectors._save(saved)
+    listing = connectors.listing()
+    assert [a["id"] for a in listing["accounts"]] == [d["id"]] and [s["id"] for s in listing["services"]] == ["drive"]
+    assert list(connectors._read_conf()) == [f"c_{d['id']}"] and len(connectors.load()["accounts"]) == 1
+    with pytest.raises(connectors.ConnectError, match="Unknown service"):
+        connectors.start("photos")
 
 
 def test_cancel_stops_the_listener(conn):
@@ -285,7 +272,7 @@ def test_rename_and_disconnect(conn):
         connectors.disconnect(a["id"])
 
 
-def test_browse_drive_and_the_photos_root(conn):
+def test_browse_drive(conn):
     d = _account(conn)
     conn["on"]("lsjson", out=[{"Name": "b.txt", "IsDir": False, "Size": 3, "ModTime": "t"}, {"Name": "Docs", "IsDir": True, "Size": -1}])
     r = connectors.browse(d["id"], "/Work/")
@@ -298,10 +285,6 @@ def test_browse_drive_and_the_photos_root(conn):
         connectors.browse(d["id"], "")
     with pytest.raises(connectors.ConnectError, match="isn't allowed"):
         connectors.browse(d["id"], "a/../b")
-    conn["rules"].clear()
-    p = _account(conn, "photos")
-    root = connectors.browse(p["id"], "")
-    assert [e["name"] for e in root["entries"]] == ["album", "upload", "media"]
 
 
 @pytest.fixture
@@ -374,25 +357,10 @@ def test_transfer_checks(conn, run_jobs, files_root):
         connectors.transfer("nope", "push", str(files_root), "")
 
 
-def test_photos_push_goes_into_upload_or_an_album_and_only_media(conn, run_jobs, files_root):
-    p = _account(conn, "photos")
-    (files_root / "pics").mkdir()
-    with pytest.raises(connectors.ConnectError, match="album/<name>"):
-        connectors.transfer(p["id"], "push", str(files_root / "pics"), "media/all")
-    with pytest.raises(connectors.ConnectError, match="pull from an album"):
-        connectors.transfer(p["id"], "pull", str(files_root), "upload")
-    connectors.transfer(p["id"], "push", str(files_root / "pics"), "album/Summer 2026")
-    argv = conn["procs"][-1].argv
-    assert argv[argv.index("copy") + 2] == f"c_{p['id']}:album/Summer 2026" and "--include" in argv
-    connectors.transfer(p["id"], "pull", str(files_root), "album/Summer 2026")
-    argv = conn["procs"][-1].argv
-    assert "--ignore-existing" in argv and argv[argv.index("copy") + 2] == str(files_root / "Summer 2026")
-
-
 # ------------------------------------------------------------------ API
 def test_api(admin, conn):
     r = admin.get("/api/connect")
-    assert r.status_code == 200 and r.json()["rclone"] is True and [s["id"] for s in r.json()["services"]] == ["drive", "photos"]
+    assert r.status_code == 200 and r.json()["rclone"] is True and [s["id"] for s in r.json()["services"]] == ["drive"]
     assert admin.post("/api/connect/start", json={"service": "dropbox"}).status_code == 400
     s = admin.post("/api/connect/start", json={"service": "drive"}).json()
     assert s["url"] == GOOGLE
