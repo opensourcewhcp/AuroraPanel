@@ -269,6 +269,58 @@
   function brandLogo() {
     document.querySelectorAll(".brand-mark").forEach((m) => { m.innerHTML = '<img src="/img/logo-mark-128.png" alt="AuroraPanel" width="128" height="128" draggable="false">'; });
   }
+  // Apache's http port when it isn't 80: ":8081" to splice into http:// links, else "".
+  function httpPortSuffix(port) {
+    const p = port || state.httpPort;
+    return p && p !== 80 ? `:${p}` : "";
+  }
+
+  // Installing an Apache tool when another server holds Apache's port: the server answers 409 with the
+  // choices, and this asks instead of failing (stop that server, or run Apache on another port).
+  async function installWebTool(apiFn, label, opts) {
+    try { return await apiFn(opts || {}); }
+    catch (e) {
+      const c = e && e.status === 409 && e.data && e.data.conflict;
+      if (!c) { toast(e.message, "bad"); return null; }
+      const path = label === "phpMyAdmin" ? "/phpmyadmin" : "/phppgadmin";
+      return new Promise((resolve) => {
+        openModal(`${c.other} is on port ${c.port}`, el("div", {}, [
+          el("p", { text: `${label} needs Apache on port ${c.port}, but ${c.other} is using it, so Apache can't start. Pick one:` }),
+          el("ul", { class: "mx-list" }, [
+            el("li", { text: `Stop ${c.other} and give port ${c.port} to Apache. ${c.other} stays installed, just disabled.` }),
+            el("li", { text: `Run Apache on port ${c.suggested} instead. Everything Apache serves then needs the port in its address, e.g. http://${location.hostname}:${c.suggested}${path}.` }),
+          ]),
+        ]), [
+          btn(`Stop ${c.other}, Apache takes ${c.port}`, async () => { closeModal(); resolve(await installWebTool(apiFn, label, { switch: true })); }, "btn-primary"),
+          btn(`Run Apache on port ${c.suggested}`, async () => { closeModal(); resolve(await installWebTool(apiFn, label, { port: c.suggested })); }, "btn-ghost"),
+          btn("Cancel", () => { closeModal(); resolve(null); }, "btn-ghost"),
+        ]);
+      });
+    }
+  }
+
+  // Software → Apache: the plain-http port, one setting for every site Apache serves.
+  function apachePortCard() {
+    const box = el("div", { class: "card", style: "margin-bottom:16px" });
+    (async () => {
+      let d; try { d = await API.apachePort(); } catch (e) { return; }
+      const inp = el("input", { type: "number", min: "1", max: "65535", value: String(d.port), class: "mx-narrow" });
+      const save = btn("Apply", async () => {
+        const p = parseInt(inp.value, 10);
+        if (!p) return toast("Enter a port", "bad");
+        if (!confirmInline(`Move Apache to port ${p}? Every site and tool Apache serves then answers on ${p === 80 ? "the normal address" : `http://${location.hostname}:${p}/`}, and Apache restarts.`)) return;
+        save.disabled = true;
+        try { await API.apachePortSet(p); state.httpPort = p; toast(`Apache now listens on port ${p}`, "good"); }
+        catch (e) { toast(e.message, "bad"); } finally { save.disabled = false; }
+      }, "btn-primary");
+      box.append(el("h3", { text: "HTTP port" }),
+        el("p", { class: "muted", text: `Apache serves every site in this panel on this port, normally 80. Change it only if another web server has to keep port 80; sites and tools then need the port in their address, for example http://${location.hostname}:8081/.` }),
+        d.conflict ? el("p", { class: "dm-hint", text: `${d.conflict.other} is on port ${d.conflict.port} right now, so Apache can't start there. ${d.conflict.suggested} is free.` }) : null,
+        el("div", { class: "toolbar" }, [el("span", { class: "muted", text: "Port" }), inp, save]));
+    })();
+    return box;
+  }
+
   function icon(name, size) {
     const span = document.createElement("span");
     span.className = "ic";
@@ -667,7 +719,7 @@
   }
   function runCmdk(c) {
     closeCmdk();
-    if (c.ext) window.open(`http://${location.hostname}${c.ext}`, "_blank");
+    if (c.ext) window.open(`http://${location.hostname}${httpPortSuffix()}${c.ext}`, "_blank");
     else navigate(c.view);
   }
   document.addEventListener("keydown", (e) => {
@@ -687,6 +739,7 @@
     try { await setLanguage(localStorage.getItem("aurora-lang") || "en"); } catch (e) {}
     try {
       const s = await API.status();
+      state.httpPort = s.http_port || 80;
       IS_PI = s.pi !== false;
       if (!IS_PI) document.querySelectorAll("[data-pi]").forEach((n) => { n.textContent = host(n.textContent); });
       state.firstLogin = !!s.first_login;
@@ -1820,7 +1873,7 @@
         const ico = el("span", { class: "tile-ico" }, icon(TILE_ICON[t.label] || t.icon, 21));
         const tile = el("button", { class: `tile ${t.ext ? "ext" : ""}`, style: `--tile-accent:${c}`,
           onclick: () => {
-            if (t.ext) window.open(`http://${location.hostname}${t.ext}`, "_blank");
+            if (t.ext) window.open(`http://${location.hostname}${httpPortSuffix()}${t.ext}`, "_blank");
             else navigate(t.view);
           } }, [
           ico,
@@ -6460,7 +6513,7 @@
         go.disabled = true;
         try {
           const r = await API.folderSiteCreate(n, folderPath());
-          closeModal(); toast(`Created http://${location.hostname}/${r.name}/ → ${r.path}`, "good");
+          closeModal(); toast(`Created http://${location.hostname}${httpPortSuffix()}/${r.name}/ → ${r.path}`, "good");
           state.refreshHandler && state.refreshHandler();
         } catch (e) { toast(e.message, "bad"); go.disabled = false; }
         return;
@@ -8275,7 +8328,7 @@
       if (!p.installed) {
         status = pill("not installed", "dim");
         actions = [btn("Install phpMyAdmin", async () => {
-          const r = await call(() => API.phpmyadminInstall());
+          const r = await installWebTool(API.phpmyadminInstall, "phpMyAdmin");
           if (r && r.job) watchJob(jp, r.job, "Installing phpMyAdmin…", load);
         }, "btn-primary")];
       } else if (!p.apache) {
@@ -8283,7 +8336,7 @@
         actions = [btn("Open System Applications", () => navigate("sysapps"), "btn-primary")];
       } else {
         status = pill("ready", "good");
-        actions = [el("a", { class: "btn btn-sm btn-primary", href: `http://${location.hostname}${p.path}`, target: "_blank", rel: "noopener noreferrer", text: "Open phpMyAdmin ↗" })];
+        actions = [el("a", { class: "btn btn-sm btn-primary", href: `http://${location.hostname}${httpPortSuffix(p.port)}${p.path}`, target: "_blank", rel: "noopener noreferrer", text: "Open phpMyAdmin ↗" })];
       }
       return el("div", { class: "card", style: "margin-bottom:16px" }, [
         el("div", { class: "net-card-h" }, [icon("database", 20), el("h3", { text: "phpMyAdmin" }), el("span", { style: "flex:1" }), status]),
@@ -8576,7 +8629,7 @@
       if (!p.installed) {
         status = pill("not installed", "dim");
         actions = [btn("Install phpPgAdmin", async () => {
-          const r = await call(() => API.phppgadminInstall());
+          const r = await installWebTool(API.phppgadminInstall, "phpPgAdmin");
           if (r) { await jp.run(r.job, "Installing phpPgAdmin…"); const t = setInterval(async () => {
             try { const j = await API.job(r.job); if (j.status !== "running") { clearInterval(t); load(); } } catch (e) { clearInterval(t); } }, 2000);
             state.cleanups.push(() => clearInterval(t)); }
@@ -8590,7 +8643,7 @@
         actions = [btn("Allow from my network", () => call(() => API.phppgadminLan(true), "phpPgAdmin is now reachable from your network"), "btn-primary")];
       } else {
         status = pill("ready", "good");
-        actions = [el("a", { class: "btn btn-sm btn-primary", href: `http://${location.hostname}${p.path}`, target: "_blank", rel: "noopener noreferrer", text: "Open phpPgAdmin ↗" }),
+        actions = [el("a", { class: "btn btn-sm btn-primary", href: `http://${location.hostname}${httpPortSuffix(p.port)}${p.path}`, target: "_blank", rel: "noopener noreferrer", text: "Open phpPgAdmin ↗" }),
           btn("Limit to this Pi only", () => call(() => API.phppgadminLan(false), "phpPgAdmin now only answers on the Pi itself"), "btn-ghost")];
       }
       return el("div", { class: "card", style: "margin-bottom:16px" }, [
@@ -8979,6 +9032,7 @@
           try {
             const d = await API.appSettings(id);
             pane.innerHTML = "";
+            if (id === "apache") pane.append(apachePortCard());
             if (d.pool_file) pane.append(el("p", { class: "dm-hint", text: `PHP ${d.version} pool: ${d.pool_file}` }));
             const form = settingsForm(d.schema, d.values, { boolValues: d.bool_values });
             const save = btn("Save & apply", async () => {

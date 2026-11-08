@@ -40,6 +40,7 @@ const API = (() => {
       const err = new Error((detail && typeof detail === "object" ? detail.message : detail) || res.statusText || "Request failed");
       err.status = res.status;
       err.detail = detail;
+      err.data = data;  // e.g. a 409's "conflict" with the choices the page can offer
       throw err;
     }
     return data;
@@ -556,7 +557,9 @@ const API = (() => {
     mysqlUserAdmin: (user, host, admin) => request("POST", "/api/db/mysql/user/admin", { user, host, admin }),
     mysqlUserDrop: (user, host) => request("POST", "/api/db/mysql/user/drop", { user, host }),
     mysqlGrant: (db, user, host, on) => request("POST", "/api/db/mysql/grant", { db, user, host, on }),
-    phpmyadminInstall: () => request("POST", "/api/db/phpmyadmin/install"),
+    phpmyadminInstall: (body) => request("POST", "/api/db/phpmyadmin/install", body || {}),
+    apachePort: () => request("GET", "/api/apache/port"),
+    apachePortSet: (port) => request("POST", "/api/apache/port", { port }),
     pg: () => request("GET", "/api/db/pg"),
     pgCreate: (name, owner) => request("POST", "/api/db/pg/create", { name, owner: owner || "" }),
     pgRoleCreate: (b) => request("POST", "/api/db/pg/role/create", b),
@@ -566,7 +569,7 @@ const API = (() => {
     pgGrant: (db, role, grant) => request("POST", "/api/db/pg/grant", { db, role, grant: !!grant }),
     pgOwner: (db, role) => request("POST", "/api/db/pg/owner", { db, role }),
     phppgadminLan: (on) => request("POST", "/api/db/phppgadmin/lan", { on: !!on }),
-    phppgadminInstall: () => request("POST", "/api/db/phppgadmin/install"),
+    phppgadminInstall: (body) => request("POST", "/api/db/phppgadmin/install", body || {}),
     pgDrop: (name) => request("POST", "/api/db/pg/drop", { name }),
     pgRepair: () => request("POST", "/api/db/pg/repair"),
     pgWizard: (b) => request("POST", "/api/db/pg/wizard", b),

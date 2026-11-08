@@ -119,9 +119,12 @@ def list_vhosts() -> dict:
     return {"supported": True, "vhosts": vhosts, "local_ip": local_ip}
 
 
-def create_vhost(server_name: str, docroot: str = "", port: int = 80) -> dict:
+def create_vhost(server_name: str, docroot: str = "", port: int | None = None) -> dict:
     if not (IS_LINUX and shutil.which("a2ensite")):
         raise DomainError("Apache (a2ensite) is not available")
+    if not port:
+        from . import apacheport
+        port = apacheport.get_port()
     name = (server_name or "").strip().lower()
     if not _HOSTNAME.match(name):
         raise DomainError("Enter a valid domain, e.g. example.com")

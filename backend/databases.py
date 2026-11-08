@@ -301,7 +301,10 @@ def _web_tool_done(log, tool: str, path: str, ready_hint: str) -> dict:
         subprocess.run(["systemctl", "start", "apache2"], capture_output=True, timeout=60)  # a plain restart may be all it needs
         st = _apache_state()
     if st["apache"]:
-        log(f"✔ {tool} is ready at {path} — {ready_hint}")
+        from . import apacheport
+        port = apacheport.get_port()
+        where = path if port == 80 else f"{path} on port {port} (http://<this server>:{port}{path})"
+        log(f"✔ {tool} is ready at {where} — {ready_hint}")
         return {"ok": True, "reachable": True}
     who = f"{st['other']} is on port 80 instead of Apache" if st["other"] else "Apache isn't running"
     log(f"⚠ {tool} is installed, but {who}, so {path} can't be opened yet. Stop that server or move it off port 80, "
@@ -310,18 +313,27 @@ def _web_tool_done(log, tool: str, path: str, ready_hint: str) -> dict:
 
 
 def phpmyadmin_status() -> dict:
+    from . import apacheport
     st = _apache_state()
-    return {"installed": phpmyadmin_installed(), "path": "/phpmyadmin",
+    return {"installed": phpmyadmin_installed(), "path": "/phpmyadmin", "port": apacheport.get_port(),
             "enabled": Path("/etc/apache2/conf-enabled/phpmyadmin.conf").exists(),
             "apache": st["apache"], "other": st["other"]}
 
 
-def phpmyadmin_install() -> jobs.Job:
+def phpmyadmin_install(switch: bool = False, port: int | None = None) -> jobs.Job:
     """apt-get install phpmyadmin, answering its setup questions: configure Apache and
     let dbconfig-common create phpMyAdmin's settings database over the root socket."""
     mysql_require()
     if not shutil.which("apache2ctl"):
         raise DatabaseError("phpMyAdmin needs Apache — install it in System Applications first")
+    # Port check first: if another server holds Apache's port, stop here and let the user choose
+    # (PortConflict is answered with the choices) rather than installing into a dead Apache.
+    from . import apacheport
+    chosen = apacheport._validate(port) if port else None
+    if switch:
+        apacheport.stop_other()
+    elif not chosen:
+        apacheport.check_before_install("phpMyAdmin")
 
     def fn(log):
         seed = ("phpmyadmin phpmyadmin/reconfigure-webserver multiselect apache2\n"
@@ -337,6 +349,9 @@ def phpmyadmin_install() -> jobs.Job:
             subprocess.run(["a2enconf", "phpmyadmin"], capture_output=True, text=True, timeout=30)
         from . import webaccess
         webaccess._reload_apache()
+        if chosen:
+            log(f"• Moving Apache to port {chosen}…")
+            apacheport.set_port(chosen)
         _web_tool_done(log, "phpMyAdmin", "/phpmyadmin", "log in with a user that has a password.")
         return phpmyadmin_status()
 
@@ -696,8 +711,10 @@ def phppgadmin_status() -> dict:
         except OSError:
             pass
         lan = "Require local" not in txt  # someone opened it up by hand
+    from . import apacheport
     st = _apache_state()
-    return {"installed": installed, "enabled": enabled, "lan": lan, "path": "/phppgadmin", "apache": st["apache"], "other": st["other"]}
+    return {"installed": installed, "enabled": enabled, "lan": lan, "path": "/phppgadmin", "port": apacheport.get_port(),
+            "apache": st["apache"], "other": st["other"]}
 
 
 def phppgadmin_set_lan(on: bool) -> dict:
@@ -719,8 +736,16 @@ def phppgadmin_set_lan(on: bool) -> dict:
     return {"ok": True, **phppgadmin_status()}
 
 
-def phppgadmin_install() -> jobs.Job:
-    """apt install phppgadmin, then open it to the local network."""
+def phppgadmin_install(switch: bool = False, port: int | None = None) -> jobs.Job:
+    """apt install phppgadmin, then open it to the local network. Apache comes in as a dependency, so the
+    port check runs first: with another server on Apache's port the install would land in a dead state."""
+    from . import apacheport
+    chosen = apacheport._validate(port) if port else None
+    if switch:
+        apacheport.stop_other()
+    elif not chosen:
+        apacheport.check_before_install("phpPgAdmin")
+
     def fn(log):
         # Refresh the package lists first: a stale index asks for a package build the mirror has
         # already replaced and the install dies with a 404 (seen with php-pgsql from packages.sury.org).
@@ -730,6 +755,9 @@ def phppgadmin_install() -> jobs.Job:
         log("• Installing phpPgAdmin (apt-get install phppgadmin php-pgsql)…")
         if log.apt(["install", "phppgadmin", "php-pgsql"], (10, 95)) != 0:
             raise DatabaseError("apt-get install failed. If it reported a 404, the package mirror is behind; try again in a few minutes.")
+        if chosen:
+            log(f"• Moving Apache to port {chosen}…")
+            apacheport.set_port(chosen)
         log("• Allowing access from your local network…")
         phppgadmin_set_lan(True)
         return _web_tool_done(log, "phpPgAdmin", "/phppgadmin", "log in with a PostgreSQL role that has a password.")

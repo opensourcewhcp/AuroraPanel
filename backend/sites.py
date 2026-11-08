@@ -473,7 +473,9 @@ def _content(s: dict, scheme: str) -> list[str]:
 
 
 def render(s: dict) -> str:
-    head = [f"<VirtualHost *:80>", f"    ServerName {s['server_name']}"]
+    from . import apacheport
+    port = apacheport.get_port()  # Apache's plain-http port, 80 unless the admin moved it (Software → Apache)
+    head = [f"<VirtualHost *:{port}>", f"    ServerName {s['server_name']}"]
     if s["aliases"]:
         head.append(f"    ServerAlias {' '.join(s['aliases'])}")
     head.append(f"    DocumentRoot {s['docroot']}")
@@ -489,7 +491,7 @@ def render(s: dict) -> str:
         out += head + _content(s, "http") + ["</VirtualHost>"]
     if s["ssl"] != "none":
         cert, key, chain = _ssl_paths(s)
-        out += ["", "<IfModule mod_ssl.c>", head[0].replace(":80", ":443")] + head[1:] + [
+        out += ["", "<IfModule mod_ssl.c>", head[0].replace(f":{port}>", ":443>")] + head[1:] + [
             "    SSLEngine on", f"    SSLCertificateFile {cert}", f"    SSLCertificateKeyFile {key}"]
         if chain:
             out.append(f"    SSLCertificateChainFile {chain}")
@@ -787,9 +789,11 @@ def _set_system_force_https(conf: Path, on: bool) -> dict:
     text = live.read_text(errors="replace")
     bare = _FH_BLOCK.sub("", text)
     if on:
-        http = re.search(r"(?m)^[ \t]*<VirtualHost\s+[^>]*:80\s*>.*?(?=\n[ \t]*</VirtualHost>)", bare, re.S | re.I)
+        from . import apacheport
+        hport = apacheport.get_port()
+        http = re.search(rf"(?m)^[ \t]*<VirtualHost\s+[^>]*:{hport}\s*>.*?(?=\n[ \t]*</VirtualHost>)", bare, re.S | re.I)
         if not http:
-            raise SiteError(f"{conf.name} has no http (port 80) part — turn on Force HTTPS on the default (http) site instead")
+            raise SiteError(f"{conf.name} has no http (port {hport}) part — turn on Force HTTPS on the default (http) site instead")
         if ":443" not in (lambda r: r.stdout + r.stderr)(_run(["apache2ctl", "-S"])):
             # A fresh server serves nothing on 443 yet: turn on Apache's own https site (self-signed until a
             # Let's Encrypt certificate replaces it) instead of sending the owner off to find it.

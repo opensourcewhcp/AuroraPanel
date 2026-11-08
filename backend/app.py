@@ -27,7 +27,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
 
 from . import (
-    abuse, alerts, cloudapps, connectors, slackbot, antivirus, audit, authz, autossl, dockerapps, isolate, migrate, panelusers, servers, wptoolkit, schedules, tasks, updates, apache, apitokens, appmanager, auth, backups, config, cron,
+    abuse, alerts, cloudapps, connectors, slackbot, antivirus, audit, authz, autossl, dockerapps, isolate, migrate, panelusers, servers, wptoolkit, schedules, tasks, updates, apache, apacheport, apitokens, appmanager, auth, backups, config, cron,
     apps, databases, diskusage, dmarc, dnszones, domains, fail2ban, netmgr, sites, files, firewall, ipblocker, jobs,
     metrics, modsecurity, netdiag, waf, packages, permissions, perms, phpmgr, services, sslcerts, sshaccess,
     proxysites, secreport, shadow, sysapps, system_info, terminal, twofa, users,
@@ -336,7 +336,8 @@ def api_status():
     There is deliberately no "create your admin account" call: the installer makes the
     account with a random password, so nobody who finds a fresh panel can claim it."""
     first_login = config.must_change_password()
-    out = {"initialized": config.is_initialized(), "first_login": first_login, "pi": system_info.is_pi()}
+    out = {"initialized": config.is_initialized(), "first_login": first_login, "pi": system_info.is_pi(),
+           "http_port": apacheport.get_port()}  # the pages build http:// links with it when Apache isn't on 80
     if first_login:
         # The sign-in page names the account the one-time password belongs to
         # (the owner may have renamed "admin" before a --reset-password).
@@ -2749,9 +2750,25 @@ def api_db_mysql_grant(body: MyGrantBody, user: str = auth.CurrentUser):
     return _db_call(lambda: databases.mysql_grant(body.db, body.user, body.host, body.on))
 
 
+class WebToolInstallBody(BaseModel):
+    switch: bool = False     # stop the server that holds Apache's port, Apache takes it
+    port: int | None = None  # or move Apache to this port instead
+
+
+def _web_tool_install(fn, body):
+    """Start an Apache tool install. With another server on Apache's port it answers 409 with the
+    choices (stop that server, or another port) so the page can ask instead of failing."""
+    try:
+        return {"job": fn(bool(body and body.switch), body.port if body else None).id}
+    except apacheport.PortConflict as exc:
+        return JSONResponse(status_code=409, content={"detail": str(exc), "conflict": exc.payload()})
+    except apacheport.PortError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @app.post("/api/db/phpmyadmin/install")
-def api_db_phpmyadmin_install(user: str = auth.CurrentUser):
-    return _db_call(lambda: {"job": databases.phpmyadmin_install().id})
+def api_db_phpmyadmin_install(body: WebToolInstallBody | None = None, user: str = auth.CurrentUser):
+    return _db_call(lambda: _web_tool_install(databases.phpmyadmin_install, body))
 
 
 class PGCreateBody(BaseModel):
@@ -2831,8 +2848,8 @@ def api_db_phppgadmin_lan(body: OnBody, user: str = auth.CurrentUser):
 
 
 @app.post("/api/db/phppgadmin/install")
-def api_db_phppgadmin_install(user: str = auth.CurrentUser):
-    return _db_call(lambda: {"job": databases.phppgadmin_install().id})
+def api_db_phppgadmin_install(body: WebToolInstallBody | None = None, user: str = auth.CurrentUser):
+    return _db_call(lambda: _web_tool_install(databases.phppgadmin_install, body))
 
 
 @app.post("/api/db/pg/repair")
@@ -4024,6 +4041,26 @@ def api_dirprivacy_sites(user: str = auth.CurrentUser):
 @app.post("/api/dirprivacy/site")
 def api_dirprivacy_site(body: WebAccessBody, user: str = auth.CurrentUser):
     return _files_call(lambda: webaccess.privacy_protect_site(body.site or "", body.label or "", body.name or "", body.password or ""))
+
+
+# --------------------------------------------------------------------------- #
+# Apache's plain-http port (Software → Apache). One setting for every site Apache serves.
+# --------------------------------------------------------------------------- #
+@app.get("/api/apache/port")
+def api_apache_port(user: str = auth.CurrentUser):
+    return apacheport.status()
+
+
+class ApachePortBody(BaseModel):
+    port: int
+
+
+@app.post("/api/apache/port")
+def api_apache_port_set(body: ApachePortBody, user: str = auth.CurrentUser):
+    try:
+        return apacheport.set_port(body.port)
+    except apacheport.PortError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.get("/api/git")
