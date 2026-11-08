@@ -139,8 +139,8 @@ def decide_token(level: str, method: str, path: str) -> str | None:
     """None = this API token may make the call, else why not."""
     if level == "legacy":  # made before levels existed: full access, as it always had
         return None
-    if level == "admin":
-        return "A full admin API token can't manage tokens, panel users, the password, 2FA or Panel HTTPS" if TOKEN_ADMIN_DENY.match(path) else None
+    if level in ("admin", "unlimited"):
+        return "This API token can't manage tokens, panel users, the password, 2FA or Panel HTTPS" if TOKEN_ADMIN_DENY.match(path) else None
     if method in ("GET", "HEAD"):
         return "This API token can't open files, secrets, downloads or the terminal" if VIEWER_DENY_GET.match(path) else None
     if method == "POST" and path == "/api/logout":

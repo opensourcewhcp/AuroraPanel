@@ -13,7 +13,7 @@ import urllib.error
 import urllib.request
 from . import problems
 
-VERSION = "1.2.4"
+VERSION = "1.2.5"
 LABEL = "v" + VERSION
 RELEASED = "2026-11-08"
 VERSION_URL = "https://aurora51.com/version.json"

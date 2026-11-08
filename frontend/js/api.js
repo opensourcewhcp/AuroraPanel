@@ -651,6 +651,8 @@ const API = (() => {
     isolation: () => request("GET", "/api/isolation"),
     docker: () => request("GET", "/api/docker"),
     servers: () => request("GET", "/api/servers"),
+    serversList: () => request("GET", "/api/servers/list"),
+    serverStatus: (id) => request("GET", `/api/servers/${encodeURIComponent(id)}/status`),
     mySites: () => request("GET", "/api/mysites"),
     wpt: () => request("GET", "/api/wptoolkit"),
     wptSite: (path) => request("GET", `/api/wptoolkit/site?path=${encodeURIComponent(path)}`),

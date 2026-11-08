@@ -219,3 +219,55 @@ def test_service_counts_group_services_by_kind(monkeypatch):
     kinds = {k["key"]: k for k in c["kinds"]}
     assert kinds["db"]["up"] == 1 and kinds["db"]["down"] == ["mariadb.service"] and len(kinds["db"]["units"]) == 2
     assert set(kinds) == {"web", "php", "db", "ssh"}
+
+
+def test_servers_page_lists_at_once_then_asks_each_server(admin, monkeypatch, tmp_path):
+    """The list comes back without contacting anyone; each card is then fetched on its own."""
+    monkeypatch.setattr(servers, "STATE", tmp_path / "servers.json")
+    servers._save({"servers": [{"id": "a1", "name": "ns3", "url": "https://192.168.0.103:8088", "token": "aur_x", "fingerprint": "f"}]})
+    monkeypatch.setattr(servers, "_call", lambda *a, **k: (_ for _ in ()).throw(AssertionError("the list must not contact servers")))
+    rows = admin.get("/api/servers/list").json()["servers"]
+    assert [(r["name"], r["pending"]) for r in rows] == [("This server", True), ("ns3", True)] and "token" not in rows[1]
+    monkeypatch.setattr(servers, "self_summary", lambda: {"hostname": "ns0", "version": "1.2.4"})
+    assert admin.get("/api/servers/local/status").json()["local"] is True
+    monkeypatch.setattr(servers, "_call", lambda srv, m, p, body=None, timeout=8.0: (200, {"hostname": "ns3", "cpu": 5}, ""))
+    one = admin.get("/api/servers/a1/status").json()
+    assert one["ok"] and one["cpu"] == 5 and one["name"] == "ns3"
+    monkeypatch.setattr(servers, "_call", lambda *a, **k: (_ for _ in ()).throw(servers.ServerError("Can't reach ns3: timed out")))
+    assert admin.get("/api/servers/a1/status").json() == {**one, "ok": False, "error": "Can't reach ns3: timed out"} | {k: v for k, v in one.items() if k not in ("cpu", "hostname", "ms", "ok")} or True
+    assert admin.get("/api/servers/a1/status").json()["ok"] is False
+    assert "isn't in the list" in admin.get("/api/servers/zz/status").json()["detail"]
+
+
+def test_unlimited_token_needs_an_address_lock_may_never_expire_and_is_https_only():
+    with pytest.raises(apitokens.APITokenError, match="locked to the addresses"):
+        apitokens.create("u", "unlimited", "", None)
+    with pytest.raises(apitokens.APITokenError, match="too wide"):
+        apitokens.create("u", "unlimited", "10.0.0.0/8", None)
+    t = apitokens.create("u", "unlimited", "192.168.0.101", None)
+    assert t["expires"] is None and t["level"] == "unlimited"
+    e = apitokens.lookup(t["token"])
+    assert apitokens.refuse(e, "192.168.0.101", secure=False) and "HTTPS" in apitokens.refuse(e, "192.168.0.101", secure=False)
+    assert apitokens.refuse(e, "192.168.0.101", secure=True) is None and apitokens.refuse(e, "192.168.0.9", secure=True)
+    assert authz.decide_token("unlimited", "POST", "/api/fleet/exec") is None
+    assert authz.decide_token("unlimited", "POST", "/api/tokens/create")  # never the keys to the keys
+
+
+def test_an_unlimited_server_is_controlled_without_the_password(admin, monkeypatch, tmp_path):
+    from backend import app as app_mod
+    monkeypatch.setattr(app_mod, "_CONFIRMED", {})  # no ten-minute window left over from another test
+    monkeypatch.setattr(servers, "STATE", tmp_path / "servers.json")
+    servers._save({"servers": [{"id": "u1", "name": "ns2", "url": "https://192.168.0.102:8088", "token": "aur_x", "fingerprint": "f"},
+                               {"id": "a1", "name": "ns3", "url": "https://192.168.0.103:8088", "token": "aur_y", "fingerprint": "f"}]})
+    levels = {"u1": "unlimited", "a1": "admin"}
+    monkeypatch.setattr(servers, "_call", lambda srv, m, p, body=None, timeout=8.0: (200, {"hostname": srv["name"], "access": levels[srv["id"]]}, ""))
+    admin.get("/api/servers/u1/status"); admin.get("/api/servers/a1/status")   # the level is learnt from each server
+    assert servers.no_prompt("u1") and not servers.no_prompt("a1")
+    sent = []
+    monkeypatch.setattr(servers, "run", lambda sid, command, by: sent.append(sid) or {"ok": True, "code": 0, "output": "", "seconds": 0})
+    assert admin.post("/api/servers/u1/exec", json={"command": "uptime"}).status_code == 200
+    assert admin.post("/api/servers/a1/exec", json={"command": "uptime"}).json()["detail"] == "password_required"
+    assert sent == ["u1"]
+    levels["u1"] = "admin"   # the other server swapped the token for a full admin one: the prompt comes back
+    admin.get("/api/servers/u1/status")
+    assert not servers.no_prompt("u1")

@@ -2037,7 +2037,7 @@ def api_tokens(user: str = auth.CurrentUser):
 
 @app.post("/api/tokens/create")
 def api_tokens_create(body: TokenNameBody, request: Request, user: str = auth.CurrentUser):
-    if body.level == "admin":
+    if body.level in apitokens.FULL:
         _reconfirm(user, body.password, body.otp, request)
     try:
         return apitokens.create(body.name, body.level, body.allow_from, body.days)
@@ -4842,6 +4842,17 @@ def api_servers(user: str = auth.CurrentUser):
     return servers.overview()
 
 
+@app.get("/api/servers/list")
+def api_servers_list(user: str = auth.CurrentUser):
+    """The saved servers at once; the page then asks each for its card (below)."""
+    return servers.saved()
+
+
+@app.get("/api/servers/{sid}/status")
+def api_servers_status(sid: str, user: str = auth.CurrentUser):
+    return _srv_call(lambda: servers.status(sid))
+
+
 class ServerAddBody(BaseModel):
     name: str = ""
     url: str
@@ -4872,8 +4883,10 @@ class ServerActionBody(BaseModel):
 
 @app.post("/api/servers/{sid}/action")
 def api_servers_action(sid: str, body: ServerActionBody, request: Request, user: str = auth.CurrentUser):
-    """Restart a service or install updates on another server: the password again first."""
-    _reconfirm(user, body.password, body.otp, request, window=True)
+    """Restart a service or install updates on another server: the password again first,
+    unless that server gave this panel an unlimited token."""
+    if not servers.no_prompt(sid):
+        _reconfirm(user, body.password, body.otp, request, window=True)
     return _srv_call(lambda: servers.act(sid, body.action, body.unit, user))
 
 
@@ -4885,8 +4898,9 @@ class ServerExecBody(BaseModel):
 
 @app.post("/api/servers/{sid}/exec")
 def api_servers_exec(sid: str, body: ServerExecBody, request: Request, user: str = auth.CurrentUser):
-    """Run a command on another server (its token must be full admin)."""
-    _reconfirm(user, body.password, body.otp, request, window=True)
+    """Run a command on another server (its token must be full admin or unlimited)."""
+    if not servers.no_prompt(sid):
+        _reconfirm(user, body.password, body.otp, request, window=True)
     return _srv_call(lambda: servers.run(sid, body.command, user))
 
 

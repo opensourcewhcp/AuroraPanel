@@ -5636,40 +5636,61 @@
 
   // ---- Manage API Tokens ----
   const TOKEN_LEVELS = {
-    read: { label: "Read only", ico: "eye", cls: "info", text: "Sees health, services, updates and lists, like a Viewer. Can't change anything, open files, secrets or the terminal." },
-    fleet: { label: "Fleet control", ico: "t_servers", cls: "med", text: "Read only, plus what another panel's Servers page sends: restart or start a service, install updates, ban and unban addresses." },
-    admin: { label: "Full admin", ico: "key", cls: "crit", text: "Everything, including commands as root. Extra locks: only from the addresses below, only over HTTPS, expires within 90 days, and it can't manage tokens, panel users, the password, 2FA or Panel HTTPS. Your password is asked to create one." },
+    read: { label: "Read only", ico: "eye", cls: "info", short: "Watch it",
+      text: "Sees health, services, updates and lists, like a Viewer. Can't change anything, open files, secrets or the terminal.",
+      can: ["See CPU, memory, disk, services and alerts", "See waiting updates and bans"], locks: ["Changes nothing", "Optional address lock and expiry"] },
+    fleet: { label: "Fleet control", ico: "t_servers", cls: "med", short: "Day-to-day care",
+      text: "Read only, plus what another panel's Servers page sends: restart or start a service, install updates, update AuroraPanel, ban and unban addresses.",
+      can: ["Everything Read only can", "Restart services, install updates", "Update AuroraPanel, ban and unban"], locks: ["No commands, files or settings", "Optional address lock and expiry"] },
+    admin: { label: "Full admin", ico: "key", cls: "crit", short: "Everything, with a check",
+      text: "Everything, including commands as root. Only from the addresses below, only over HTTPS, expires within 90 days, and the panel using it asks for your password before each session of control.",
+      can: ["Everything Fleet control can", "Run commands as root from a terminal"], locks: ["Your password on the controlling panel, every 10 minutes", "Only from the addresses below, only over HTTPS", "Expires within 90 days"] },
+    unlimited: { label: "Unlimited", ico: "t_bolt", cls: "crit", short: "Everything, no prompts",
+      text: "What Full admin can, without the password prompt on the panel that uses it, and it may never expire. Still only from the addresses below and only over HTTPS. Use it between your own servers you trust.",
+      can: ["Everything Full admin can", "No password prompt when controlling", "Can be set to never expire"], locks: ["Only from the addresses below, only over HTTPS", "Your password once, to create it"] },
     legacy: { label: "Full access, older token", ico: "warning", cls: "med", text: "Made before access levels existed: it can do everything, from anywhere, forever. Replace it with a token of the level it needs." },
   };
+  const TOKEN_FULL = ["admin", "unlimited"];
   function viewAPITokens(root) {
     const name = el("input", { type: "text", placeholder: "e.g. ns1 servers page", maxlength: "60" });
-    const level = el("select", { class: "em-select" }, ["read", "fleet", "admin"].map((k) => el("option", { value: k, text: TOKEN_LEVELS[k].label })));
+    // The access level as cards: what each can do and how it's kept safe, side by side.
+    const level = { value: "read" };
+    const cards = el("div", { class: "tok-levels", role: "radiogroup", "aria-label": "Access" });
     const allow = el("input", { type: "text", placeholder: "192.168.0.101, 10.0.0.0/24" });
     const days = el("select", { class: "em-select" });
-    const levelNote = el("div", { class: "tok-level-note" });
     const allowHelp = el("small", { class: "dm-hint" });
+    const allowLbl = el("span", { text: "Only from" });
+    const drawCards = () => {
+      cards.replaceChildren(...["read", "fleet", "admin", "unlimited"].map((k) => {
+        const L = TOKEN_LEVELS[k], on = level.value === k;
+        return el("button", { type: "button", role: "radio", "aria-checked": on ? "true" : "false", class: `tok-level ${L.cls} ${on ? "on" : ""}`,
+          onclick: () => { level.value = k; drawCards(); fillDays(); } }, [
+          el("div", { class: "tok-level-h" }, [el("span", { class: "tok-level-ico" }, icon(L.ico, 18)), el("div", { class: "grow" }, [el("b", { text: L.label }), el("small", { text: L.short })]),
+            el("span", { class: "tok-radio" })]),
+          el("ul", { class: "tok-can" }, L.can.map((x) => el("li", {}, [icon("check", 13), el("span", { text: x })]))),
+          el("ul", { class: "tok-lock" }, L.locks.map((x) => el("li", {}, [icon("lock", 12), el("span", { text: x })]))),
+        ]);
+      }));
+    };
     const fillDays = () => {
-      const adm = level.value === "admin";
+      const full = TOKEN_FULL.includes(level.value), adm = level.value === "admin";
       const opts = adm ? [[7, "7 days"], [30, "30 days"], [90, "90 days"]] : [["", "Never"], [30, "30 days"], [90, "90 days"], [365, "1 year"]];
       const was = days.value;
       days.innerHTML = ""; opts.forEach(([v, l]) => days.append(el("option", { value: v, text: l })));
       days.value = opts.some(([v]) => String(v) === was) ? was : String(opts[adm ? 1 : 0][0]);
-      const L = TOKEN_LEVELS[level.value];
-      levelNote.className = `tok-level-note srv-sev ${L.cls}`;
-      levelNote.innerHTML = ""; levelNote.append(icon(L.ico, 15), el("span", { text: L.text }));
-      allowHelp.textContent = adm ? "Required: the address of the panel or script that will use it (single addresses or ranges up to /16)." : "Optional, but recommended: the token then only works from these addresses. Leave empty for anywhere.";
+      allowLbl.textContent = full ? "Only from (required)" : "Only from";
+      allowHelp.textContent = full ? "The address of the panel or script that will use it: single addresses or ranges up to /16." : "Optional, but recommended: the token then only works from these addresses. Leave empty for anywhere.";
     };
-    level.addEventListener("change", fillDays);
     const form = el("div", { class: "card", style: "margin-bottom:16px" }, [
       el("h3", { text: "Create API token" }),
-      el("p", { class: "muted", style: "margin:0 0 12px;font-size:12px", text: "Tokens authenticate API calls and other panels' Servers pages, sent as  Authorization: Bearer <token>.  Each one is shown once." }),
+      el("p", { class: "muted", style: "margin:0 0 14px;font-size:12.5px", text: "A token lets another panel's Servers page (or a script) use this server. Pick what it may do, then paste it into the other panel. It's shown once." }),
+      el("div", { class: "net-field tok-wide", style: "margin-bottom:14px" }, [el("span", { text: "Access" }), cards]),
       el("div", { class: "tok-form" }, [
-        field("Name", name), field("Access", level), field("Expires", days),
-        el("label", { class: "net-field tok-wide" }, [el("span", { text: "Only from" }), allow, allowHelp]),
+        field("Name", name), el("label", { class: "net-field" }, [allowLbl, allow, allowHelp]), field("Expires", days),
       ]),
-      levelNote,
-      el("div", { class: "toolbar" }, el("button", { class: "btn btn-sm btn-primary", text: "Create", onclick: () => create() })),
+      el("div", { class: "toolbar" }, el("button", { class: "btn btn-sm btn-primary", text: "Create token", onclick: () => create() })),
     ]);
+    drawCards();
     fillDays();
     const body = el("div", { id: "tok-body" }, el("div", { class: "loading", text: "Loading…" }));
     root.append(form, body);
@@ -5700,7 +5721,7 @@
     async function create(extra) {
       const data = { name: name.value.trim(), level: level.value, allow_from: allow.value.trim(), days: days.value ? +days.value : null, ...(extra || {}) };
       if (!data.name) { toast("Give the token a name", "bad"); name.focus(); return; }
-      if (data.level === "admin" && !extra) return confirmAdmin();
+      if (TOKEN_FULL.includes(data.level) && !extra) return confirmAdmin();
       try {
         const r = await API.tokenCreate(data);
         const L = TOKEN_LEVELS[r.level] || TOKEN_LEVELS.read;
@@ -5722,7 +5743,7 @@
       const go = () => { const x = { password: pw.value, otp: otp.value.trim() }; closeModal(); create(x); };
       pw.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
       openModal("Confirm it's you", el("div", { class: "em-form" }, [
-        el("p", { class: "muted", text: "A full admin token can run anything on this server. Type your password to create it." }),
+        el("p", { class: "muted", text: `${level.value === "unlimited" ? "An unlimited" : "A full admin"} token can run anything on this server. Type your password to create it.` }),
         field("Password", pw),
         needOtp ? field("2FA code", otp) : null,
       ].filter(Boolean)), [el("button", { class: "btn btn-primary", text: "Create token", onclick: go })]);

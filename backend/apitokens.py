@@ -10,6 +10,9 @@ Every token has a level, enforced by authz.py before any route runs:
   admin  everything, with extra locks: only from the addresses it names, only over HTTPS
          (or from this machine), it expires within 90 days, and it can't manage tokens,
          panel users, the password, 2FA or Panel HTTPS
+  unlimited  what admin can, locked to addresses and HTTPS the same way, but it may never
+         expire, and the panel that uses it controls this server without asking its owner's
+         password again (servers.no_prompt)
 Tokens made before levels existed carry no level: they keep full access so nothing breaks,
 and the page asks for them to be replaced.
 """
@@ -23,7 +26,8 @@ import time
 
 from . import config
 
-LEVELS = ("read", "fleet", "admin")
+LEVELS = ("read", "fleet", "admin", "unlimited")
+FULL = ("admin", "unlimited")  # everything except the keys to the keys
 ADMIN_MAX_DAYS = 90
 _TOUCH_EVERY = 300  # seconds between "last used" writes for the same token and address
 _touch_lock = threading.Lock()
@@ -71,17 +75,19 @@ def create(name: str, level: str = "read", allow_from=None, days: int | None = N
     if not name or len(name) > 60:
         raise APITokenError("Name is required (max 60 chars)")
     if level not in LEVELS:
-        raise APITokenError("Pick an access level: read only, fleet control or full admin")
+        raise APITokenError("Pick an access level: read only, fleet control, full admin or unlimited")
     nets = _nets(allow_from)
     if days is not None and (days < 1 or days > 3650):
         raise APITokenError("Expiry must be between 1 and 3650 days")
-    if level == "admin":
+    if level in FULL:
+        what = "a full admin" if level == "admin" else "an unlimited"
         if not nets:
-            raise APITokenError("A full admin token must be locked to the addresses that will use it")
+            raise APITokenError(f"{what.capitalize()} token must be locked to the addresses that will use it")
         for n in nets:
             net = ipaddress.ip_network(n)
             if net.prefixlen < (16 if net.version == 4 else 48):
-                raise APITokenError(f"{n} is too wide for a full admin token: use single addresses or ranges of at most a /16")
+                raise APITokenError(f"{n} is too wide for {what} token: use single addresses or ranges of at most a /16")
+    if level == "admin":
         if not days or days > ADMIN_MAX_DAYS:
             raise APITokenError(f"A full admin token must expire within {ADMIN_MAX_DAYS} days")
     raw = "aur_" + secrets.token_urlsafe(24)
@@ -153,8 +159,8 @@ def refuse(entry: dict, ip: str | None, secure: bool) -> str | None:
     nets = entry.get("allow_from") or []
     if nets and not (addr and any(addr in ipaddress.ip_network(n) for n in nets)):
         return f"This API token can't be used from {ip or 'this address'}"
-    if level(entry) == "admin" and not secure and not (addr and addr.is_loopback):
-        return "A full admin API token only works over HTTPS. Turn on Panel HTTPS (Security → Panel HTTPS) on this server."
+    if level(entry) in FULL and not secure and not (addr and addr.is_loopback):
+        return "This API token only works over HTTPS. Turn on Panel HTTPS (Security → Panel HTTPS) on this server."
     return None
 
 

@@ -368,24 +368,70 @@ def upgrade(sid: str, by: str) -> dict:
     return _answer(srv, status, payload)
 
 
+def _me() -> dict:
+    return {"id": "", "name": "This server", **self_summary(), "ok": True, "local": True}
+
+
+def _probe(srv: dict) -> dict:
+    """One server's health card, or why it can't be reached. The token level it reports is remembered,
+    so no_prompt() knows which servers may be controlled without the password."""
+    t0 = time.time()
+    try:
+        status, payload, _ = _call(srv, "GET", "/api/fleet/self", timeout=6)
+        if status != 200:
+            return {**_public(srv), "ok": False, "error": f"answered {status}" + (" (token revoked?)" if status == 401 else "")}
+        access = (payload or {}).get("access") or ""
+        if access != srv.get("access", ""):
+            srv["access"] = access
+            _remember(srv["id"], access=access)
+        return {**_public(srv), **payload, "ok": True, "ms": int((time.time() - t0) * 1000)}
+    except ServerError as e:
+        return {**_public(srv), "ok": False, "error": str(e)}
+
+
+def _remember(sid: str, **kv) -> None:
+    d = _load()
+    for s in d["servers"]:
+        if s["id"] == sid:
+            s.update(kv)
+            _save(d)
+            return
+
+
+def no_prompt(sid: str) -> bool:
+    """True when that server's token for this panel is unlimited: it is then controlled without asking
+    the password again. The level comes from the server itself (its token decides what it allows),
+    and only an https server can be controlled at all."""
+    srv = next((x for x in _load()["servers"] if x["id"] == sid), None)
+    return bool(srv and srv.get("access") == "unlimited" and srv.get("url", "").startswith("https://"))
+
+
 def overview() -> dict:
     d = _load()
-    me = {"id": "", "name": "This server", **self_summary(), "ok": True, "local": True}
-
-    def one(srv):
-        t0 = time.time()
-        try:
-            status, payload, _ = _call(srv, "GET", "/api/fleet/self", timeout=6)
-            if status != 200:
-                return {**_public(srv), "ok": False, "error": f"answered {status}" + (" (token revoked?)" if status == 401 else "")}
-            return {**_public(srv), **payload, "ok": True, "ms": int((time.time() - t0) * 1000)}
-        except ServerError as e:
-            return {**_public(srv), "ok": False, "error": str(e)}
-
     with ThreadPoolExecutor(max_workers=8) as ex:
-        others = list(ex.map(one, d["servers"]))
+        others = list(ex.map(_probe, d["servers"]))
     _save_moved(d["servers"])
-    return {"servers": [me] + others}
+    return {"servers": [_me()] + others}
+
+
+def saved() -> dict:
+    """The list at once, without asking anyone: the page draws a card per server and then asks each one
+    on its own (status()), so a slow or unreachable server doesn't hold up the rest."""
+    return {"servers": [{"id": "", "name": "This server", "local": True, "pending": True}]
+            + [{**_public(s), "pending": True} for s in _load()["servers"]]}
+
+
+def status(sid: str) -> dict:
+    """One server's card: "local" for this one, else an added server's id."""
+    if sid == "local":
+        return _me()
+    d = _load()
+    srv = next((x for x in d["servers"] if x["id"] == sid), None)
+    if not srv:
+        raise ServerError("That server isn't in the list")
+    out = _probe(srv)
+    _save_moved(d["servers"])
+    return out
 
 
 def ban_everywhere(ip: str, reason: str, duration: int | None) -> dict:

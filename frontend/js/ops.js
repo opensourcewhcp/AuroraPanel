@@ -1265,11 +1265,11 @@ window.AuroraOps = (ui) => {
   const sevChip = (level, text) => { const [cls, ico, word] = sev(level); return el("span", { class: `srv-sev ${cls}`, title: word }, [icon(ico, 13), el("span", { text: text || word })]); };
   // Services by kind, each with its own icon.
   const SVC_KIND_ICON = { web: "globe", php: "t_code", db: "database", mail: "mail", dns: "dns", ssh: "key", docker: "t_docker", vpn: "vpn", security: "shield" };
-  const ACCESS = { read: ["Read only", "info", "eye"], fleet: ["Fleet control", "med", "t_servers"], admin: ["Full admin", "crit", "key"], legacy: ["Full access, older token", "med", "warning"] };
-  const canAct = (s) => !s.local && s.ok && ["fleet", "admin", "legacy"].includes(s.access);
-  const canRun = (s) => !s.local && s.ok && ["admin", "legacy"].includes(s.access);
+  const ACCESS = { read: ["Read only", "info", "eye"], fleet: ["Fleet control", "med", "t_servers"], admin: ["Full admin", "crit", "key"], unlimited: ["Unlimited", "crit", "t_bolt"], legacy: ["Full access, older token", "med", "warning"] };
+  const canAct = (s) => !s.local && s.ok && ["fleet", "admin", "unlimited", "legacy"].includes(s.access);
+  const canRun = (s) => !s.local && s.ok && ["admin", "unlimited", "legacy"].includes(s.access);
   // Panels before 1.2.3 don't report a token level: their tokens all have full access, enough to update them.
-  const canUpgrade = (s) => !s.local && s.ok && (!s.access || ["fleet", "admin", "legacy"].includes(s.access));
+  const canUpgrade = (s) => !s.local && s.ok && (!s.access || ["fleet", "admin", "unlimited", "legacy"].includes(s.access));
   const vkey = (v) => { const m = /^(\d+)\.(\d+)\.(\d+)/.exec(v || ""); return m ? (+m[1]) * 1e6 + (+m[2]) * 1e3 + (+m[3]) : 0; };
   const unitName = (u) => u.replace(/\.service$/, "");
 
@@ -1450,7 +1450,7 @@ window.AuroraOps = (ui) => {
     const why = (need) => s.local ? "" : !s.ok ? "the server isn't reachable"
       : !s.access ? `update AuroraPanel there first (it runs ${s.version || "an older version"})`
       : !s.secure ? "turn on Panel HTTPS on that server first (it's only watched over plain http)"
-      : need === "run" && !canRun(s) ? "needs a Full admin token from that server"
+      : need === "run" && !canRun(s) ? "needs a Full admin or Unlimited token from that server"
       : need === "act" && !canAct(s) ? "needs a Fleet control or Full admin token from that server" : "";
     // Restart every failed service. One that fails again opens the terminal with its status and log, so the reason is right there.
     const restartAll = async () => {
@@ -1525,25 +1525,79 @@ window.AuroraOps = (ui) => {
   }
 
   async function viewServers(root) {
-    root.append(pageHead("Servers", "All your AuroraPanel servers on one page, Raspberry Pis at home, VPSs in the cloud. See which one needs attention, and act on all of them at once.",
+    root.append(pageHead("Servers", "Every server on one page: see which one needs attention and act on all of them at once.",
       [btn("Add a server", () => addDlg(), "btn-primary")]));
-    const body = el("div", {}, el("div", { class: "loading", text: "Asking every server…" }));
+    const body = el("div", {});
     root.append(body);
-    let d;
+    // The page opens at once from the saved list. Every server is then asked on its own and its card
+    // fills in when it answers, so a slow or unreachable one never holds up the others.
+    let d = { servers: [] };
+    let gen = 0;
+    const tiles = el("div", { class: "mx-tiles" });
+    const grid = el("div", { class: "op-srvs" });
+    const cards = new Map();
+    const key = (s) => (s.local ? "local" : s.id);
+    function drawTiles() {
+      const all = d.servers, done = all.filter((s) => !s.pending), waiting = all.length - done.length;
+      const bad = done.filter((s) => !s.ok || (s.alerts || []).some((a) => a.level === "critical") || (s.failed_units || []).length).length;
+      const sum = (f) => String(done.reduce((a, s) => a + f(s), 0));
+      tiles.replaceChildren(
+        tile("Servers", String(all.length), all.length > 1 ? `${done.filter((s) => s.ok).length} reachable${waiting ? `, ${waiting} connecting` : ""}` : "add your others", "server"),
+        tile("Need attention", String(bad), bad ? "critical alerts, failed services or unreachable" : waiting ? "checking…" : "everything is healthy", "warning", bad ? "warnt" : ""),
+        tile("Security updates", sum((s) => (s.updates || {}).security || 0), waiting ? "so far, still asking" : "waiting across all servers", "t_update"),
+        tile("Banned addresses", sum((s) => s.bans || 0), "manual + fail2ban, all servers", "ban"));
+    }
+    function pendingCard(s) {
+      return el("div", { class: "card op-srv pending" }, [
+        el("div", { class: "op-srv-h" }, [el("span", { class: "srv-ava wait" }, [icon(s.local ? "home" : "server", 20), el("i")]),
+          el("div", { class: "grow" }, [el("div", { class: "srv-title" }, el("b", { text: s.name })),
+            el("p", { class: "muted mx-small mx-ell", text: s.local ? "this panel" : (s.url || "").replace(/^https?:\/\//, "") })])]),
+        el("div", { class: "op-srv-m" }, ["CPU", "Memory", "Disk"].map((l) => el("div", { class: "op-meter" }, [el("div", { class: "op-meter-l" }, [el("span", { text: l }), el("b", { text: "…" })]),
+          el("div", { class: "op-meter-bar srv-shimmer" }, el("span", { style: "width:0" }))]))),
+        el("div", { class: "op-srv-f" }),
+        el("div", { class: "srv-svcbox srv-connecting" }, [el("span", { class: "spinner" }), el("b", { text: s.local ? "Reading this server…" : `Connecting to ${s.name}…` }),
+          el("p", { class: "muted mx-small", text: s.local ? "" : "Its card fills in as soon as it answers." })]),
+        el("div", { class: "op-srv-al" }),
+        el("div", { class: "srv-acts" }),
+      ]);
+    }
+    function put(s) {
+      const i = d.servers.findIndex((x) => key(x) === key(s));
+      if (i >= 0) d.servers[i] = s;
+      const old = cards.get(key(s));
+      const node = s.pending ? pendingCard(s) : srvCard(s, () => ask(s, true), d.servers);
+      cards.set(key(s), node);
+      if (old) old.replaceWith(node); else grid.append(node);
+      drawTiles();
+    }
+    // quiet: refresh in place (the minute timer, after an action) instead of showing the spinner again.
+    async function ask(s, quiet) {
+      const g = gen;
+      if (!quiet) put({ ...s, pending: true });
+      let r;
+      try { r = await API.serverStatus(s.local ? "local" : s.id); }
+      catch (e) {
+        if (/isn't in the list/.test(e.message)) { cards.get(key(s))?.remove(); cards.delete(key(s)); d.servers = d.servers.filter((x) => key(x) !== key(s)); drawTiles(); return; }
+        r = { ...s, ok: false, error: e.message };
+      }
+      if (g !== gen) return;
+      put({ ...r, pending: false });
+      // The newest version shown on other cards comes from this one, so redraw them once it's known.
+      if (s.local) d.servers.filter((x) => !x.local && !x.pending).forEach((x) => put(x));
+    }
     async function load() {
-      try { d = await API.servers(); } catch (e) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); return; }
-      draw();
+      gen += 1;
+      let list;
+      try { list = await API.serversList(); } catch (e) { body.replaceChildren(el("p", { class: "empty", text: e.message })); return; }
+      d = { servers: list.servers };
+      cards.clear(); grid.replaceChildren();
+      d.servers.forEach((s) => put(s));
+      if (!body.firstChild) draw();
+      d.servers.forEach((s) => ask(s));
     }
     function draw() {
       body.innerHTML = "";
-      const bad = d.servers.filter((s) => !s.ok || (s.alerts || []).some((a) => a.level === "critical") || (s.failed_units || []).length).length;
-      body.append(el("div", { class: "mx-tiles" }, [
-        tile("Servers", String(d.servers.length), d.servers.length > 1 ? `${d.servers.filter((s) => s.ok).length} reachable` : "add your others", "server"),
-        tile("Need attention", String(bad), bad ? "critical alerts, failed services or unreachable" : "everything is healthy", "warning", bad ? "warnt" : ""),
-        tile("Security updates", String(d.servers.reduce((a, s) => a + ((s.updates || {}).security || 0), 0)), "waiting across all servers", "t_update"),
-        tile("Banned addresses", String(d.servers.reduce((a, s) => a + (s.bans || 0), 0)), "manual + fail2ban, all servers", "ban"),
-      ]));
-      body.append(el("div", { class: "op-srvs" }, d.servers.map((s) => srvCard(s, load, d.servers))));
+      body.append(tiles, grid);
       // ban everywhere
       const ip = el("input", { type: "text", placeholder: "203.0.113.7 or 203.0.113.0/24" });
       const reason = el("input", { type: "text", placeholder: "e.g. SSH brute force" });
@@ -1568,13 +1622,13 @@ window.AuroraOps = (ui) => {
       const token = el("input", { type: "password", placeholder: "aur_…", autocomplete: "off" });
       openModal("Add a server", el("div", { class: "em-form" }, [
         el("ol", { class: "op-steps" }, [el("li", { text: "On the other server's panel: Security → Manage API Tokens → create a token named after this server, locked to this server's address." }),
-          el("li", { text: "Pick what this panel may do there: Read only (watch), Fleet control (also restart services, install updates, ban) or Full admin (also run commands)." }),
+          el("li", { text: "Pick what this panel may do there: Read only (watch), Fleet control (also restart services, install updates, ban), Full admin (also run commands, asks your password here) or Unlimited (the same, without asking)." }),
           el("li", { text: "Copy it and paste it below with that panel's address (the one you open it with)." })]),
         field("Name", name), field("Panel address", url, "The address and port. HTTPS is used when that panel has it, and its certificate is remembered. A panel without HTTPS is only added on your own network, and can be watched but not controlled."), field("API token", token),
       ]), [el("button", { class: "btn btn-primary", text: "Add", onclick: () => call(() => API.serverAdd({ name: name.value.trim(), url: url.value.trim(), token: token.value.trim() }), "Server added", () => { closeModal(); load(); }) })]);
     }
     load();
-    const t = setInterval(() => { if (!document.querySelector("#modal")) load(); }, 60000); state.cleanups.push(() => clearInterval(t));
+    const t = setInterval(() => { if (!document.querySelector("#modal")) d.servers.forEach((s) => ask(s, true)); }, 60000); state.cleanups.push(() => clearInterval(t));
   }
 
   // ======================================================================
