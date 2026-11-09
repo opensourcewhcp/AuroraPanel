@@ -35,6 +35,7 @@ class PortConflict(RuntimeError):
 
     def __init__(self, msg: str, other: str, port: int, suggested: int):
         super().__init__(msg)
+        self.message = msg
         self.other, self.port, self.suggested = other, port, suggested
 
     def payload(self) -> dict:

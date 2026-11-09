@@ -134,8 +134,10 @@ def _settings_from_conf(path: Path) -> dict:
 
 def _conf_for(name: str) -> Path | None:
     # System sites are addressed by conf file: 000-default and default-ssl often share one ServerName.
-    if name in SYSTEM_CONFS and (AVAIL / name).is_file():
-        return AVAIL / name
+    # The path is built from the constant, never from the request string.
+    for known in SYSTEM_CONFS:
+        if known == name and (AVAIL / known).is_file():
+            return AVAIL / known
     name = name.lower()
     for f in sorted(AVAIL.glob("*.conf")):
         try:

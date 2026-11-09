@@ -2761,7 +2761,7 @@ def _web_tool_install(fn, body):
     try:
         return {"job": fn(bool(body and body.switch), body.port if body else None).id}
     except apacheport.PortConflict as exc:
-        return JSONResponse(status_code=409, content={"detail": str(exc), "conflict": exc.payload()})
+        return JSONResponse(status_code=409, content={"detail": exc.message, "conflict": exc.payload()})
     except apacheport.PortError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
