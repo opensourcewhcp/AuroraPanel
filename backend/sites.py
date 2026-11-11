@@ -986,15 +986,22 @@ def _docroot_deletable(name: str, docroot: str) -> Path:
     top-level folder, not the web root, not a home folder, and not shared with (or holding) another site."""
     if not docroot or not Path(docroot).is_absolute():
         raise SiteError("This site has no document root to delete")
+    def shared_root(q: Path) -> bool:
+        return len(q.parts) <= 3 or q in (Path("/var/www/html"), Path("/var/www"))
+
     p = Path(docroot).resolve()
-    if len(p.parts) <= 3 or p in (Path("/var/www/html"), Path("/var/www")):
+    if shared_root(p):
         raise SiteError(f"{p} is a system folder, not deleting it")
     for s in list_sites().get("sites", []):
         if (s["server_name"] or "").lower() == name.lower() or not s.get("docroot"):
             continue
         o = Path(s["docroot"]).resolve()
-        if o == p or p in o.parents or o in p.parents:
+        if o == p or p in o.parents:
             raise SiteError(f"{p} is also used by {s['server_name']}, not deleting it")
+        # Another site served from a folder above ours: that only matters when it's that site's own
+        # folder. The default site's /var/www/html holds every site's folder, so it blocks nothing.
+        if o in p.parents and not shared_root(o):
+            raise SiteError(f"{p} is inside {s['server_name']}'s folder {o}, not deleting it")
     try:
         import pwd
         if any(p == Path(u.pw_dir) or p in Path(u.pw_dir).parents for u in pwd.getpwall() if u.pw_dir.startswith("/home/")):

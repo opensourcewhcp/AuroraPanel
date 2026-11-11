@@ -38,6 +38,28 @@ def test_folder_holding_another_site_is_refused(monkeypatch, tmp_path):
         sites._docroot_deletable("a.example.com", str(root))
 
 
+def test_folder_under_the_default_web_root_may_be_deleted(monkeypatch, tmp_path):
+    """000-default serves /var/www/html, which holds every site's folder: it must not block deleting one."""
+    from pathlib import PurePosixPath
+
+    class P(PurePosixPath):  # Linux paths on any platform, nothing to resolve
+        def resolve(self):
+            return self
+    monkeypatch.setattr(sites, "Path", P)
+    root = P("/var/www/html/a.example.com")
+    _sites(monkeypatch, ("a.example.com", str(root)), ("192.168.0.100", "/var/www/html"), ("x", "/var/www"))
+    assert sites._docroot_deletable("a.example.com", str(root)) == root
+
+
+def test_folder_inside_another_sites_own_folder_is_refused(monkeypatch, tmp_path):
+    parent = tmp_path / "www" / "b.example.com"
+    root = parent / "sub"
+    root.mkdir(parents=True)
+    _sites(monkeypatch, ("a.example.com", str(root)), ("b.example.com", str(parent)))
+    with pytest.raises(sites.SiteError, match="b.example.com"):
+        sites._docroot_deletable("a.example.com", str(root))
+
+
 def test_plain_remove_needs_no_job(monkeypatch, tmp_path):
     conf = tmp_path / "a.conf"
     conf.write_text("")

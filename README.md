@@ -5,7 +5,7 @@ Websites, email, VPN, backups, security and monitoring, all from one browser tab
 Free, open source, MIT licensed.</p>
 
 <p align="center">
-  <a href="https://github.com/opensourcewhcp/AuroraPanel/releases"><img alt="Version 1.2.10" src="https://img.shields.io/badge/version-1.2.10-ff7a1a"></a>
+  <a href="https://github.com/opensourcewhcp/AuroraPanel/releases"><img alt="Version 1.2.11" src="https://img.shields.io/badge/version-1.2.11-ff7a1a"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-green"></a>
   <img alt="Python 3.15" src="https://img.shields.io/badge/python-3.15-blue">
   <img alt="Runs on Raspberry Pi" src="https://img.shields.io/badge/runs%20on-Raspberry%20Pi-c51a4a">
