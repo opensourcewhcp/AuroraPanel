@@ -1,12 +1,17 @@
 """InstaBan: a list of payloads, paths and pages that only attackers ask for. The first request that
 matches one gets its address banned at the firewall for a time you choose, the hit is kept as evidence
 (what was tried, from where, against which site), and the address can be reported to its abuse desk.
+With the WAF blocking, that request is refused as well: the list is handed to the WAF (waf.py), because a
+log line only exists once the request has been answered.
 
 Sources: every Apache access log on this server, read as soon as one grows (checked once a second) by a
 small thread inside the panel. Trusted addresses (IP Blocker & Trust) are never banned, nor is loopback.
 
-The WAF's mode decides what InstaBan may do: Blocking bans and reports, Detect only records what it would
-have done, Off stops it. With no WAF installed it simply follows its own switch.
+Who decides what: while the firewall (the WAF) is on, the logs are always read, so list hits, port knocks
+and other behaviour are always seen and kept. The Auto-ban switch ("enabled") decides whether the address
+is then banned, and it only bans while the firewall is Blocking; in Detect only a hit is recorded as would
+have been banned. Firewall Off stops the watching. Without a WAF installed the switch alone decides.
+Reporting a banned address to its abuse desk is an option of its own. With no WAF installed it simply follows its own switch.
 
 Everything stored here is attacker-controlled text (payloads, request lines, user agents). The API
 hands it to the panel as plain JSON and the page shows it with textContent only, so a payload can be
@@ -29,8 +34,8 @@ from . import problems
 STATE = Path("/var/lib/aurora/instaban.json")
 LOG_DIR = Path("/var/log/apache2")
 MAX_READ = 4 * 1024 * 1024
-MAX_HITS = 500
-TTL_CHOICES = {"1h": 3600, "6h": 6 * 3600, "24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400, "forever": 0}
+MAX_HITS = 5000          # the page shows them 100 to 5000 at a time
+TTL_CHOICES = {"1h": 3600, "6h": 6 * 3600, "24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400, "90d": 90 * 86400, "365d": 365 * 86400, "forever": 0}
 KINDS = ("contains", "starts", "regex", "ua", "ip")   # path contains / starts with / regex, user agent contains, address or range
 # Behaviour watched per address, on top of the pattern list (counts within a sliding window, in seconds).
 DEFAULT_BEHAVIOR = {
@@ -44,6 +49,12 @@ _OFFSETS: dict = {}      # how far each log has been read, newer than the state 
 _last_save = 0.0
 _WOULD: dict[str, float] = {}   # Detect only: when an address last got a behaviour hit, nobody cuts it off so it would repeat on every line
 WOULD_BAN = "Detect only: would have been banned"
+NOT_BANNING = "Auto-ban is off: recorded, not banned"
+
+
+def _watching(s: dict, mode: str | None) -> bool:
+    """Are the logs being read? With a firewall: whenever it is on. Without one: when Auto-ban is on."""
+    return bool(s["enabled"]) if mode is None else mode != "off"
 
 
 def _waf_mode() -> str | None:
@@ -56,6 +67,17 @@ def _waf_mode() -> str | None:
     except Exception as quiet_exc:
         problems.quiet(quiet_exc)
         return None
+
+
+def _sync_waf() -> None:
+    """The WAF refuses what is on this list before it is served (the log only shows a request once it has
+    been answered). Hand it the list whenever the list or the switch changes."""
+    try:
+        from . import waf
+        if waf.installed() and waf.module_on():
+            waf.apply()
+    except Exception as exc:  # noqa: BLE001
+        problems.record("InstaBan and the WAF", exc, hint="The WAF kept its previous copy of InstaBan's list. Open Security → InstaWAFF and save any setting to try again.")
 
 
 class InstaBanError(Exception):
@@ -101,6 +123,12 @@ def load() -> dict:
         now = int(time.time())
         s["patterns"] += [{"id": _pid(), "pattern": p, "kind": "ua", "note": n, "added": now, "hits": 0} for p, n in DEFAULT_UA]
         s["seeded_ua"] = True
+    if not s.get("report_optional"):
+        # Reporting used to be forced on while the WAF was Blocking. It is a switch now: an install that was
+        # reporting that way keeps doing so until its owner turns the switch off.
+        s["report_optional"] = True
+        if _waf_mode() == "block":
+            s["report"] = True
     b = json.loads(json.dumps(DEFAULT_BEHAVIOR))
     for k, v in (s.get("behavior") or {}).items():
         if k in b and isinstance(v, dict):
@@ -168,6 +196,7 @@ def add_pattern(pattern: str, kind: str = "contains", note: str = "") -> dict:
         entry = {"id": _pid(), "pattern": p, "kind": kind, "note": (note or "").strip()[:120], "added": int(time.time()), "hits": 0}
         s["patterns"].append(entry)
         save(s)
+    _sync_waf()
     return entry
 
 
@@ -201,6 +230,8 @@ def import_patterns(text: str, kind: str = "contains") -> dict:
             s["patterns"].append({"id": _pid(), "pattern": p, "kind": k, "note": note[:120], "added": int(time.time()), "hits": 0})
             added += 1
         save(s)
+    if added:
+        _sync_waf()
     return {"added": added, "skipped": skipped[:20], "total": len(s["patterns"])}
 
 
@@ -212,6 +243,7 @@ def delete_pattern(pid: str) -> dict:
         if len(s["patterns"]) == before:
             raise InstaBanError("No such pattern")
         save(s)
+    _sync_waf()
     return {"ok": True, "total": len(s["patterns"])}
 
 
@@ -239,7 +271,11 @@ def set_settings(enabled: bool | None = None, ttl: str | None = None, report: bo
         if enabled and (not was_on or not s["files"]):
             _OFFSETS.clear()
             _mark_log_ends(s)   # switching on: only requests from now on count, not months of old logs
+            s["watching"] = True
         save(s)
+        switched = s["enabled"] != was_on
+    if switched:
+        _sync_waf()
     return settings()
 
 
@@ -247,7 +283,7 @@ def settings() -> dict:
     s = load()
     return {"enabled": s["enabled"], "ttl": s["ttl"], "ttl_seconds": TTL_CHOICES.get(s["ttl"], 86400), "report": s["report"],
             "ttl_choices": list(TTL_CHOICES), "stats": s["stats"], "last_scan": s["last_scan"], "pattern_count": len(s["patterns"]),
-            "behavior": s["behavior"], "ports_source": _ports_source(), "waf_mode": _waf_mode()}
+            "behavior": s["behavior"], "ports_source": _ports_source(), "waf_mode": _waf_mode(), "watching": _watching(s, _waf_mode())}
 
 
 def _ports_source() -> bool:
@@ -284,7 +320,7 @@ def set_behavior(data: dict) -> dict:
 
 def overview() -> dict:
     s = load()
-    hits = list(reversed(s["hits"][-200:]))
+    hits = list(reversed(s["hits"]))   # all that are kept (MAX_HITS), so the page's search covers every one
     try:
         from . import abuse
         reported = set(abuse.reported().get("reported", {}).keys()) if hasattr(abuse, "reported") else set()
@@ -393,6 +429,13 @@ def _skip_ip(ip: str) -> bool:
         return True
     if a.is_loopback or a.is_unspecified:
         return True
+    try:   # this server asking its own sites for something is not an attacker; nor is anyone on the firewall's own trusted list
+        from . import waf
+        st = waf.load()
+        if any(a in ipaddress.ip_network(own, strict=False) for own in [*waf.server_ips(st), *(st.get("trusted") or [])]):
+            return True
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
     return guard.is_trusted(ip)
 
 
@@ -495,24 +538,24 @@ def scan(now: int | None = None) -> dict:
     now = now or int(time.time())
     with _LOCK:
         s = load()
-        if not s["enabled"]:
+        mode = _waf_mode()
+        if not _watching(s, mode):   # stopped: nothing is read, and turning it back on starts from that moment
             _OFFSETS.clear()
+            _SEEN.clear()
+            s["watching"] = False
             s["last_scan"] = now
             save(s)
             return {"scanned": 0, "hits": 0, "bans": 0}
-        s["files"].update(_OFFSETS)
-        mode = _waf_mode()
-        if mode == "off":   # stopped: nothing is read, and turning it back on starts from that moment
+        started = not s.get("watching")
+        if started:                  # just started: only what happens from now on counts, not months of old logs
+            _OFFSETS.clear()
             _mark_log_ends(s)
-            _OFFSETS.update(s["files"])
-            _SEEN.clear()
-            s["last_scan"] = now
-            if time.monotonic() - _last_save >= SAVE_EVERY:
-                save(s)
-                _last_save = time.monotonic()
-            return {"scanned": 0, "hits": 0, "bans": 0}
-        acting = mode != "detect"
-        report = s["report"] or mode == "block"
+            s["watching"] = True
+            s["ports_seen_ts"] = now
+        s["files"].update(_OFFSETS)
+        acting = bool(s["enabled"]) and mode != "detect"
+        idle = WOULD_BAN if s["enabled"] else NOT_BANNING   # why a hit was only recorded
+        report = bool(s["report"])   # the owner's switch, whatever the WAF's mode
         to_report: list[tuple[str, str]] = []
         compiled = _compiled(s["patterns"])
         scanned = hits = bans = 0
@@ -535,6 +578,7 @@ def scan(now: int | None = None) -> dict:
                         why = f"{b['errors']['count']} error answers within {b['errors']['window']} s"
                     if not why:
                         continue
+                    _SEEN.pop(rec["ip"], None)   # counted once: the next hit, or a ban after an unban, needs fresh evidence
                     if not acting:
                         if now - _WOULD.get(rec["ip"], 0) < 60:
                             continue
@@ -549,7 +593,7 @@ def scan(now: int | None = None) -> dict:
                 if _skip_ip(rec["ip"]):
                     hit["error"] = "trusted or local address, not banned"
                 elif not acting:
-                    hit["error"] = WOULD_BAN
+                    hit["error"] = idle
                 elif rec["ip"] in banned_now:
                     hit["banned"] = True
                 else:
@@ -570,6 +614,7 @@ def scan(now: int | None = None) -> dict:
                         continue
                     _WOULD[ev["src"]] = now
                 ports = sorted({x[1] for x in _SEEN.get(ev["src"], {}).get("ports", [])})
+                _SEEN.pop(ev["src"], None)   # counted once: an address that is unbanned isn't banned again for the same scan
                 shown = ", ".join(str(x) for x in ports[:12]) + ("..." if len(ports) > 12 else "")
                 hit = {"ts": now, "ip": ev["src"], "host": "", "method": "", "target": f"ports {shown}", "status": 0, "ua": "",
                        "pattern": f"{pb['count']} ports within {pb['window']} s", "pattern_id": "", "kind": "ports",
@@ -579,11 +624,11 @@ def scan(now: int | None = None) -> dict:
                 if _skip_ip(ev["src"]):
                     hit["error"] = "trusted or local address, not banned"
                 elif not acting:
-                    hit["error"] = WOULD_BAN
+                    hit["error"] = idle
                 else:
                     if _ban(s, hit, ev["src"], f"InstaBan: {hit['pattern']}"):
                         bans += 1
-                        if mode == "block":
+                        if report:
                             to_report.append((ev["src"], f"InstaBan: {hit['pattern']} ({hit['target'][:120]})"))
                     banned_now.add(ev["src"])
                 s["hits"].append(hit)
@@ -593,7 +638,7 @@ def scan(now: int | None = None) -> dict:
         s["hits"] = s["hits"][-MAX_HITS:]
         s["last_scan"] = now
         _OFFSETS.update(s["files"])
-        if hits or time.monotonic() - _last_save >= SAVE_EVERY:   # anything caught is written at once, so a restart can't report it twice
+        if hits or started or time.monotonic() - _last_save >= SAVE_EVERY:   # anything caught is written at once, so a restart can't report it twice
             save(s)
             _last_save = time.monotonic()
     if to_report:
@@ -643,9 +688,12 @@ def _tick(seen: dict, interval: int) -> bool:
     if sig == seen.get("sig") and at - seen.get("at", 0.0) < interval:
         return False
     seen.update(sig=sig, at=at)
-    if load()["enabled"]:
+    s = load()
+    if _watching(s, _waf_mode()):
         scan()
         return True
+    if s.get("watching"):   # it just stopped: one pass to note that, so the next start begins from that moment
+        scan()
     return False
 
 

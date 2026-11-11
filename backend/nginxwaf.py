@@ -81,7 +81,7 @@ def render_main(setup: str, rules: list[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _files(m: str) -> dict:
+def _files(m: str, regex: bool = True) -> dict:
     """Every file for this mode. Off still leaves the rules out of Nginx altogether, so it costs nothing."""
     if m == "off":
         return {HOOK: None}
@@ -89,21 +89,35 @@ def _files(m: str) -> dict:
     if not module_installed() or not crs:
         raise NginxWafError("The WAF for Nginx isn't installed yet")
     s = waf.load()
-    return {PRE: waf.render_pre({**s, "mode": m}), POST: render_post(s), MAIN: render_main(*crs),
+    ib = waf.instaban_lists()   # InstaBan's list is refused here too, before anything is served
+    return {**waf.instaban_files(ib), PRE: waf.render_pre({**s, "mode": m}, ib, regex), POST: render_post(s), MAIN: render_main(*crs),
             HOOK: f"{HEADER}modsecurity on;\nmodsecurity_rules_file {MAIN.as_posix()};\n"}
+
+
+def _put(m: str) -> None:
+    """Write, check, reload. A regular expression from InstaBan that Nginx refuses is left out, not the whole WAF."""
+    files = _files(m)
+    if m != "off":
+        waf.IB_PATHS.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        nginxsites._apply(files)
+    except nginxsites.NginxError:
+        if m == "off" or not waf.instaban_lists().get("regex"):
+            raise
+        nginxsites._apply(_files(m, regex=False))
 
 
 def set_mode(m: str) -> dict:
     if m not in MODES:
         raise NginxWafError("Mode must be block, detect or off")
     try:
-        files = _files(m)
+        _files(m)   # says so before anything is written when the module or the rules are missing
         DIR.mkdir(parents=True, exist_ok=True)
         off_list = Path("/etc/modsecurity/aurora-sites-off.txt")  # the WAF Firewall page's list of sites with it off
         if m != "off" and waf.load().get("sites_off") and not off_list.exists():
             off_list.parent.mkdir(parents=True, exist_ok=True)
             off_list.write_text("\n".join(waf.load()["sites_off"]) + "\n", encoding="utf-8")
-        nginxsites._apply(files)
+        _put(m)
     except nginxsites.NginxError as exc:
         raise NginxWafError(str(exc)) from exc
     STATE.parent.mkdir(parents=True, exist_ok=True)
@@ -115,10 +129,7 @@ def refresh() -> None:
     """The WAF Firewall page changed something: pass it on, if this WAF is on."""
     m = mode()
     if m != "off" and HOOK.exists():
-        try:
-            nginxsites._apply(_files(m))
-        except (nginxsites.NginxError, NginxWafError):
-            raise
+        _put(m)
     return None
 
 

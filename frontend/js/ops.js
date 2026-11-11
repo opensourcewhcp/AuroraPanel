@@ -1937,10 +1937,10 @@ window.AuroraOps = (ui) => {
     const TOOLS = [
       { view: "secreport", icon: "listing", title: "Security Report", desc: "Scan everything you own on this server, panel, websites, mail, score it like an outside scanner would, and get a fix list.",
         status: () => !S.rep ? null : (S.rep.last ? { text: `${S.rep.last.grade} · ${S.rep.last.score}/100 · ${ago(S.rep.last.ts)}`, tone: S.rep.last.score >= 90 ? "good" : S.rep.last.score >= 65 ? "warn" : "bad" } : warn("not run yet")) },
-      { view: "modsec", icon: "shield", title: "WAF Firewall", desc: "Blocks SQL injection, XSS and other web attacks (ModSecurity + OWASP CRS).", core: true,
-        status: () => !S.waf ? null : (S.waf.installed ? (S.waf.module_on && S.waf.enabled !== false ? on(S.waf.mode === "detect" ? "detect only" : "blocking") : off("installed, off")) : off("not installed")) },
-      { view: "instaban", icon: "trap", title: "InstaBan", desc: "Bans an address the moment it asks for a payload or path only attackers use, and keeps the evidence.",
-        status: () => !S.ib ? null : (S.ib.enabled ? on(`on · ${S.ib.stats.bans || 0} ban${S.ib.stats.bans === 1 ? "" : "s"}`) : off("off")) },
+      { view: "instawaff", icon: "shield", title: "InstaWAFF", desc: "Refuses SQL injection, XSS and scanners before they reach your sites, bans the address that asks for a path only attackers use, and keeps the evidence.", core: true,
+        status: () => !S.waf ? null : (S.waf.installed ? (S.waf.module_on && S.waf.enabled !== false
+          ? on(`${S.waf.mode === "detect" ? "detect only" : "blocking"}${S.ib && S.ib.enabled ? ` · ${S.ib.stats.bans || 0} ban${S.ib.stats.bans === 1 ? "" : "s"}` : " · ban list off"}`) : off("installed, off"))
+          : (S.ib && S.ib.enabled ? warn("ban list only, firewall not installed") : off("not installed"))) },
       { view: "leech", icon: "trap", title: "Fail2ban", desc: "Bans IPs that repeatedly fail to log in (SSH, panel, mail, FTP…).", core: true,
         status: () => !S.f2b ? null : (S.f2b.installed ? (S.f2b.active ? on(`active · ${num0((S.f2b.jails || []).filter((j) => j.live).length + (S.f2b.other_jails || []).length)} jails`) : warn("installed, stopped")) : off("not installed")) },
       { view: "ipblocker", icon: "ban", title: "IP Blocker & Trust", desc: "Ban or trust any address at the firewall; see where each ban came from.",

@@ -13,9 +13,9 @@ import urllib.error
 import urllib.request
 from . import problems
 
-VERSION = "1.2.11"
+VERSION = "1.2.12"
 LABEL = "v" + VERSION
-RELEASED = "2026-11-09"
+RELEASED = "2026-11-11"
 VERSION_URL = "https://aurora51.com/version.json"
 CHANGELOG_URL = "https://aurora51.com/changelog.json"
 SITE = "https://aurora51.com"

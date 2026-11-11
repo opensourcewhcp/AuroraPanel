@@ -8,6 +8,11 @@ The panel owns two small files and leaves the packages' own files alone:
         because they were false alarms ("Allow this rule").
 /etc/modsecurity/modsecurity.conf is created from the package's recommended file once, with
 JSON audit logging so the panel can show what was blocked and why.
+
+InstaBan's list is enforced here as well. InstaBan itself reads the access log, which Apache writes after
+it has answered, so on its own the first request for a listed path is served before the ban lands. The same
+list is part of the WAF's rules, so a firewall that is Blocking refuses the request before anything is
+served, whether or not the address is banned afterwards (that is the Auto-ban switch).
 """
 from __future__ import annotations
 
@@ -30,7 +35,7 @@ PRE = Path("/etc/modsecurity/zz-aurora-waf.conf")
 POST = Path("/etc/apache2/conf-available/zz-aurora-waf.conf")
 AUDIT = Path("/var/log/apache2/modsec_audit.log")
 CRS_LOAD = Path("/usr/share/modsecurity-crs/owasp-crs.load")
-HEADER = "# Written by AuroraPanel (Security → WAF Firewall). Edit there — changes here are overwritten.\n"
+HEADER = "# Written by AuroraPanel (Security → InstaWAFF). Edit there — changes here are overwritten.\n"
 PATH = distro.PATH
 APPS = {"wordpress": "WordPress", "nextcloud": "Nextcloud", "drupal": "Drupal", "dokuwiki": "DokuWiki",
         "phpmyadmin": "phpMyAdmin", "phpbb": "phpBB", "xenforo": "XenForo", "roundcube": "Webmail (Roundcube)"}
@@ -49,7 +54,13 @@ WEBMAIL_BODY_RULE = ('SecRule REQUEST_URI "@beginsWith /webmail/" '
                      '"id:1000104,phase:1,pass,nolog,t:none,ctl:requestBodyAccess=Off"')
 # Bump when the rules the panel renders change: an install that still has older rules in Apache rewrites
 # them once (at start, and when the WAF page is opened), so a shipped exception never stays on paper.
-RULES_REV = 7
+RULES_REV = 10
+# InstaBan's list as the WAF reads it: one entry per line (paths and payloads, user agents, addresses).
+IB_PATHS = PRE.with_name("aurora-instaban-paths.txt")
+IB_UA = PRE.with_name("aurora-instaban-agents.txt")
+IB_IPS = PRE.with_name("aurora-instaban-addresses.txt")
+IB_RX_CHUNK = 1500   # characters of pattern per "starts with" rule, so no config line grows without end
+IB_CATEGORY = "Ban list"
 # CRS bookkeeping rules: the score summary, not an attack type of their own.
 _SUMMARY = {"949110", "959100", "980130", "980140", "980145", "959180"}
 # Noise, not attacks: someone opened a site by its IP address (920350), which on its own never blocks.
@@ -70,7 +81,7 @@ def _run(argv, timeout=60, input=None):
 
 def _default() -> dict:
     return {"mode": "block", "paranoia": 1, "threshold": 5, "apps": ["wordpress", "nextcloud", "drupal", "dokuwiki", "phpmyadmin", "roundcube"],
-            "trusted": [], "sites_off": [], "disabled_rules": {}, "seen": [], "rules_rev": 0}
+            "trusted": [], "sites_off": [], "disabled_rules": {}, "seen": [], "rules_rev": 0, "server_ips": []}
 
 
 def load() -> dict:
@@ -122,7 +133,114 @@ def _panel_trusted() -> list[str]:
         return []
 
 
-def render_pre(s: dict) -> str:
+def instaban_lists() -> dict:
+    """InstaBan's list by kind: the firewall enforces it whenever it is on, with or without automatic bans.
+    Read once per apply, so the rules and the list files they point at always describe the same list."""
+    try:
+        from . import instaban
+        ib = instaban.load()
+    except Exception as quiet_exc:
+        problems.quiet(quiet_exc)
+        return {}
+    out: dict[str, list[str]] = {}
+    for p in ib.get("patterns", []):
+        text = str(p.get("pattern", ""))
+        if text and not any(ord(c) < 32 for c in text):
+            out.setdefault(str(p.get("kind")), []).append(text)
+    return out
+
+
+def instaban_files(ib: dict) -> dict:
+    """The list files the rules read. A line that starts with # would be a comment there, so such a pattern is
+    left to InstaBan's own log reading."""
+    addresses = []
+    for v in ib.get("ip", []):
+        try:
+            addresses += _clean_ips([v])
+        except WafError:
+            continue
+    lines = lambda vals: "".join(f"{v}\n" for v in vals if not v.startswith("#"))
+    return {IB_PATHS: lines(ib.get("contains", [])), IB_UA: lines(ib.get("ua", [])), IB_IPS: lines(addresses)}
+
+
+_BACKSLASH = chr(92)
+_RX_CODES = {_BACKSLASH: r"\x5c", '"': r"\x22", "%": r"\x25"}
+
+
+def _rx_literal(text: str) -> str:
+    """Plain text as a regular expression with nothing in it that a config file could misread."""
+    return "".join(c if c.isascii() and (c.isalnum() or c in "/_-") else "".join(rf"\x{b:02x}" for b in c.encode()) for c in text)
+
+
+def _rx_portable(rx: str) -> str:
+    """Someone's own regular expression, safe inside a quoted rule. Apache and Nginx each read an escaped
+    backslash and an escaped quote their own way, and ModSecurity expands %{...}, so a literal backslash, a
+    quote and a percent sign are written as character codes."""
+    out, i = [], 0
+    while i < len(rx):
+        c = rx[i]
+        if c == _BACKSLASH and i + 1 < len(rx):
+            out.append(_RX_CODES.get(rx[i + 1], c + rx[i + 1]))
+            i += 2
+            continue
+        out.append(c if c == _BACKSLASH else _RX_CODES.get(c, c))
+        i += 1
+    return "".join(out)
+
+
+def _instaban_rules(ib: dict, regex: bool = True) -> list[str]:
+    """Refuse what is on InstaBan's list before it is served. Phase 1, so it comes ahead of redirects and of
+    the file itself; Detect only logs it, like every other rule. Matching follows InstaBan: the address as
+    sent and URL-decoded twice, lower-cased."""
+    files = instaban_files(ib)
+    act = lambda rid, what, t: (f'"id:{rid},phase:1,deny,status:403,log,auditlog,{t},'
+                                f"msg:'InstaBan: {what}',severity:'CRITICAL',tag:'aurora-instaban'\"")
+    decoded = "t:none,t:urlDecodeUni,t:urlDecodeUni"
+    out = []
+    if files[IB_IPS]:
+        out.append(f'SecRule REMOTE_ADDR "@ipMatchFromFile {IB_IPS.as_posix()}" ' + act(1000110, "address on the list", "t:none"))
+    if files[IB_UA]:
+        out.append(f'SecRule REQUEST_HEADERS:User-Agent "@pmFromFile {IB_UA.as_posix()}" ' + act(1000111, "scanner user agent", "t:none,t:lowercase"))
+    if files[IB_PATHS]:
+        out.append(f'SecRule REQUEST_URI "@pmFromFile {IB_PATHS.as_posix()}" ' + act(1000112, "path or payload on the list", "t:none,t:lowercase"))
+        out.append(f'SecRule REQUEST_URI "@pmFromFile {IB_PATHS.as_posix()}" ' + act(1000113, "path or payload on the list", decoded + ",t:lowercase"))
+    starts = [_rx_literal(v) for v in ib.get("starts", [])]
+    chunk, size, rid = [], 0, 1001000
+    for n, v in enumerate(starts):
+        chunk.append(v)
+        size += len(v)
+        if size >= IB_RX_CHUNK or n == len(starts) - 1:
+            out.append(f'SecRule REQUEST_URI "@rx ^(?:{"|".join(chunk)})" ' + act(rid, "path on the list", decoded + ",t:lowercase"))
+            chunk, size, rid = [], 0, rid + 1
+    if regex:
+        for n, v in enumerate(ib.get("regex", [])):
+            out.append(f'SecRule REQUEST_URI "@rx (?i){_rx_portable(v)}" ' + act(1002000 + n, "pattern on the list", decoded))
+    return out
+
+
+_OWN = {"at": 0.0, "ip": None}
+
+
+def server_ips(s: dict | None = None) -> list[str]:
+    """This server's own addresses: a site that calls itself (WordPress cron, a health check, a webhook to its
+    own name) must never be refused or banned. Remembered in the settings, so the exception holds when the
+    address can't be read for a moment (network restarting); replaced when the server gets another address."""
+    known = list((s or {}).get("server_ips") or [])
+    if time.monotonic() - _OWN["at"] > 60 or not _OWN["at"]:   # asked for every hit InstaBan looks at: look it up once a minute
+        try:
+            from . import guard
+            _OWN.update(at=time.monotonic(), ip=guard.default_route().get("ip"))
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
+            _OWN.update(at=time.monotonic(), ip=None)
+    now = _OWN["ip"]
+    try:
+        return _clean_ips([now]) if now else _clean_ips(known)
+    except WafError:
+        return []
+
+
+def render_pre(s: dict, ib: dict | None = None, regex: bool = True) -> str:
     engine = {"block": "On", "detect": "DetectionOnly", "off": "Off"}[s["mode"]]
     out = [HEADER, f"SecRuleEngine {engine}", ""]
     # CRS settings (ids 900000–900999 are reserved for the admin's setup).
@@ -134,12 +252,14 @@ def render_pre(s: dict) -> str:
         out.append('SecAction "id:900130,phase:1,nolog,pass,t:none,' + ",".join(f"setvar:tx.crs_exclusions_{a}=1" for a in apps) + '"')
     out.append(ROUNDCUBE_RULE if "roundcube" in s["apps"] else WEBMAIL_BODY_RULE)
     # Single addresses go in bare: ModSecurity refuses "a.b.c.d/32" in an @ipMatch list.
-    trusted = sorted(set(s["trusted"]) | set(_clean_ips(_panel_trusted())))
+    trusted = sorted(set(s["trusted"]) | set(_clean_ips(_panel_trusted())) | set(server_ips(s)))
     if trusted:
         out.append(f'SecRule REMOTE_ADDR "@ipMatch {",".join(trusted)}" "id:1000101,phase:1,pass,nolog,ctl:ruleEngine=Off"')
     if s["sites_off"]:
         out.append(f'SecRule REQUEST_HEADERS:Host "@pmFromFile /etc/modsecurity/aurora-sites-off.txt" '
                    f'"id:1000102,phase:1,pass,nolog,t:lowercase,ctl:ruleEngine=Off"')
+    # Last, so trusted addresses, sites with the WAF off and webmail's watch-only rule have had their say.
+    out += _instaban_rules(instaban_lists() if ib is None else ib, regex)
     return "\n".join(out) + "\n"
 
 
@@ -158,7 +278,7 @@ def _ensure_main() -> None:
     text = re.sub(r"(?m)^SecRuleEngine .*$", "# SecRuleEngine is set by the panel in zz-aurora-waf.conf", text)
     text = re.sub(r"(?m)^SecAuditLogParts .*$", "SecAuditLogParts ABFHZ", text)
     if "SecAuditLogFormat" not in text:
-        text += "\n# AuroraPanel: one JSON line per event, read by Security → WAF Firewall\nSecAuditLogFormat JSON\n"
+        text += "\n# AuroraPanel: one JSON line per event, read by Security → InstaWAFF\nSecAuditLogFormat JSON\n"
     text = re.sub(r"(?m)^SecAuditEngine .*$", "SecAuditEngine RelevantOnly", text)
     # Requests are what attacks arrive in. Scanning every page the server sends back costs CPU on a Pi and would
     # copy response bodies (someone's webmail, say) into the audit log.
@@ -179,21 +299,34 @@ def apply(s: dict | None = None) -> dict:
     s = s or load()
     if not installed():
         raise WafError("The WAF isn't installed yet")
+    s["server_ips"] = server_ips(s)   # remembered with the settings
     _ensure_main()
     Path("/etc/modsecurity/aurora-sites-off.txt").write_text("\n".join(s["sites_off"]) + "\n")
-    old = {p: p.read_text() if p.exists() else None for p in (PRE, POST)}
-    PRE.write_text(render_pre(s))
-    POST.write_text(render_post(s))
+    ib = instaban_lists()
+    lists = instaban_files(ib)
+    old = {p: p.read_text(encoding="utf-8") if p.exists() else None for p in (PRE, POST, *lists)}
+    for p, text in lists.items():
+        p.write_text(text, encoding="utf-8")
+    PRE.write_text(render_pre(s, ib), encoding="utf-8")
+    POST.write_text(render_post(s), encoding="utf-8")
     _run(["a2enmod", "-q", "security2"])
     _run(["a2enmod", "-q", "unique_id"])
     _run(["a2enconf", "-q", "zz-aurora-waf"])
     t = _run(["apache2ctl", "configtest"])
+    if t.returncode != 0 and ib.get("regex"):
+        # A regular expression Python accepts and Apache doesn't must not take the rest of the WAF down with it.
+        refused = t.stderr.strip()[-300:]
+        PRE.write_text(render_pre(s, ib, regex=False), encoding="utf-8")
+        t = _run(["apache2ctl", "configtest"])
+        if t.returncode == 0:
+            problems.record("WAF and InstaBan", "Apache refused one of InstaBan's regular expressions:\n" + refused,
+                            hint="The rest of the list is enforced by the WAF. InstaBan still bans on these patterns from the access log.")
     if t.returncode != 0:
         for p, txt in old.items():
             if txt is None:
                 p.unlink(missing_ok=True)
             else:
-                p.write_text(txt)
+                p.write_text(txt, encoding="utf-8")
         raise WafError("Apache rejected the WAF settings, nothing changed:\n" + t.stderr.strip()[-500:])
     _run(["systemctl", "reload", "apache2"])
     _save(s)
@@ -222,7 +355,7 @@ def refresh_rules() -> bool:
         apply(s)
     except Exception as exc:
         # Apache kept the old rules: say so where the owner looks, instead of pretending it worked.
-        problems.record("WAF rules", exc, hint="Open Security → WAF Firewall and press Apply to see Apache's answer.")
+        problems.record("WAF rules", exc, hint="Open Security → InstaWAFF and press Apply to see Apache's answer.")
         return False
     s["rules_rev"] = RULES_REV
     try:
@@ -248,6 +381,7 @@ def status() -> dict:
         by_type[m["category"]] = by_type.get(m["category"], 0) + 1
         by_ip[e["ip"]] = by_ip.get(e["ip"], 0) + 1
     return {"installed": installed(), "module_on": module_on(), "crs_version": crs_ver, **s, "apps_all": APPS,
+            "server_ips": server_ips(s), "panel_trusted": _panel_trusted(),
             "stats": {"events": len(ev), "blocked": blocked, "detected": len(ev) - blocked,
                       "types": sorted(by_type.items(), key=lambda x: -x[1])[:6],
                       "ips": sorted(by_ip.items(), key=lambda x: -x[1])[:6]}}
@@ -273,12 +407,12 @@ def _clean_ips(vals) -> list[str]:
 
 
 def _arm_instaban() -> None:
-    """Blocking means bans and reports too. Its own page can still turn InstaBan off afterwards."""
+    """Blocking means bans too. Reporting stays as its switch says, and the ban list can still be turned off."""
     try:
         from . import instaban
-        instaban.set_settings(enabled=True, report=True)
+        instaban.set_settings(enabled=True)
     except Exception as exc:  # noqa: BLE001
-        problems.record("WAF Blocking → InstaBan", exc, hint="The WAF is blocking, but InstaBan didn't switch on. Open Security → InstaBan and turn it on.")
+        problems.record("WAF Blocking → InstaBan", exc, hint="The WAF is blocking, but InstaBan didn't switch on. Open Security → InstaWAFF and turn the ban list on.")
 
 
 def update(data: dict) -> dict:
@@ -315,6 +449,8 @@ def allow_rule(rule_id: str, msg: str = "") -> dict:
     s = load()
     if not re.match(r"^\d{3,7}$", str(rule_id)):
         raise WafError("Unknown rule")
+    if _category(str(rule_id)) == IB_CATEGORY:
+        raise WafError("That's InstaBan's list. Remove the pattern under Security → InstaWAFF, Detection, instead")
     if str(rule_id) in _SUMMARY:
         raise WafError("That's the score summary, not a single rule — allow the rule that added the points")
     clean = re.sub(r"[^\x20-\x7e]", " ", msg or "")[:200]  # one printable line: it ends up in an Apache config comment
@@ -333,7 +469,7 @@ _CATS = [("941", "XSS (cross-site scripting)"), ("942", "SQL injection"), ("930"
          ("931", "Remote file inclusion"), ("932", "Command injection"), ("933", "PHP injection"), ("934", "Code injection"),
          ("944", "Java attack"), ("943", "Session fixation"), ("920", "Malformed request"), ("921", "HTTP smuggling"),
          ("913", "Scanner / bot"), ("911", "Disallowed method"), ("950", "Data leak"), ("951", "SQL error leak"),
-         ("952", "Source code leak"), ("953", "PHP leak"), ("954", "Server error leak")]
+         ("952", "Source code leak"), ("953", "PHP leak"), ("954", "Server error leak"), ("100", IB_CATEGORY)]
 
 
 def _category(rule_id: str) -> str:
@@ -388,8 +524,10 @@ def events(hours: int = 24, limit: int = 300, ip: str = "") -> list[dict]:
 
 
 def _ts(s: str) -> float:
-    # "24/Oct/2026:12:34:56.123456 +0300"
+    # "24/Oct/2026:12:34:56.123456 +0300". West of Greenwich ModSecurity 2 writes the sign twice ("--0800"),
+    # which no parser accepts: without this every event lost its time, and with it the 1 h / 24 h / 7 day periods.
     from datetime import datetime
+    s = re.sub(r" ([+-])[+-](\d{4})$", r" \g<1>\g<2>", s or "")
     for fmt in ("%d/%b/%Y:%H:%M:%S.%f %z", "%d/%b/%Y:%H:%M:%S %z"):
         try:
             return datetime.strptime(s, fmt).timestamp()
@@ -419,12 +557,22 @@ def test() -> dict:
             err = str(e)
     if code is None:
         raise WafError(f"Couldn't reach Apache on this server ({err})")
-    mode = load()["mode"]
+    s = load()
+    mode = s["mode"]
     blocked = code == 403
+    # The test comes from this server itself. If loopback was made a trusted address, the firewall lets it through.
+    exempt = False
+    for net in list(s["trusted"]) + _panel_trusted():
+        try:
+            exempt = exempt or ipaddress.ip_address("127.0.0.1") in ipaddress.ip_network(net, strict=False)
+        except ValueError:
+            continue
     if mode == "block":
-        verdict = "Blocked — the WAF stopped the fake XSS attack." if blocked else f"Not blocked (HTTP {code}) — check that the WAF module is on."
+        verdict = ("Blocked: the firewall stopped the fake XSS attack." if blocked
+                   else f"Let through (HTTP {code}) because 127.0.0.1 is a trusted address, and this test comes from the server itself. Remove 127.0.0.1 under IP Blocker & Trust, then test again." if exempt
+                   else f"Not blocked (HTTP {code}): check that the firewall module is on.")
     elif mode == "detect":
-        verdict = f"Logged but let through (detect-only mode, HTTP {code}) — see the event below."
+        verdict = f"Logged but let through (Detect only, HTTP {code}): see it under Attacks."
     else:
-        verdict = f"The WAF is off (HTTP {code})."
+        verdict = f"The firewall is off (HTTP {code})."
     return {"status": code, "blocked": blocked, "mode": mode, "verdict": verdict}

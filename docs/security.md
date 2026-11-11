@@ -1,15 +1,27 @@
 # Security
 
-## WAF Firewall
+## InstaWAFF
 
-**Security → WAF Firewall** runs ModSecurity with the OWASP Core Rule Set in front of every website.
+**Security → InstaWAFF** is the web application firewall and the ban list on one page. ModSecurity with
+the OWASP Core Rule Set inspects every request; the ban list names paths, payloads, scanner user agents
+and addresses that no real visitor uses.
 
-- **Blocking** or **detect only** (log, don't block) mode, and the rule level (paranoia).
-- Ready-made exclusions for WordPress, Nextcloud, Drupal, DokuWiki, phpMyAdmin, phpBB and XenForo
-  to avoid false alarms.
-- Trusted IPs that are never blocked; a per-site off switch.
-- **Recent attacks** shows what was blocked; **Allow this rule** fixes a false alarm in one click,
-  **Ban** blocks the attacker.
+- **Blocking**, **Detect only** (log, don't block) or **Off**, and a switch for the ban list.
+- In Blocking mode a request for something on the ban list is refused before the file is served, and
+  the address is banned at the firewall right after. Detect only logs it and lets it through.
+- **Overview** shows the numbers: attacks, refused, logged, bans, hits and reports, a chart over time,
+  what was tried, who is attacking and which sites they went for. Three panels split it by what caught
+  the address: **Application firewall**, **Knocks** (port scans) and **Other** (guessing paths, hammering).
+- **Attacks** and **Bans** list every event. Search by address or any text (a path, a site, a rule, a
+  user agent), show 100, 300, 500, 1000, 5000 or any number per page, and from each row **Investigate**
+  the address (the IP card), **Ban** or **Unban** it, or **Report** it to its abuse desk.
+- **Detection** holds the ban list (add, import, export, delete), the ban length, automatic reports and
+  the thresholds for knocks and other behaviour.
+- **Exceptions**: addresses that are always let through (this server's own address is remembered and
+  always among them, as are the addresses trusted under IP Blocker & Trust), apps the rules know
+  (WordPress, Nextcloud, Drupal, DokuWiki, phpMyAdmin, phpBB, XenForo, webmail), a switch per website,
+  and the rules you switched off as false alarms.
+- **Rule level** sets how strict the rules are (paranoia) and the score at which a request is blocked.
 
 ## IP Blocker, Trust and the IP card
 

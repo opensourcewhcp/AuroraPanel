@@ -35,6 +35,7 @@ def box(tmp_path, monkeypatch):
     monkeypatch.setattr(W, "find_crs", lambda: (str(setup), [str(tmp_path / "rules" / "REQUEST-901.conf")]))
     monkeypatch.setattr(waf, "load", lambda: {"mode": "block", "paranoia": 2, "threshold": 7, "apps": [], "trusted": [], "sites_off": [], "disabled_rules": {"942100": {"msg": "x"}}})
     monkeypatch.setattr(waf, "_panel_trusted", lambda: [])
+    monkeypatch.setattr(waf, "instaban_lists", lambda: {})   # this machine's own InstaBan list stays out of it
     return state
 
 

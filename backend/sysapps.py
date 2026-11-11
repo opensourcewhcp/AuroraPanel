@@ -86,7 +86,7 @@ SERVER_APPS: dict[str, dict] = {
     "webmail": {"units": [], "procs": (), "view": "mailaccounts", "ram": "runs inside Apache/PHP", "ext": "/webmail/", "name": "Webmail"},
     "dav": {"units": ["radicale"], "procs": ("radicale",), "view": "calendars", "ram": "~20–30 MB", "name": "Calendars & Contacts"},
     "bind9": {"units": ["named"], "procs": ("named",), "view": "zones", "ram": "~15–40 MB", "name": "DNS server"},
-    "modsecurity": {"units": [], "procs": (), "view": "modsec", "ram": "runs inside Apache", "name": "WAF Firewall"},
+    "modsecurity": {"units": [], "procs": (), "view": "instawaff", "ram": "runs inside Apache", "name": "InstaWAFF firewall"},
     "fail2ban": {"units": ["fail2ban"], "procs": ("fail2ban-server",), "view": "leech", "ram": "~20–40 MB"},
     "clamav": {"units": ["clamav-freshclam"], "procs": ("freshclam", "clamd"), "view": "virus", "ram": "~10 MB (scans: ~1 GB)", "name": "Antivirus"},
     "ufw": {"units": [], "procs": (), "view": "firewall", "ram": "none (kernel rules)"},  # on/off lives on the Firewall page
@@ -344,7 +344,7 @@ def _check_port80(app_id: str, switch: bool):
     if not switch:
         msg = f"{CATALOG[other]['name']} is running on port 80. Stop it and switch to {CATALOG[app_id]['name']}?"
         if other == "apache":
-            msg += (f"\n\nThe websites in this panel run on Apache, and {CATALOG[app_id]['name']} won't serve them, or the WAF Firewall."
+            msg += (f"\n\nThe websites in this panel run on Apache, and {CATALOG[app_id]['name']} won't serve them, or the InstaWAFF firewall."
                     " They stay safe, and come back when you switch to Apache again.")
         raise ConflictError(msg, other)
     svc = CATALOG[other]["service"]

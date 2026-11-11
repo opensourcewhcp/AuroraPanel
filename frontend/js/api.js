@@ -609,7 +609,8 @@ const API = (() => {
     // WAF firewall
     waf: () => request("GET", "/api/waf"),
     wafSave: (data) => request("POST", "/api/waf", data),
-    wafEvents: (hours, ip) => request("GET", `/api/waf/events?hours=${hours || 24}${ip ? "&ip=" + encodeURIComponent(ip) : ""}`),
+    wafYou: () => request("GET", "/api/waf/you"),
+    wafEvents: (hours, ip, limit) => request("GET", `/api/waf/events?hours=${hours || 24}${ip ? "&ip=" + encodeURIComponent(ip) : ""}${limit ? "&limit=" + limit : ""}`),
     wafAllow: (id, msg) => request("POST", "/api/waf/allow-rule", { id, msg }),
     wafRestore: (id) => request("POST", "/api/waf/restore-rule", { id }),
     wafTest: () => request("POST", "/api/waf/test"),

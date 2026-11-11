@@ -237,8 +237,12 @@ def armed(ib, monkeypatch):
     return {**ib, "log": log, "sent": sent}
 
 
-def test_blocking_bans_and_reports_without_the_tick_box(armed, monkeypatch):
+def test_reporting_is_an_option_of_its_own_in_blocking_mode(armed, monkeypatch):
     monkeypatch.setattr(instaban, "_waf_mode", lambda: "block")
+    _attack(armed["log"], "203.0.113.5")
+    assert instaban.scan()["bans"] == 1 and armed["sent"] == []          # switch off: banned, nothing sent
+    assert instaban.overview()["hits"][0]["reported"] is False
+    instaban.set_settings(report=True)
     _attack(armed["log"], "203.0.113.7")
     assert instaban.scan()["bans"] == 1
     assert armed["sent"] == ["203.0.113.7"]
@@ -246,8 +250,17 @@ def test_blocking_bans_and_reports_without_the_tick_box(armed, monkeypatch):
     assert hit["banned"] is True and hit["reported"] is True and instaban.overview()["stats"]["reports"] == 1
 
 
+def test_an_install_that_reported_because_it_was_blocking_keeps_reporting(ib, monkeypatch):
+    monkeypatch.setattr(instaban, "_waf_mode", lambda: "block")
+    instaban.STATE.write_text(json.dumps({"enabled": True, "report": False, "seeded": True, "seeded_ua": True}), encoding="utf-8")
+    assert instaban.load()["report"] is True                               # carried over once
+    instaban.set_settings(report=False)
+    assert instaban.load()["report"] is False and instaban.settings()["report"] is False   # then the switch decides
+
+
 def test_one_burst_over_two_passes_is_reported_once(armed, monkeypatch):
     monkeypatch.setattr(instaban, "_waf_mode", lambda: "block")
+    instaban.set_settings(report=True)
     real = [None]
 
     def ban(ip, reason="", duration=None, client_ip=None, source=""):
@@ -265,6 +278,7 @@ def test_one_burst_over_two_passes_is_reported_once(armed, monkeypatch):
 
 def test_a_failed_report_is_noted_and_does_not_undo_the_ban(armed, monkeypatch):
     monkeypatch.setattr(instaban, "_waf_mode", lambda: "block")
+    instaban.set_settings(report=True)
     monkeypatch.setattr(abuse, "report", lambda ip, note="": 1 / 0)
     _attack(armed["log"], "203.0.113.7")
     assert instaban.scan()["bans"] == 1
@@ -323,3 +337,49 @@ def test_waf_mode_follows_the_waf(monkeypatch):
     assert get() == "detect"
     monkeypatch.setattr(waf, "load", lambda: 1 / 0)
     assert get() is None
+
+
+def test_with_the_firewall_on_everything_is_seen_and_auto_ban_only_decides_the_ban(armed, monkeypatch):
+    """Firewall on, Auto-ban off: list hits and port knocks are recorded, nobody is banned or reported."""
+    monkeypatch.setattr(instaban, "_waf_mode", lambda: "block")
+    instaban.set_settings(enabled=False, report=True)
+    assert instaban.settings()["watching"] is True
+    instaban.scan()                                                   # the first look only notes where the logs end
+    monkeypatch.setattr(instaban, "_port_events", lambda now, s: [{"ts": now, "src": "203.0.113.50", "port": p} for p in range(20, 30)])
+    _attack(armed["log"], "203.0.113.7")
+    r = instaban.scan()
+    assert r["hits"] == 2 and r["bans"] == 0 and armed["bans"] == [] and armed["sent"] == []
+    hits = instaban.overview()["hits"]
+    assert {h["kind"] for h in hits} == {"contains", "ports"} and all(h["error"] == instaban.NOT_BANNING and not h["banned"] for h in hits)
+    instaban.set_settings(enabled=True)                               # Auto-ban on: the next one is banned
+    monkeypatch.setattr(instaban, "_port_events", lambda now, s: [])
+    instaban.scan()
+    _attack(armed["log"], "203.0.113.8")
+    assert instaban.scan()["bans"] == 1 and armed["bans"][-1][0] == "203.0.113.8"
+    # Firewall off: nothing is watched, whatever the switch says. No firewall installed: the switch alone decides.
+    monkeypatch.setattr(instaban, "_waf_mode", lambda: "off")
+    assert instaban.settings()["watching"] is False
+    monkeypatch.setattr(instaban, "_waf_mode", lambda: None)
+    assert instaban.settings()["watching"] is True
+    instaban.set_settings(enabled=False)
+    assert instaban.settings()["watching"] is False and instaban._tick({}, 0) is False
+
+
+def test_bans_can_last_longer_than_a_day_or_for_good(armed, monkeypatch):
+    assert {"7d", "30d", "90d", "365d", "forever"} <= set(instaban.settings()["ttl_choices"])
+    instaban.set_settings(ttl="365d")
+    _attack(armed["log"], "203.0.113.7")
+    instaban.scan()
+    assert armed["bans"][-1][2] == 365 * 86400
+    instaban.set_settings(ttl="forever")
+    _attack(armed["log"], "203.0.113.8")
+    instaban.scan()
+    assert armed["bans"][-1][0] == "203.0.113.8" and armed["bans"][-1][2] is None   # no end: until someone unbans it
+
+
+def test_a_port_scan_is_counted_once_so_unbanning_does_not_ban_again(armed, monkeypatch):
+    feed = [[{"ts": time.time(), "src": "203.0.113.60", "port": p} for p in range(100, 110)], [{"ts": time.time(), "src": "203.0.113.60", "port": 443}]]
+    monkeypatch.setattr(instaban, "_port_events", lambda now, s: feed.pop(0) if feed else [])
+    instaban._SEEN.clear()
+    assert instaban.scan()["bans"] == 1                       # the scan: banned
+    assert instaban.scan()["bans"] == 0 and len(armed["bans"]) == 1   # unbanned, it opens one page: that is not a second scan

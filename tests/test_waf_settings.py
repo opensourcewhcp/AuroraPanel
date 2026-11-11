@@ -136,7 +136,7 @@ def test_switching_to_blocking_arms_instaban_once(state, monkeypatch):
     assert armed == []
     monkeypatch.setattr(waf, "load", lambda: {**waf._default(), "mode": "detect"})
     waf.update({"mode": "block"})
-    assert armed == [{"enabled": True, "report": True}]
+    assert armed == [{"enabled": True}]                         # reporting is the owner's own switch
     monkeypatch.setattr(waf, "load", lambda: {**waf._default(), "mode": "block"})
     waf.update({"paranoia": 2})                                # already blocking: their InstaBan choice stands
     assert len(armed) == 1

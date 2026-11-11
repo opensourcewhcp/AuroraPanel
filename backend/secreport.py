@@ -612,7 +612,7 @@ def _posture() -> list[dict]:
     from . import waf
     w = chk(waf.status)
     if w is not None and w.get("installed") and w.get("mode", "off") == "off":
-        out.append(_f("medium", "WAF is off", "ModSecurity is installed but not protecting your sites.", "Security → WAF Firewall → Blocking.", "modsec", fid="waf-off"))
+        out.append(_f("medium", "WAF is off", "ModSecurity is installed but not protecting your sites.", "Security → InstaWAFF → Blocking.", "modsec", fid="waf-off"))
     # October 2026: the private keys of eight eMudhra (emSign) intermediate CAs were recoverable from their certificates.
     # Browsers and Debian's ca-certificates distrust "emSign ECC Root CA - G3"; a trust store that still has it lets a
     # forged certificate pass for curl, Python, apt and mail on this server (OpenSSL doesn't check revocation lists).

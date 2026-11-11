@@ -31,6 +31,11 @@ def isolated_config(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "aurora_config.json")
     from backend import audit
     monkeypatch.setattr(audit, "LOG", tmp_path / "audit.jsonl")  # the suite's requests never land in the real Activity Log
+    from backend import instaban, waf
+    monkeypatch.setattr(instaban, "_sync_waf", lambda: None)     # nor does a test's pattern reach the real WAF and reload Apache
+    monkeypatch.setattr(waf, "server_ips", lambda s=None: [])     # the machine the suite runs on stays out of the rendered rules
+    for name in ("IB_PATHS", "IB_UA", "IB_IPS"):
+        monkeypatch.setattr(waf, name, tmp_path / "modsecurity" / getattr(waf, name).name)
     yield
 
 

@@ -333,7 +333,9 @@ window.AuroraExtras = (ui) => {
   }
 
   // ======================================================================
-  //  Security → WAF Firewall
+  //  Security → InstaWAFF: the web application firewall (ModSecurity + OWASP Core Rule Set) and the ban list
+  //  (payloads and paths only attackers ask for) as one page: metrics, attacks, bans, the list, the rules.
+  //  Everything shown here (patterns, request lines, user agents) is attacker-controlled text: textContent only.
   // ======================================================================
   const WAF_MODES = [["block", "Blocking"], ["detect", "Detect only"], ["off", "Off"]];
   const PARANOIA = {
@@ -342,148 +344,473 @@ window.AuroraExtras = (ui) => {
     3: ["Very strict", "For sites handling sensitive data. Expect to allow a few rules for your apps."],
     4: ["Paranoid", "Everything unusual is blocked. Only for locked-down APIs; many false alarms."],
   };
-  function viewWaf(root) {
+  const IW_TABS = [["overview", "Overview"], ["attacks", "Attacks"], ["bans", "Bans"], ["list", "Detection"], ["exceptions", "Exceptions"], ["rules", "Rule level"]];
+  const IW_SIZES = [100, 300, 500, 1000, 5000];
+  const IW_MAX = 5000;   // the most the server hands over for one period
+  // What caught it: the application firewall (rules and the ban list), port knocks, or other behaviour.
+  const IW_CATS = [["app", "Application firewall"], ["knocks", "Knocks"], ["other", "Other"]];
+  const hitCat = (h) => (h.kind === "ports" ? "knocks" : h.kind === "behavior" ? "other" : "app");
+  const IW_SEARCHABLE = { attacks: 1, bans: 1, list: 1 };
+  function viewInstaWaff(root, startTab) {
+    const TTL_LABEL = { "1h": "1 hour", "6h": "6 hours", "24h": "24 hours", "7d": "7 days", "30d": "30 days", "90d": "90 days", "365d": "1 year", forever: "Permanent" };
+    const KIND_LABEL = { contains: "path contains", starts: "path starts with", regex: "path regex", ua: "user agent contains", ip: "address or range" };
+    const banFor = (k) => (k === "forever" ? "permanently, until you unban it" : `for ${(TTL_LABEL[k] || k).toLowerCase()}`);
+    const NO_WAF = { installed: false, module_on: false, mode: "off", paranoia: 1, threshold: 5, apps: [], apps_all: {}, trusted: [], sites_off: [], disabled_rules: {}, crs_version: "",
+      stats: { events: 0, blocked: 0, detected: 0, types: [], ips: [] } };
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
-    root.append(pageHead("WAF Firewall", "A web application firewall in front of every website on this server: ModSecurity with the OWASP Core Rule Set inspects each request and stops SQL injection, cross-site scripting, path traversal, remote code execution and vulnerability scanners before they reach your apps."), body);
-    let d, hours = 24, evFilter = "all", evQ = "", sitesList = [];
-    async function save(data, msg) { return call(() => API.wafSave(data), msg || "WAF settings applied", () => load()); }
+    const head = pageHead("InstaWAFF", "One shield in front of every website: the firewall refuses attacks and anything on the ban list before it is served, Auto-ban shuts the attacker out at the firewall, and the evidence is kept so the address can be reported.");
+    head.classList.add("iw-head");
+    root.append(head, body);
+    let d, ib, sitesList = [], yourIp = "";
+    let tab = IW_TABS.some(([k]) => k === startTab) ? startTab : LS.get("iw.tab", "overview");
+    let q = "", hours = 24, evFilter = "all", hitFilter = "all", hitCatFilter = "all";
+    const pg = { attacks: { size: LS.get("iw.size", 100), page: 0 }, bans: { size: LS.get("iw.size", 100), page: 0 } };
+    let events = [], eventsReady = false, ipst = {}, banSince = {}, reportedIps = {};
+    let pane = null, tabBar = null, counter = null;
+    const words = () => q.toLowerCase().split(/\s+/).filter(Boolean);
+    const has = (text) => { const t = String(text).toLowerCase(); return words().every((w) => t.includes(w)); };
+    const save = (data, msg) => call(() => API.wafSave(data), msg || "Settings applied", () => load());
+    const setting = (patch, msg) => call(() => API.instabanSettings(patch), msg, () => load());
+
     async function load() {
-      try { d = await API.waf(); } catch (e) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); return; }
+      try {
+        const [w, b] = await Promise.all([API.waf().catch(() => NO_WAF), API.instaban()]);
+        d = { ...NO_WAF, ...w }; ib = b;
+      } catch (e) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); return; }
       if (!sitesList.length) { try { sitesList = (await API.metSites()).sites; } catch (e) {} }
+      if (!yourIp) { try { yourIp = (await API.wafYou()).ip || ""; } catch (e) {} }
       draw();
-    }
-    function draw() {
-      body.innerHTML = "";
-      const on = d.mode !== "off" && d.module_on;
-      const modeKind = !on ? "bad" : d.mode === "block" ? "good" : "warn";
-      const testOut = el("div", { class: "mx-test-out" });
-      body.append(el("div", { class: `card mx-hero ${modeKind}` }, [
-        el("div", { class: "mx-hero-ico" }, icon("shield", 30)),
-        el("div", { class: "mx-hero-txt" }, [
-          el("h3", { text: !on ? "The WAF is off, websites aren't filtered" : d.mode === "block" ? "Protecting your websites" : "Watching, not blocking" }),
-          el("p", { class: "muted", text: !on ? "Nothing is being watched and InstaBan is stopped. Turn on Blocking to stop attacks, or Detect only to see what would be blocked first."
-            : d.mode === "block" ? `Attacks are refused with “403 Forbidden”, and InstaBan bans and reports the addresses it catches. OWASP CRS ${d.crs_version || ""}, ${PARANOIA[d.paranoia][0].toLowerCase()} rules.`
-            : "Attacks are logged below but still reach your sites, and InstaBan only records who it would ban: no bans, no reports. Good for a few days after installing a new app, then switch to Blocking." }),
-          testOut,
-        ]),
-        el("div", { class: "mx-hero-act" }, [
-          seg(WAF_MODES, d.mode, (m) => save({ mode: m }, m === "block" ? "Blocking attacks" : m === "detect" ? "Detect-only mode" : "WAF off")),
-          btn("Send a test attack", async (e) => {
-            e.target.disabled = true;
-            const r = await call(() => API.wafTest());
-            e.target.disabled = false;
-            if (r) { testOut.innerHTML = ""; testOut.append(pill(r.verdict, r.blocked ? "good" : r.mode === "block" ? "bad" : "warn")); loadEvents(); }
-          }, "btn-ghost"),
-        ]),
-      ]));
-      const st = d.stats;
-      body.append(el("div", { class: "mx-tiles" }, [
-        tile("Attacks, last 24 h", num(st.events), st.events ? `${num(st.blocked)} blocked · ${num(st.detected)} logged only` : "None, quiet day", "shield", st.events ? "accent" : ""),
-        tile("Top attack type", st.types[0] ? st.types[0][0] : "none", st.types[0] ? `${num(st.types[0][1])} requests` : "nothing blocked", "brick"),
-        tile("Top attacker", st.ips[0] ? st.ips[0][0] : "none", st.ips[0] ? `${num(st.ips[0][1])} requests` : "quiet", "ban"),
-        tile("Rules switched off", num(Object.keys(d.disabled_rules).length), "False alarms you allowed", "check"),
-      ]));
-      // ---- settings
-      const lvl = el("div", { class: "mx-levels" }, [1, 2, 3, 4].map((n) => el("button", { type: "button", class: `mx-level ${d.paranoia === n ? "on" : ""}`,
-        onclick: () => d.paranoia !== n && save({ paranoia: n }, `Rule level: ${PARANOIA[n][0]}`) }, [el("b", { text: `${n} · ${PARANOIA[n][0]}` }), el("span", { class: "muted", text: PARANOIA[n][1] })])));
-      const thr = el("select", { class: "em-select", onchange: () => save({ threshold: +thr.value }, "Sensitivity saved") },
-        [[5, "Normal, one critical match blocks (recommended)"], [10, "Relaxed, needs two critical matches"], [25, "Lenient, only obvious attacks"], [3, "Tight, even minor matches add up"]].map(([v, l]) => el("option", { value: v, text: l })));
-      thr.value = String(d.threshold);
-      if (thr.value !== String(d.threshold)) thr.append(el("option", { value: d.threshold, text: `Custom (${d.threshold})`, selected: "" }));
-      const apps = el("div", { class: "mx-chips" }, Object.entries(d.apps_all).map(([k, v]) => {
-        const onA = d.apps.includes(k);
-        return el("button", { type: "button", class: `em-chip ${onA ? "on" : ""}`, text: (onA ? "✓ " : "") + v,
-          onclick: () => save({ apps: onA ? d.apps.filter((x) => x !== k) : [...d.apps, k] }, `${v} exclusions ${onA ? "off" : "on"}`) });
-      }));
-      const trusted = el("textarea", { rows: 3, placeholder: "One IP or range per line, e.g. 203.0.113.10 or 10.0.0.0/8", class: "mx-mono" });
-      trusted.value = d.trusted.join("\n");
-      const names = [...new Set(sitesList.flatMap((s) => s.names))].sort();
-      const offSites = el("div", { class: "mx-chips" }, names.length ? names.map((h) => {
-        const off = d.sites_off.includes(h);
-        return el("button", { type: "button", class: `em-chip ${off ? "warnchip" : ""}`, text: (off ? "⏸ " : "") + h, title: off ? "The WAF skips this site, click to protect it again" : "Click to switch the WAF off for this site only",
-          onclick: () => save({ sites_off: off ? d.sites_off.filter((x) => x !== h) : [...d.sites_off, h] }, off ? `${h} protected again` : `WAF off for ${h}`) });
-      }) : [el("span", { class: "muted", text: "No websites yet." })]);
-      body.append(el("div", { class: "mx-grid2" }, [
-        card("Rule level (paranoia)", [lvl, field("Sensitivity (anomaly threshold)", thr, "Every matching rule adds points; a request is blocked once it reaches this score.")]),
-        card("Exceptions", [
-          el("p", { class: "muted mx-p", text: "App exclusions teach the rules what normal looks like for these apps (editors, admin pages), so they don't trip the WAF." }), apps,
-          el("div", { class: "mx-sep" }),
-          field("Trusted addresses, never filtered", trusted, "Your office or monitoring service. Applied when you click Save."),
-          el("div", { class: "toolbar" }, [btn("Save trusted addresses", () => save({ trusted: trusted.value.split(/[\s,]+/).filter(Boolean) }, "Trusted addresses saved"), "btn-primary")]),
-          el("div", { class: "mx-sep" }),
-          el("p", { class: "muted mx-p", text: "Switch the WAF off for one website only:" }), offSites,
-        ]),
-      ]));
-      const dis = Object.entries(d.disabled_rules);
-      if (dis.length) body.append(card("Rules you switched off", [el("div", { class: "mx-list" }, dis.map(([id, r]) => el("div", { class: "mx-list-row" }, [
-        el("code", { text: id }), el("span", { class: "mx-ell grow", text: r.msg || "", title: r.msg || "" }), el("span", { class: "muted", text: r.since ? ago(r.since) : "" }),
-        btn("Turn back on", () => call(() => API.wafRestore(id), `Rule ${id} active again`, load), "btn-ghost")])))]));
-      evBox = el("div", {}, el("div", { class: "loading", text: "Loading events…" }));
-      const search = el("input", { type: "search", class: "em-search", placeholder: "Filter by IP, site, path or rule…", value: evQ, oninput: () => { evQ = search.value.toLowerCase(); drawEvents(); } });
-      body.append(card("Recent attacks", [el("div", { class: "mx-toolbar" }, [search,
-        seg([["all", "All"], ["blocked", "Blocked"], ["logged", "Logged only"]], evFilter, (v) => { evFilter = v; drawEvents(); }),
-        seg([[1, "1 h"], [24, "24 h"], [168, "7 days"], [720, "30 days"]], hours, (v) => { hours = v; loadEvents(); })]), evBox], "", [btn("Refresh", () => loadEvents(), "btn-ghost")]));
       loadEvents();
     }
-    let evBox, events = [], ipst = {}, banSince = {}, reportedIps = {};
     async function loadEvents() {
-      try { const r = await API.wafEvents(hours); events = r.events; ipst = r.ip_status || {}; banSince = r.ban_since || {}; } catch (e) { evBox.innerHTML = ""; evBox.append(el("p", { class: "empty", text: e.message })); return; }
+      try { const r = await API.wafEvents(hours, "", IW_MAX); events = r.events; ipst = r.ip_status || {}; banSince = r.ban_since || {}; } catch (e) { events = []; }
       try { reportedIps = (await API.abuseReported()) || {}; } catch (e) { reportedIps = {}; }
-      drawEvents();
+      eventsReady = true;
+      if (tab === "overview" || tab === "attacks") drawPane();
     }
-    // Ban / Unban / Report straight from a row, with the address's state shown next to the buttons.
+
+    // ---------------------------------------------------------------- Auto-ban settings (the gear on its tile)
+    function autoBanSettings() {
+      const B = ib.behavior || {};
+      let pick = ib.ttl;
+      const lengths = el("div", { class: "iw-lengths" });
+      const drawLengths = () => { lengths.innerHTML = ""; ib.ttl_choices.forEach((k) => lengths.append(el("button", { type: "button", class: `iw-length ${k === pick ? "on" : ""} ${k === "forever" ? "perm" : ""}`,
+        onclick: () => { pick = k; drawLengths(); } }, [el("b", { text: TTL_LABEL[k] || k }), el("small", { class: "muted", text: k === "forever" ? "until you unban it" : "then lifted by itself" })]))); };
+      drawLengths();
+      const line = (on, title, text) => el("div", { class: "iw-opt" }, [pill(on ? "on" : "off", on ? "good" : "dim"), el("div", { class: "iw-opt-txt" }, [el("b", { text: title }), el("small", { class: "muted", text })])]);
+      const go = el("button", { class: "btn btn-primary", text: "Save", onclick: async () => {
+        go.disabled = true;
+        try { await API.instabanSettings({ ttl: pick }); closeModal(); toast(`New bans last ${banFor(pick).replace(/^for /, "")}`, "good"); load(); }
+        catch (e) { toast(e.message, "bad"); go.disabled = false; }
+      } });
+      openModal("Auto-ban settings", el("div", { class: "em-form" }, [
+        el("div", { class: "mx-sub" }, "How long a ban lasts"), lengths,
+        el("p", { class: "muted mx-small", text: "Applies to bans made from now on. Bans already in place keep their own end; lift or extend one under IP Blocker & Trust." }),
+        el("div", { class: "mx-sub" }, "What gets an address banned"),
+        line(true, `The ban list (${num(ib.pattern_count)} patterns)`, "Asking for a path, payload or page on the list, or using a listed scanner."),
+        line(B.ports && B.ports.on, "Knocks", B.ports && B.ports.on ? `${B.ports.count} different ports within ${B.ports.window} s.` : "Port scans are not banned."),
+        line(B.errors && B.errors.on, "Guessing paths", B.errors && B.errors.on ? `${B.errors.count} error answers within ${B.errors.window} s.` : "Not banned."),
+        line(B.flood && B.flood.on, "Hammering", B.flood && B.flood.on ? `${B.flood.count} requests within ${B.flood.window} s.` : "Not banned."),
+        el("div", { class: "toolbar" }, [btn("Edit the list and thresholds", () => { closeModal(); open("list"); }, "btn-ghost")]),
+      ]), [go]);
+      const m = document.querySelector("#modal .modal"); if (m) m.classList.add("em-modal");
+    }
+
+    // ---------------------------------------------------------------- frame: status, metrics, tabs, search
+    function draw() {
+      body.innerHTML = "";
+      const on = d.installed && d.module_on && d.mode !== "off";
+      const kind = !on ? "bad" : d.mode === "block" ? "good" : "warn";
+      const ttl = banFor(ib.ttl);
+      const testOut = el("div", { class: "mx-test-out" });
+      const headline = !d.installed ? "The firewall isn't installed, only the ban list is working"
+        : !on ? "InstaWAFF is off, websites aren't filtered"
+        : d.mode === "block" ? "Protecting your websites" : "Watching, not blocking";
+      const story = !d.installed
+        ? (ib.enabled ? `The ban list works from the access log: a request on the list is answered first and its address is banned ${ttl} right after. Install the firewall to refuse that request too.` : "Install the firewall, or turn the ban list on to ban addresses from the access log.")
+        : !on ? "Nothing is inspected and nobody is banned. Turn on Blocking to stop attacks, or Detect only to see what would be stopped first."
+        : d.mode === "block"
+          ? (ib.enabled ? `Attacks and anything on the ban list are refused with “403 Forbidden” before a file is served. An address that asks for something on the list, knocks on many ports or misbehaves is banned at the firewall ${ttl}${ib.report ? " and reported to its abuse desk" : ""}.`
+            : "Attacks and anything on the ban list are refused with “403 Forbidden” before a file is served. List hits and port knocks are recorded under Bans, but Auto-ban is off, so no address is banned on its own.")
+          : "Attacks, requests on the ban list and port knocks are recorded but still get through, and nobody is banned or reported. Good for a few days after installing a new app, then turn Block attacks on.";
+      // The four switches that decide what happens, each a tile that lights up when it is on, with its settings behind the gear.
+      const fwOn = d.installed && d.module_on && d.mode !== "off";
+      const gear = (title, onclick) => el("button", { type: "button", class: "iw-gear", title, "aria-label": title, onclick }, icon("gear", 16));
+      const ctl = (ico, title, desc, control, lit, cog) => el("div", { class: `iw-ctl ${lit ? "on" : ""}` }, [el("span", { class: "iw-ctl-ico" }, icon(ico, 18)),
+        el("div", { class: "iw-ctl-txt" }, [el("b", { text: title }), el("small", { class: "muted", text: desc })]), cog, control].filter(Boolean));
+      const testBtn = d.installed ? btn("Send a test attack", async (e) => {
+        e.target.disabled = true;
+        const r = await call(() => API.wafTest());
+        e.target.disabled = false;
+        if (r) { testOut.innerHTML = ""; testOut.append(pill(r.verdict, r.blocked ? "good" : r.mode === "block" ? "bad" : "warn")); loadEvents(); }
+      }, "btn-ghost") : null;
+      body.append(el("div", { class: `card mx-hero iw-hero ${kind}` }, [
+        el("div", { class: "iw-hero-top" }, [
+          el("div", { class: "mx-hero-ico" }, icon("shield", 30)),
+          el("div", { class: "mx-hero-txt" }, [el("h3", { text: headline }), el("p", { class: "muted", text: story }), testOut]),
+          el("div", { class: "iw-hero-side" }, [pill(!d.installed ? "firewall not installed" : !on ? "off" : d.mode === "block" ? "blocking" : "detect only", kind), testBtn].filter(Boolean)),
+        ]),
+        el("div", { class: "iw-ctls" }, [
+          d.installed ? ctl("shield", "Firewall", fwOn ? `Inspects every request, enforces the ban list (${num(ib.pattern_count)}), watches knocks` : "Nothing is inspected or watched",
+            sw(fwOn, (v) => save({ mode: v ? "block" : "off" }, v ? "Firewall on, blocking attacks" : "Firewall off")), fwOn,
+            gear("Edit the ban list and what is watched", () => open("list"))) : null,
+          d.installed ? ctl("ban", "Block attacks", !fwOn ? "Turn the firewall on first" : d.mode === "block" ? `Refused with 403, ${PARANOIA[d.paranoia][0].toLowerCase()} rules` : "Detect only: recorded and let through",
+            sw(fwOn && d.mode === "block", (v) => save({ mode: v ? "block" : "detect" }, v ? "Blocking attacks" : "Detect only: recording, not blocking"), { disabled: !fwOn }), fwOn && d.mode === "block",
+            gear("Rule level and sensitivity", () => open("rules"))) : null,
+          ctl("trap", "Auto-ban", ib.enabled ? `Bans ${ttl.replace(", until you unban it", "")}` : "Off: attackers are recorded, not banned",
+            sw(ib.enabled, (v) => setting({ enabled: v }, v ? "Auto-ban is on: attackers are banned at the firewall" : "Auto-ban is off: attackers are recorded, not banned")), ib.enabled,
+            gear("Ban length and what triggers a ban", autoBanSettings)),
+          ctl("mail", "Report to abuse desks", ib.report ? "Every new ban sends one report" : "Nothing is sent on its own",
+            sw(ib.report, (v) => setting({ report: v }, v ? "Banned addresses are reported to their abuse desks" : "Automatic reports off")), ib.report,
+            gear("Sender address and sent reports", () => navigate("ipblocker"))),
+        ].filter(Boolean)),
+      ]));
+      const st = d.stats, go = (t) => () => { tab = t; LS.set("iw.tab", t); drawTabs(); drawPane(); };
+      body.append(el("div", { class: "mx-tiles mx-tiles-6 iw-tiles" }, [
+        tile("Attacks, last 24 h", num(st.events), st.events ? "seen by the firewall" : "none, quiet day", "shield", st.events ? "accent" : "", go("attacks")),
+        tile("Refused", num(st.blocked), "answered with 403", "ban", st.blocked ? "goodt" : "", go("attacks")),
+        tile("Logged only", num(st.detected), d.mode === "detect" ? "Detect only lets them through" : "below the blocking score", "listing", st.detected ? "warnt" : "", go("attacks")),
+        tile("Addresses banned", num(ib.stats.bans || 0), "by the ban list, so far", "trap", ib.stats.bans ? "accent" : "", go("bans")),
+        tile("List hits, last 24 h", num(ib.hits_24h || 0), `${num(ib.stats.hits || 0)} since the start`, "trap", "", go("bans")),
+        tile("Reported", num(ib.stats.reports || 0), "sent to abuse desks", "mail", "", go("bans")),
+      ]));
+      tabBar = el("div", { class: "iw-tabs" });
+      pane = el("div", { class: "iw-pane" });
+      body.append(tabBar, pane);
+      drawTabs();
+      drawPane();
+    }
+    function drawTabs() {
+      tabBar.innerHTML = "";
+      counter = el("span", { class: "muted mx-small iw-count" });
+      const search = el("input", { type: "search", class: "em-search iw-search", placeholder: "Search attacks, bans and the list: an address, a path, a site, a rule, a user agent…", spellcheck: "false", autocomplete: "off" });
+      search.value = q;
+      search.addEventListener("input", () => {
+        q = search.value; pg.attacks.page = pg.bans.page = 0;
+        if (q && !IW_SEARCHABLE[tab]) { tab = "attacks"; LS.set("iw.tab", tab); tabBar.querySelectorAll(".iw-tab").forEach((b) => b.classList.toggle("on", b.dataset.k === tab)); }
+        drawPane();
+      });
+      tabBar.append(el("div", { class: "mx-seg iw-seg", role: "tablist" }, IW_TABS.map(([k, label]) => el("button", { type: "button", class: `iw-tab ${k === tab ? "on" : ""}`, "data-k": k, text: label,
+        onclick: () => { tab = k; LS.set("iw.tab", k); drawTabs(); drawPane(); } }))), el("div", { class: "iw-find" }, [search, counter]));
+    }
+    function drawPane() {
+      if (!pane) return;
+      pane.innerHTML = "";
+      counter.textContent = "";
+      ({ overview: paneOverview, attacks: paneAttacks, bans: paneBans, list: paneList, exceptions: paneExceptions, rules: paneRules }[tab] || paneOverview)();
+    }
+    const open = (t, also) => { tab = t; LS.set("iw.tab", t); if (also) also(); drawTabs(); drawPane(); };
+    // 100, 300, 500, 1000, 5000 or any number per page, with the pages to walk through.
+    function pager(total, p) {
+      const pages = Math.max(1, Math.ceil(total / p.size));
+      p.page = Math.max(0, Math.min(p.page, pages - 1));
+      const size = (n) => { p.size = pg.attacks.size = pg.bans.size = Math.max(1, Math.min(100000, Math.round(n) || 100)); p.page = 0; LS.set("iw.size", p.size); drawPane(); };
+      const isCustom = p.custom || !IW_SIZES.includes(p.size);
+      const sel = el("select", { class: "em-select mx-narrow", onchange: () => { if (sel.value === "custom") { p.custom = true; drawPane(); } else { p.custom = false; size(+sel.value); } } },
+        [...IW_SIZES.map((n) => el("option", { value: String(n), text: num(n) })), el("option", { value: "custom", text: "Custom" })]);
+      sel.value = isCustom ? "custom" : String(p.size);
+      const custom = el("input", { type: "number", min: "1", max: "100000", class: "ib-num", value: String(p.size), title: "Rows per page", onchange: () => size(+custom.value) });
+      const from = total ? p.page * p.size + 1 : 0, to = Math.min(total, (p.page + 1) * p.size);
+      const step = (label, by, off) => { const b = btn(label, () => { p.page += by; drawPane(); }, "btn-ghost"); b.disabled = off; return b; };
+      return el("div", { class: "iw-pager" }, [el("span", { class: "muted", text: "Show" }), sel, isCustom ? custom : null, el("span", { class: "muted", text: "per page" }), el("span", { class: "grow" }),
+        el("span", { class: "muted", text: `${num(from)} to ${num(to)} of ${num(total)}` }), step("Previous", -1, p.page <= 0), el("span", { class: "muted", text: `Page ${p.page + 1} of ${pages}` }), step("Next", 1, p.page >= pages - 1)].filter(Boolean));
+    }
+    const period = () => seg([[1, "1 h"], [24, "24 h"], [168, "7 days"], [720, "30 days"]], hours, (v) => { hours = v; eventsReady = false; drawPane(); loadEvents(); });
+    const ipLink = (ip, after) => el("button", { type: "button", class: `ib-ip ${ipCls(ipst[ip], reportedIps[ip])}`, text: ip, title: "Who is this?", onclick: (ev) => { ev.stopPropagation(); ipCard(ip, after); } });
+
+    // ---------------------------------------------------------------- overview: the numbers at a glance
+    function paneOverview() {
+      if (!eventsReady) { pane.append(el("div", { class: "loading", text: "Loading attacks…" })); return; }
+      const n = hours <= 1 ? 12 : hours <= 24 ? 24 : hours <= 168 ? 28 : 30, step = (hours * 3600) / n, start = Date.now() / 1000 - hours * 3600;
+      const slots = Array.from({ length: n }, (_, i) => [start + i * step, { blocked: 0, logged: 0 }]);
+      const count = (m, k) => { if (k) m[k] = (m[k] || 0) + 1; };
+      const types = {}, ips = {}, sites = {};
+      events.forEach((e) => {
+        const i = Math.floor((e.ts - start) / step);
+        if (i >= 0 && i < n) slots[i][1][e.blocked ? "blocked" : "logged"]++;
+        count(types, e.rules[0].category); count(ips, e.ip); count(sites, e.host);
+      });
+      const top = (m) => Object.entries(m).sort((a, b) => b[1] - a[1]);
+      const hm = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const md = (ts) => new Date(ts * 1000).toLocaleDateString([], { month: "short", day: "numeric" });
+      const day = Date.now() / 1000 - 86400, B = ib.behavior || {}, c = { app: [0, 0], knocks: [0, 0], other: [0, 0] };
+      ib.hits.forEach((h) => { if (h.ts >= day) { c[hitCat(h)][0]++; if (h.banned) c[hitCat(h)][1]++; } });
+      const stat = (v, label) => el("div", { class: "iw-stat" }, [el("b", { text: num(v) }), el("span", { class: "muted", text: label })]);
+      const rule = (b, unit) => (b && b.on ? `ban after ${b.count} ${unit} within ${b.window} s` : "off");
+      const panel = (ico, title, state, tone, stats, text, go) => el("button", { type: "button", class: "card iw-cat", onclick: go }, [
+        el("div", { class: "iw-cat-h" }, [el("span", { class: "iw-cat-ico" }, icon(ico, 20)), el("h3", { text: title }), el("span", { class: "grow" }), pill(state, tone)]),
+        el("div", { class: "iw-stats" }, stats), el("p", { class: "muted mx-small", text })]);
+      const wafOn = d.installed && d.module_on;
+      // Knocks and other behaviour only run while Auto-ban is on, and only ban while the firewall is Blocking.
+      const held = !ib.watching ? [ib.waf_mode === "off" ? "not watched, firewall is off" : "not watched", "bad"] : !ib.enabled ? ["recording, Auto-ban is off", "warn"] : ib.waf_mode === "detect" ? ["recording only, no bans", "warn"] : null;
+      const why = !ib.watching ? (ib.waf_mode === "off" ? " Not watched while the firewall is off." : " Not watched: turn Auto-ban on.") : !ib.enabled ? " Recorded under Bans; turn Auto-ban on to ban." : ib.waf_mode === "detect" ? " Detect only: recorded as would have been banned." : "";
+      pane.append(el("div", { class: "iw-cats" }, [
+        panel("shield", "Application firewall", !d.installed ? "not installed" : wafOn && d.mode === "block" ? "blocking" : wafOn && d.mode === "detect" ? "detect only" : "off", wafOn && d.mode === "block" ? "good" : wafOn && d.mode === "detect" ? "warn" : "bad",
+          [stat(d.stats.events, "attacks"), stat(d.stats.blocked, "refused"), stat(c.app[1], "banned")],
+          `Injection, scripting and scanner requests, and ${num(ib.pattern_count)} patterns on the ban list. Last 24 hours.`, () => open("attacks")),
+        panel("radar", "Knocks", !(B.ports && B.ports.on) ? "off" : !ib.ports_source ? "no connection log" : held ? held[0] : "watching", !(B.ports && B.ports.on) ? "dim" : !ib.ports_source ? "warn" : held ? held[1] : "good",
+          [stat(c.knocks[0], "port scans"), stat(c.knocks[1], "banned")],
+          `Addresses that try many ports in a row: ${rule(B.ports, "ports")}. Last 24 hours.${B.ports && B.ports.on ? why : ""}`, () => open("bans", () => { hitCatFilter = "knocks"; })),
+        panel("processes", "Other", !((B.errors && B.errors.on) || (B.flood && B.flood.on)) ? "off" : held ? held[0] : [B.errors && B.errors.on ? "guessing paths" : "", B.flood && B.flood.on ? "hammering" : ""].filter(Boolean).join(" · "), !((B.errors && B.errors.on) || (B.flood && B.flood.on)) ? "dim" : held ? held[1] : "good",
+          [stat(c.other[0], "caught by behaviour"), stat(c.other[1], "banned")],
+          `Guessing paths: ${rule(B.errors, "errors")}. Hammering: ${rule(B.flood, "requests")}. Last 24 hours.${(B.errors && B.errors.on) || (B.flood && B.flood.on) ? why : ""}`, () => open("bans", () => { hitCatFilter = "other"; })),
+      ]));
+      pane.append(card("Attacks over time", [
+        events.length ? chart({ points: slots, height: 180, series: [{ key: "blocked", label: "Refused", color: "#ff6b6b" }, { key: "logged", label: "Logged only", color: "#ffb347" }],
+          xfmt: hours <= 24 ? hm : md, tipX: (ts) => `${md(ts)} ${hm(ts)}` })
+          : empty("shield", "No attacks in this period", "When the firewall refuses or logs a request, it is counted here."),
+        events.length >= IW_MAX ? el("p", { class: "muted mx-small", text: `Counting the latest ${num(IW_MAX)} attacks of this period.` }) : null,
+      ].filter(Boolean), "", [period()]));
+      const listed = ib.patterns.filter((p) => p.hits).slice(0, 8);
+      pane.append(el("div", { class: "mx-grid2" }, [
+        card("What was tried", [donut(top(types).slice(0, 8).map(([label, k]) => ({ label, n: k })))]),
+        card("Who is attacking", [rank(top(ips).map(([ip, k]) => ({ label: ip, n: k, cls: `mx-mono ${ipCls(ipst[ip], reportedIps[ip])}`, onclick: () => ipCard(ip, loadEvents), title: "Who is this?" })), { limit: 8, empty: "Nobody in this period." })]),
+        card("Sites they went for", [rank(top(sites).map(([s, k]) => ({ label: s, n: k, onclick: () => { q = s; tab = "attacks"; drawTabs(); drawPane(); }, title: "Show these attacks" })), { limit: 8, empty: "Nothing in this period." })]),
+        card("Ban list, most hit", [listed.length ? rank(listed.map((p) => ({ label: p.pattern, n: p.hits, cls: "mx-mono", title: p.note || p.pattern, onclick: () => { q = p.pattern; tab = "bans"; drawTabs(); drawPane(); } })), { limit: 8 })
+          : el("p", { class: "muted mx-none", text: ib.enabled ? "Nothing on the list has been asked for yet." : "The ban list is off." })], "", [btn("Open the list", () => { tab = "list"; drawTabs(); drawPane(); }, "btn-ghost")]),
+      ]));
+    }
+
+    // ---------------------------------------------------------------- attacks: what the firewall saw, one row each
     // The answer in a row is from when the request came, "banned" is the address now. Say which came first.
     function banPill(e) {
       const since = banSince[e.ip];
       if (!since || Math.floor(e.ts) > since) return pill("banned", "bad");
       const gap = Math.max(1, Math.round(since - e.ts));
-      return el("span", { class: "pill bad", title: `This request arrived before the ban, so the firewall didn't stop it. The address has been blocked since ${new Date(since * 1000).toLocaleString()}.`, text: gap < 60 ? `banned ${gap}s later` : "banned later" });
+      return el("span", { class: "pill bad", title: `This request arrived before the ban. The address has been blocked at the firewall since ${new Date(since * 1000).toLocaleString()}.`, text: gap < 60 ? `banned ${gap}s later` : "banned later" });
     }
-    function ipRowActions(e, r0) {
+    function attackActions(e, r0) {
       const ip = e.ip, st = ipst[ip], rep = reportedIps[ip];
       return el("div", { class: "mx-ev-act" }, [
         st === "banned" ? banPill(e) : st === "trusted" ? pill("trusted", "good") : null,
         rep ? el("span", { class: "pill warn", title: `Reported to ${(rep.to || []).join(", ")} ${ago(rep.ts)}`, text: "reported" }) : null,
-        btn("Lookup", () => ipCard(ip, loadEvents), "btn-ghost"),
+        btn("Investigate", () => ipCard(ip, loadEvents), "btn-ghost"),
         st === "banned" ? btn("Unban", () => call(() => API.guardUnban(ip), `${ip} unbanned`, loadEvents), "btn-ghost")
           : st === "trusted" ? null
-          : armed("Ban", "Click again · 24 h", () => call(() => API.guardBan(ip, `WAF: ${r0.category}, ${r0.msg}`, 86400, "WAF Firewall"), `${ip} banned for 24 hours`, loadEvents), "btn-danger"),
+          : armed("Ban", "Click again · 24 h", () => call(() => API.guardBan(ip, `InstaWAFF: ${r0.category}, ${r0.msg}`, 86400, "InstaWAFF"), `${ip} banned for 24 hours`, loadEvents), "btn-danger"),
         btn(rep ? "Report again" : "Report", () => reportIp(ip, loadEvents), "btn-ghost"),
       ].filter(Boolean));
     }
-    function drawEvents() {
-      if (!evBox) return;
-      evBox.innerHTML = "";
+    function paneAttacks() {
+      const box = el("div", {});
+      pane.append(card("Attacks", [el("div", { class: "mx-toolbar" }, [
+        seg([["all", "All"], ["blocked", "Refused"], ["logged", "Logged only"]], evFilter, (v) => { evFilter = v; pg.attacks.page = 0; drawPane(); }), el("span", { class: "grow" }), period()]), box], "", [btn("Refresh", () => loadEvents(), "btn-ghost")]));
+      if (!eventsReady) { box.append(el("div", { class: "loading", text: "Loading attacks…" })); return; }
       const rows = events.filter((e) => (evFilter === "all" || (evFilter === "blocked") === e.blocked) &&
-        (!evQ || `${e.ip} ${e.host} ${e.request} ${e.rules.map((r) => r.id + " " + r.msg).join(" ")}`.toLowerCase().includes(evQ)));
-      if (!rows.length) { evBox.append(empty("shield", events.length ? "No matching events" : "No attacks in this period", events.length ? "Try another filter." : "When the WAF stops or logs a request, it shows up here with the reason.")); return; }
+        has(`${e.ip} ${e.host} ${e.request} ${e.status} ${e.ua} ${e.blocked ? "refused blocked" : "logged"} ${ipst[e.ip] || ""} ${e.rules.map((r) => `${r.id} ${r.msg} ${r.category}`).join(" ")}`));
+      if (q || evFilter !== "all") counter.textContent = `${rows.length} of ${events.length} attacks`;
+      if (!rows.length) { box.append(empty("shield", events.length ? "No matching attacks" : "No attacks in this period", events.length ? "Try another search, filter or period." : "When the firewall refuses or logs a request, it shows up here with the reason.")); return; }
       const codeTone = (s) => s >= 500 ? "bad" : s >= 400 ? (s === 404 ? "warn" : "bad") : s >= 300 ? "dim" : "ok";
-      evBox.append(el("div", { class: "mx-events" }, rows.slice(0, 300).map((e) => {
+      const pages = pager(rows.length, pg.attacks);   // first: it settles which page we are on
+      box.append(el("div", { class: "mx-events" }, rows.slice(pg.attacks.page * pg.attacks.size, (pg.attacks.page + 1) * pg.attacks.size).map((e) => {
         const r0 = e.rules[0];
+        const fromList = r0.category === "Ban list";
         const more = el("div", { class: "mx-ev-more", hidden: "" }, [
           el("div", { class: "mx-kv" }, [el("span", { text: "Request" }), el("code", { text: e.request })]),
           (e.status != null && e.status !== "") ? el("div", { class: "mx-kv" }, [el("span", { text: "Server replied" }), el("code", { text: "HTTP " + e.status })]) : null,
           e.ua ? el("div", { class: "mx-kv" }, [el("span", { text: "User agent" }), el("code", { text: e.ua })]) : null,
           el("div", { class: "mx-ev-rules" }, e.rules.map((r) => el("div", { class: "mx-ev-rule" }, [el("code", { text: r.id }), el("span", { class: "grow", text: r.msg }),
             r.severity ? pill(r.severity.toLowerCase(), r.severity === "CRITICAL" ? "bad" : "warn") : null,
-            d.disabled_rules[r.id] ? pill("switched off") : btn("Allow this rule", () => {
-              if (!confirm(`Switch off rule ${r.id} (“${r.msg}”) for all sites? Do this only for false alarms caused by your own app.`)) return;
-              call(() => API.wafAllow(r.id, r.msg), `Rule ${r.id} switched off`, load);
-            }, "btn-ghost")]))),
-        ]);
+            r.category === "Ban list" ? btn("Open the ban list", () => { tab = "list"; drawTabs(); drawPane(); }, "btn-ghost")
+              : d.disabled_rules[r.id] ? pill("switched off") : btn("Allow this rule", () => {
+                if (!confirm(`Switch off rule ${r.id} (“${r.msg}”) for all sites? Do this only for false alarms caused by your own app.`)) return;
+                call(() => API.wafAllow(r.id, r.msg), `Rule ${r.id} switched off`, load);
+              }, "btn-ghost")].filter(Boolean)))),
+        ].filter(Boolean));
         return el("div", { class: `mx-ev${ipst[e.ip] === "banned" ? " is-banned" : ""}` }, [
           el("button", { type: "button", class: "mx-ev-main", onclick: () => { more.hidden = !more.hidden; } }, [
-            pill(e.blocked ? "Blocked" : "Logged", e.blocked ? "bad" : "warn"),
-            el("div", { class: "mx-ev-what" }, [el("b", { text: r0.category }), el("span", { class: "muted mx-ell", text: r0.msg })]),
+            pill(e.blocked ? "Refused" : "Logged", e.blocked ? "bad" : "warn"),
+            el("div", { class: "mx-ev-what" }, [el("b", { text: fromList ? "Ban list" : r0.category }), el("span", { class: "muted mx-ell", text: r0.msg.replace(/^InstaBan: /, "") })]),
             el("div", { class: "mx-ev-req mx-ell", title: e.request }, [el("span", { class: "muted", text: e.host || "" }), " ", el("code", { text: e.request.replace(/ HTTP\/[\d.]+$/, "") })]),
             (e.status != null && e.status !== "") ? el("span", { class: "mx-ev-code code-" + codeTone(e.status), title: `Server replied with HTTP ${e.status}`, text: String(e.status) }) : null,
-            el("span", { class: "mx-ev-ipw" },[el("span", { class: `mx-ev-ip mx-ip ${ipCls(ipst[e.ip], reportedIps[e.ip])}`, role: "link", text: e.ip, title: "Who is this?", onclick: (ev) => { ev.stopPropagation(); ipCard(e.ip, loadEvents); } })]),
+            el("span", { class: "mx-ev-ipw" }, [el("span", { class: `mx-ev-ip mx-ip ${ipCls(ipst[e.ip], reportedIps[e.ip])}`, role: "link", text: e.ip, title: "Who is this?", onclick: (ev) => { ev.stopPropagation(); ipCard(e.ip, loadEvents); } })]),
             el("span", { class: "muted mx-ev-t", text: ago(e.ts) }),
-          ]),
-          ipRowActions(e, r0),
+          ].filter(Boolean)),
+          attackActions(e, r0),
           more,
         ]);
       })));
+      box.append(pages);
+    }
+
+    // ---------------------------------------------------------------- bans: what the ban list caught, as evidence
+    function paneBans() {
+      const all = ib.hits;
+      const rows = all.filter((h) => (hitFilter === "all" || (hitFilter === "banned") === !!h.banned) && (hitCatFilter === "all" || hitCat(h) === hitCatFilter) &&
+        has([h.ip, h.host, h.log, h.method, h.target, h.status, h.ua, h.pattern, KIND_LABEL[h.kind] || h.kind, h.banned ? "banned" : "not banned", h.reported ? "reported" : "", h.error].filter(Boolean).join(" ")));
+      if (q || hitFilter !== "all" || hitCatFilter !== "all") counter.textContent = `${rows.length} of ${all.length} hits`;
+      const pages = pager(rows.length, pg.bans);
+      const catName = Object.fromEntries(IW_CATS);
+      const table = rows.length ? el("div", { class: "table-wrap" }, el("table", { class: "mx-table ib-table" }, [
+        el("thead", {}, el("tr", {}, ["When", "Address", "Caught by", "Site", "Request", "Pattern", "Result", ""].map((h) => el("th", { text: h })))),
+        el("tbody", {}, rows.slice(pg.bans.page * pg.bans.size, (pg.bans.page + 1) * pg.bans.size).map((h) => el("tr", { class: h.banned ? "" : "ib-miss" }, [
+          el("td", { class: "muted", title: new Date(h.ts * 1000).toLocaleString(), text: ago(h.ts) }),
+          el("td", {}, el("button", { type: "button", class: `ib-ip ${h.banned ? "ip-banned" : ""}`, text: h.ip, title: "Who is this?", onclick: () => ipCard(h.ip, load) })),
+          el("td", {}, pill(catName[hitCat(h)], hitCat(h) === "app" ? "warn" : "dim")),
+          el("td", { class: "muted", text: h.host || h.log || "" }),
+          el("td", {}, [el("code", { class: "ib-code", text: `${h.method} ${h.target}`.trim() }), h.ua ? el("div", { class: "muted mx-small ib-ua", title: h.ua, text: h.ua }) : null].filter(Boolean)),
+          el("td", {}, [el("code", { class: "ib-code muted", text: h.pattern }), h.kind && h.kind !== "contains" ? el("div", { class: "muted mx-small", text: KIND_LABEL[h.kind] || h.kind }) : null].filter(Boolean)),
+          el("td", {}, [h.banned ? pill("banned", "bad") : pill("not banned", "dim"), h.reported ? pill("reported", "warn") : null, h.error ? el("div", { class: "muted mx-small", text: h.error }) : null].filter(Boolean)),
+          el("td", { class: "actions" }, [btn("Investigate", () => ipCard(h.ip, load), "btn-ghost"), h.reported || !h.banned ? null : btn("Report", () => reportIp(h.ip, load), "btn-ghost")].filter(Boolean)),
+        ])))]))
+        : empty("trap", all.length ? "No matching hits" : "No hits yet", all.length ? "Try another search or filter." : ib.enabled ? "Nothing on the ban list has been asked for since it was turned on." : "Turn the ban list on to start watching.");
+      pane.append(card(`Bans and hits (${all.length})`, [
+        el("div", { class: "mx-toolbar" }, [seg([["all", "All"], ...IW_CATS], hitCatFilter, (v) => { hitCatFilter = v; pg.bans.page = 0; drawPane(); }),
+          seg([["all", "All"], ["banned", "Banned"], ["not", "Not banned"]], hitFilter, (v) => { hitFilter = v; pg.bans.page = 0; drawPane(); }),
+          el("span", { class: "grow" }), el("span", { class: "muted mx-small", text: "Every ban is also listed under IP Blocker & Trust, where it can be lifted." })]),
+        table, all.length ? pages : null,
+      ].filter(Boolean), "", [btn("IP Blocker & Trust", () => navigate("ipblocker"), "btn-ghost"),
+        all.length ? armed("Clear list", "Sure?", () => call(() => API.instabanClear(), "Cleared", load), "btn-ghost") : null, btn("Refresh", load, "btn-ghost")].filter(Boolean)));
+    }
+
+    // ---------------------------------------------------------------- the ban list: patterns, behaviour, what a ban does
+    function paneList() {
+      const blocking = d.installed && d.mode === "block";
+      const ttl = el("select", { class: "em-select mx-narrow", onchange: () => setting({ ttl: ttl.value }, `New bans last ${banFor(ttl.value).replace(/^for /, "")}`) }, ib.ttl_choices.map((k) => el("option", { value: k, text: TTL_LABEL[k] || k })));
+      ttl.value = ib.ttl;
+      const optRow = (control, title, desc) => el("div", { class: "iw-opt" }, [control, el("div", { class: "iw-opt-txt" }, [el("b", { text: title }), el("small", { class: "muted", text: desc })])]);
+      pane.append(card("What a hit does", [
+        optRow(sw(ib.enabled, (v) => setting({ enabled: v }, v ? "Auto-ban is on: requests and connections are checked from now" : "Auto-ban is off: the ban list, knocks and other behaviour are not watched")), "Auto-ban: ban the address behind a hit",
+          !ib.watching ? (ib.waf_mode === "off" ? "Nothing is watched while the firewall is off. When it comes back, only what happens from then on is checked." : "Off. Nothing below is watched. Turn it on and everything from then on is checked; old log lines are never scanned.")
+            : !ib.enabled ? "Off. The firewall still refuses what is on the list, and list hits, knocks and other behaviour are recorded under Bans. No address is banned on its own."
+            : ib.waf_mode === "detect" ? "On, but the firewall is on Detect only: hits are recorded as would have been banned until Block attacks is turned on."
+            : blocking ? "On. A request on the list is refused before anything is served, and its address is banned at the firewall within about a second."
+            : "On. The access log is read as it grows; an address that asks for something on the list is banned within about a second."),
+        optRow(sw(ib.report, (v) => setting({ report: v }, v ? "Banned addresses are reported to their abuse desks" : "Automatic reports off")), "Report each banned address to its abuse desk",
+          (ib.report ? "On: every new ban sends one report. " : "Off: nothing is sent on its own; any address can still be reported by hand from its row. ") + "Uses this server's mail; set a sender under IP Blocker & Trust → Reports."),
+        optRow(ttl, "Ban length", "How long an address stays banned: from an hour to a year, or Permanent (until you unban it). Trusted addresses are never banned."),
+      ]));
+      // ---- patterns
+      const pat = el("input", { type: "text", placeholder: "/.git/config, /etc/passwd, <script, union select, sqlmap, 203.0.113.0/24…", class: "ib-pat", spellcheck: "false", autocomplete: "off" });
+      const kind = el("select", { class: "em-select mx-narrow" }, ib.kinds.map((k) => el("option", { value: k, text: KIND_LABEL[k] })));
+      const note = el("input", { type: "text", placeholder: "note (optional)", style: "max-width:220px" });
+      const add = async () => {
+        try { await API.instabanAdd(pat.value, kind.value, note.value); pat.value = note.value = ""; toast("Added", "good"); load(); } catch (e) { toast(e.message, "bad"); }
+      };
+      pat.addEventListener("keydown", (e) => { if (e.key === "Enter") add(); });
+      const importBtn = btn("Import list", () => {
+        const ta = el("textarea", { rows: 12, class: "cw-mono", placeholder: "/.git/\n/.env  # secrets file\nregex:/wp-content/uploads/.*\\.php$", spellcheck: "false" });
+        const go = el("button", { class: "btn btn-primary", text: "Import", onclick: async () => {
+          go.disabled = true;
+          try {
+            const r = await API.instabanImport(ta.value); closeModal(); toast(`${r.added} added${r.skipped.length ? `, ${r.skipped.length} skipped` : ""}`, "good");
+            if (r.skipped.length) popNotice({ title: `${r.skipped.length} line${r.skipped.length === 1 ? "" : "s"} skipped`, text: r.skipped.slice(0, 3).join(" · "), kind: "warn" });
+            load();
+          } catch (e) { toast(e.message, "bad"); go.disabled = false; }
+        } });
+        openModal("Import patterns", el("div", { class: "dm-form" }, [
+          el("p", { class: "muted", text: "One pattern per line, matched as plain text inside the URL-decoded path and query. Start a line with regex: for a regular expression, starts: to match the beginning, ua: for a user agent, ip: for an address or range. Two spaces and # add a note. Lines that would match normal pages are skipped." }), ta]), [go]);
+      }, "btn-ghost");
+      const exportBtn = btn("Export", async () => { try { const t = await API.instabanExport(); downloadText("instawaff-ban-list.txt", t, "text/plain"); } catch (e) { toast(e.message, "bad"); } }, "btn-ghost");
+      const shown = ib.patterns.filter((p) => has(`${p.pattern} ${KIND_LABEL[p.kind] || p.kind} ${p.note || ""}`));
+      if (q) counter.textContent = `${shown.length} of ${ib.patterns.length} patterns`;
+      pane.append(card(`Application firewall: the ban list (${ib.patterns.length})`, [
+        el("div", { class: "ib-add" }, [pat, kind, note, btn("Add", add, "btn-primary")]),
+        el("p", { class: "muted mx-small", text: "Path patterns are matched on the request's path and query after URL-decoding, so %2e%2e%2f is seen as ../; user-agent patterns on the browser string; an address or range is refused and banned on sight. Nothing here is ever rendered or executed: a payload is just text that is compared." }),
+        shown.length ? el("div", { class: "table-wrap" }, el("table", { class: "mx-table ib-table" }, [
+          el("thead", {}, el("tr", {}, ["Pattern", "Match", "Note", "Hits", ""].map((h) => el("th", { text: h })))),
+          el("tbody", {}, shown.map((p) => el("tr", {}, [
+            el("td", {}, el("code", { class: "ib-code", raw: true, text: p.pattern })),
+            el("td", { class: "muted", text: KIND_LABEL[p.kind] || p.kind }),
+            el("td", { class: "muted", text: p.note || "" }),
+            el("td", { class: "num" }, p.hits ? el("button", { type: "button", class: "pill warn iw-pillbtn", title: "Show these hits", text: num(p.hits), onclick: () => { q = p.pattern; tab = "bans"; drawTabs(); drawPane(); } }) : el("span", { class: "muted", text: "0" })),
+            el("td", { class: "actions" }, armed("Delete", "Sure?", async () => { try { await API.instabanDelete(p.id); load(); } catch (e) { toast(e.message, "bad"); } }, "btn-ghost")),
+          ])))]))
+          : empty("trap", ib.patterns.length ? "No matching patterns" : "No patterns", ib.patterns.length ? "Try another search." : "Add one above or import a list."),
+      ], "", [importBtn, exportBtn]));
+      // ---- behaviour: what an address does, not what it asks for
+      const B = ib.behavior || {};
+      const brow = (key, title, desc, unit, hint) => {
+        const b = B[key] || { on: false, count: 10, window: 60 };
+        const count = el("input", { type: "number", min: "3", max: "100000", value: String(b.count), class: "ib-num" });
+        const win = el("input", { type: "number", min: "10", max: "3600", value: String(b.window), class: "ib-num" });
+        let isOn = !!b.on;
+        const store = async () => { try { await API.instabanBehavior({ [key]: { on: isOn, count: +count.value, window: +win.value } }); toast("Saved", "good"); } catch (e) { toast(e.message, "bad"); } };
+        [count, win].forEach((x) => x.addEventListener("change", store));
+        return el("div", { class: "ib-brow" }, [
+          el("div", { class: "iw-opt" }, [sw(isOn, (v) => { isOn = v; store(); }), el("div", { class: "iw-opt-txt" }, [el("b", { text: title }), el("small", { class: "muted", text: desc })])]),
+          el("div", { class: "ib-bvals" }, [el("span", { class: "muted", text: "ban after" }), count, el("span", { class: "muted", text: unit + " within" }), win, el("span", { class: "muted", text: "s" })]),
+          hint ? el("div", { class: "muted mx-small ib-bnote", text: hint }) : null,
+        ].filter(Boolean));
+      };
+      const heldText = !ib.watching ? (ib.waf_mode === "off" ? "Not watched while the firewall is off." : "Not watched: turn Auto-ban on.") : !ib.enabled ? "A match is recorded under Bans. Auto-ban is off, so nobody is banned." : ib.waf_mode === "detect" ? "Detect only: a match is recorded as would have been banned, nobody is banned." : "";
+      const heldNote = heldText ? el("div", { class: "mx-note" }, [icon("warning", 16), el("span", { text: heldText })]) : null;
+      pane.append(el("div", { class: "mx-grid2" }, [
+        card("Knocks", [
+          heldNote,
+          el("p", { class: "muted mx-small", text: "An address is banned for trying many ports in a row, before it finds one that answers." }),
+          brow("ports", "Knocking on ports", "Connections to many different ports in a short time: a port scan. Read from the Network Monitor's connection log.", "distinct ports",
+            ib.ports_source ? "" : "The Network Monitor's connection log is off, so port knocks aren't seen yet. Turn it on under Network → Network Monitor."),
+        ].filter(Boolean), "", [ib.ports_source ? null : btn("Network Monitor", () => navigate("netmon"), "btn-ghost")].filter(Boolean)),
+        card("Other", [
+          heldNote && heldNote.cloneNode(true),
+          el("p", { class: "muted mx-small", text: "An address is banned for how it behaves on your websites, whatever it asks for." }),
+          brow("errors", "Guessing paths", "Many pages that don't exist or are refused (404, 403…) in a short time: a scanner feeling around.", "error answers"),
+          brow("flood", "Hammering", "An unusual number of requests of any kind in a short time. Off by default: a busy site or a crawler can look like this.", "requests"),
+        ].filter(Boolean)),
+      ]));
+    }
+
+    // ---------------------------------------------------------------- exceptions: who and what is let through
+    function paneExceptions() {
+      const optRow = (control, title, desc) => el("div", { class: "iw-opt" }, [control, el("div", { class: "iw-opt-txt" }, [el("b", { text: title }), desc ? el("small", { class: "muted", text: desc }) : null].filter(Boolean))]);
+      const chip = (text, note, remove) => el("span", { class: `iw-chip ${remove ? "" : "locked"}`, title: note }, [el("code", { text }), el("small", { class: "muted", text: note }),
+        remove ? el("button", { type: "button", class: "iw-chip-x", title: "Remove", text: "×", onclick: remove }) : null].filter(Boolean));
+      const mine = yourIp.replace(/^::ffff:/, "");
+      const covered = [...d.trusted, ...(d.panel_trusted || []), ...(d.server_ips || [])].map((x) => x.replace(/\/32$/, ""));
+      const addr = el("input", { type: "text", class: "ib-pat", placeholder: "An address or a range, e.g. 203.0.113.10 or 10.0.0.0/8", spellcheck: "false", autocomplete: "off" });
+      const addTrusted = (v) => { const list = String(v).split(/[\s,]+/).filter(Boolean); if (list.length) save({ trusted: [...new Set([...d.trusted, ...list])] }, `${list.join(", ")} is let through`); };
+      addr.addEventListener("keydown", (e) => { if (e.key === "Enter") addTrusted(addr.value); });
+      pane.append(card("Addresses that are always let through", [
+        el("p", { class: "muted mx-p", text: "Requests from these addresses are never inspected, refused or banned. Your own devices and monitoring services belong here." }),
+        el("div", { class: "iw-chips" }, [
+          ...(d.server_ips || []).map((ip) => chip(ip, "this server, remembered", null)),
+          ...(d.panel_trusted || []).map((ip) => chip(ip, "trusted in IP Blocker & Trust", null)),
+          ...d.trusted.map((ip) => chip(ip, "added here", () => save({ trusted: d.trusted.filter((x) => x !== ip) }, `${ip} is inspected again`))),
+        ]),
+        d.installed ? el("div", { class: "ib-add" }, [addr, btn("Add", () => addTrusted(addr.value), "btn-primary"),
+          mine && !covered.includes(mine) ? btn(`Add my address (${mine})`, () => addTrusted(mine), "btn-ghost") : null].filter(Boolean)) : null,
+        el("p", { class: "muted mx-small", text: "This server's own address is remembered and always let through, so a site that calls itself (WordPress cron, a health check) is never refused or banned. Trusted addresses from IP Blocker & Trust count everywhere: firewall, ban list and fail2ban." }),
+      ].filter(Boolean), "", [btn("IP Blocker & Trust", () => navigate("ipblocker"), "btn-ghost")]));
+      if (!d.installed) return;
+      const names = [...new Set(sitesList.flatMap((s) => s.names))].sort();
+      pane.append(el("div", { class: "mx-grid2" }, [
+        card("Apps the rules know", [
+          el("p", { class: "muted mx-p", text: "On: the rules know what normal looks like for this app (editors, admin pages, uploads), so it doesn't trip the firewall." }),
+          el("div", { class: "iw-toggles" }, Object.entries(d.apps_all).map(([k, v]) => optRow(sw(d.apps.includes(k),
+            (on) => save({ apps: on ? [...new Set([...d.apps, k])] : d.apps.filter((x) => x !== k) }, `${v} exception ${on ? "on" : "off"}`)), v,
+            k === "roundcube" ? "Webmail is watched, never blocked" : ""))),
+        ]),
+        card("Websites", [
+          el("p", { class: "muted mx-p", text: "On: the site is protected. Off: the firewall skips that site only." }),
+          names.length ? el("div", { class: "iw-toggles" }, names.map((h) => optRow(sw(!d.sites_off.includes(h),
+            (on) => save({ sites_off: on ? d.sites_off.filter((x) => x !== h) : [...new Set([...d.sites_off, h])] }, on ? `${h} protected again` : `Firewall off for ${h}`)), h, d.sites_off.includes(h) ? "not protected" : "")))
+            : el("p", { class: "muted mx-none", text: "No websites yet." }),
+        ]),
+      ]));
+      const dis = Object.entries(d.disabled_rules);
+      pane.append(card(`Rules you switched off (${dis.length})`, [
+        el("p", { class: "muted mx-p", text: "A rule that keeps stopping your own app can be switched off for all sites. Find the request under Attacks, open it and choose Allow this rule." }),
+        dis.length ? el("div", { class: "iw-toggles" }, dis.map(([id, r]) => optRow(sw(false, () => call(() => API.wafRestore(id), `Rule ${id} active again`, load)), `${id} · ${r.msg || "rule"}`, r.since ? `switched off ${ago(r.since)}. Turn it on to enforce it again` : "Turn it on to enforce it again")))
+          : el("p", { class: "muted mx-none", text: "None: every rule is enforced." }),
+      ], "", [btn("Find a false alarm", () => open("attacks", () => { evFilter = "blocked"; }), "btn-ghost")]));
+    }
+
+    // ---------------------------------------------------------------- rule level: how strict the firewall is
+    function paneRules() {
+      if (!d.installed) { pane.append(el("div", { class: "card" }, empty("shield", "The firewall isn't installed", "Install ModSecurity and the OWASP Core Rule Set to inspect requests. The ban list works without it, from the access log.", btn("Open System Applications", () => navigate("sysapps"), "btn-primary")))); return; }
+      const lvl = el("div", { class: "mx-levels" }, [1, 2, 3, 4].map((n) => el("button", { type: "button", class: `mx-level ${d.paranoia === n ? "on" : ""}`,
+        onclick: () => d.paranoia !== n && save({ paranoia: n }, `Rule level: ${PARANOIA[n][0]}`) }, [el("b", { text: `${n} · ${PARANOIA[n][0]}` }), el("span", { class: "muted", text: PARANOIA[n][1] })])));
+      const thr = el("select", { class: "em-select", onchange: () => save({ threshold: +thr.value }, "Sensitivity saved") },
+        [[5, "Normal, one critical match blocks (recommended)"], [10, "Relaxed, needs two critical matches"], [25, "Lenient, only obvious attacks"], [3, "Tight, even minor matches add up"]].map(([v, l]) => el("option", { value: v, text: l })));
+      thr.value = String(d.threshold);
+      if (thr.value !== String(d.threshold)) thr.append(el("option", { value: d.threshold, text: `Custom (${d.threshold})`, selected: "" }));
+      pane.append(el("div", { class: "mx-grid2" }, [
+        card("Rule level (paranoia)", [lvl]),
+        card("Sensitivity", [field("Anomaly threshold", thr, "Every matching rule adds points; a request is blocked once it reaches this score."),
+          el("p", { class: "muted mx-small", text: `OWASP Core Rule Set ${d.crs_version || ""}. Something of your own being stopped? Add an exception instead of lowering the level.` }),
+          el("div", { class: "toolbar" }, [btn("Exceptions", () => open("exceptions"), "btn-ghost")])]),
+      ]));
     }
     load();
   }
@@ -881,7 +1208,7 @@ window.AuroraExtras = (ui) => {
       if (!d) return;
       listBox.innerHTML = "";
       if (cat) listBox.append(el("div", { class: "mx-hint" }, [icon(CAT_ICO[cat] || "listing", 18), el("div", {}, [el("b", { text: d.categories[cat].label }), el("p", { class: "muted", text: d.categories[cat].hint })]),
-        cat === "security" ? btn("WAF Firewall", () => navigate("modsec"), "btn-ghost") : cat === "permission" ? btn("Fix permissions", () => navigate("fixperms"), "btn-ghost") : cat === "mail" ? btn("Email", () => navigate("email"), "btn-ghost") : null]));
+        cat === "security" ? btn("InstaWAFF", () => navigate("instawaff"), "btn-ghost") : cat === "permission" ? btn("Fix permissions", () => navigate("fixperms"), "btn-ghost") : cat === "mail" ? btn("Email", () => navigate("email"), "btn-ghost") : null]));
       if (!d.total) { listBox.append(empty("check", "No errors in this period", "Nothing went wrong, or the selected sources are quiet.")); return; }
       if (mode === "grouped") {
         const gs = d.groups.filter((g) => (!cat || g.cat === cat) && lvlOk(g.level) && (!q || `${g.pattern} ${g.example.msg} ${g.mod} ${g.clients.map((c) => c[0]).join(" ")}`.toLowerCase().includes(q)));
@@ -1015,124 +1342,6 @@ window.AuroraExtras = (ui) => {
       body.append(el("p", { class: "muted mx-small mx-p", text: `Times are in your browser's time zone. Updated ${d.updated ? ago(d.updated) : "just now"}; the collector reads new log lines every 5 minutes.` }));
     }
     draw();
-  }
-
-  // ======================================================================
-  //  Security → InstaBan: a list of payloads and paths only attackers ask for; the first hit bans the address.
-  //  Everything shown here (patterns, request lines, user agents) is attacker-controlled text: textContent only.
-  // ======================================================================
-  async function viewInstaBan(root) {
-    const TTL_LABEL = { "1h": "1 hour", "6h": "6 hours", "24h": "24 hours", "7d": "7 days", "30d": "30 days", forever: "until unbanned" };
-    const KIND_LABEL = { contains: "path contains", starts: "path starts with", regex: "path regex", ua: "user agent contains", ip: "address or range" };
-    root.append(pageHead("InstaBan", "A list of payloads, paths and pages that no real visitor ever asks for. The first request that matches one gets its address banned at the firewall for the time you pick, the attempt is kept as evidence, and the address can be reported to its abuse desk. Trusted addresses are never banned."));
-    const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
-    root.append(body);
-    let d;
-    const load = async () => {
-      try { d = await API.instaban(); } catch (e) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); return; }
-      draw();
-    };
-    const setting = async (patch, msg) => { try { await API.instabanSettings(patch); toast(msg, "good"); load(); } catch (e) { toast(e.message, "bad"); } };
-    function draw() {
-      body.innerHTML = "";
-      // ---- status + settings
-      const ttl = el("select", { class: "em-select mx-narrow", onchange: () => setting({ ttl: ttl.value }, `Bans last ${TTL_LABEL[ttl.value]}`) },
-        d.ttl_choices.map((k) => el("option", { value: k, text: TTL_LABEL[k] || k })));
-      ttl.value = d.ttl;
-      body.append(el("div", { class: `card ib-hero ${d.enabled && (d.waf_mode === "block" || !d.waf_mode) ? "good" : ""}` }, [
-        el("div", { class: "net-card-h" }, [icon("trap", 22), el("h3", { text: !d.enabled ? "InstaBan is off" : d.waf_mode === "off" ? "InstaBan is stopped, the WAF is Off" : d.waf_mode === "detect" ? "InstaBan is only watching, the WAF is on Detect only" : "InstaBan is on" }), el("span", { style: "flex:1" }),
-          seg([["on", "On"], ["off", "Off"]], d.enabled ? "on" : "off", (v) => setting({ enabled: v === "on" }, v === "on" ? "InstaBan is on: new requests are checked within about a second" : "InstaBan is off"))]),
-        el("p", { class: "muted", text: d.enabled && d.waf_mode === "off"
-          ? "Nothing is read and nobody is banned while the WAF is Off. When it comes back, only requests from then on are checked."
-          : d.enabled && d.waf_mode === "detect"
-          ? "Requests that match are recorded below as would have been banned. Nobody is banned or reported until the WAF is set to Blocking."
-          : d.enabled
-          ? "Every Apache access log is read as it grows. A request whose path or query matches a pattern bans the address at once; the address, site, request and pattern are kept below."
-          : "Turn it on and every request from then on is checked against the list. Old log lines are not scanned, so nobody is banned for something from last month." }),
-        el("div", { class: "ib-opts" }, [
-          el("label", { class: "ib-opt" }, [el("span", { class: "muted", text: "Ban length" }), ttl]),
-          el("label", { class: "dm-check ib-opt" }, [el("input", { type: "checkbox", ...(d.report || d.waf_mode === "block" ? { checked: "checked" } : {}), ...(d.waf_mode === "block" ? { disabled: "disabled" } : {}), onchange: (e) => setting({ report: e.target.checked }, e.target.checked ? "Banned addresses are reported to their abuse desk" : "Reports are manual") }),
-            el("span", { text: (d.waf_mode === "block" ? " Each banned address is reported to its abuse desk, always on while the WAF is Blocking" : " Also report each banned address to its abuse desk") + " (uses this server's mail; set a sender under IP Blocker & Trust → Reports)" })]),
-        ]),
-        el("div", { class: "mx-tiles mx-tiles-4" }, [
-          tile("Bans so far", String(d.stats.bans || 0), "by InstaBan", "trap", d.stats.bans ? "accent" : ""),
-          tile("Hits, last 24 h", String(d.hits_24h || 0), `${d.stats.hits || 0} since the start`, "shield"),
-          tile("Patterns", String(d.pattern_count), "payloads and paths", "list"),
-          tile("Trusted", String(d.trusted), "addresses never banned", "check", "", () => navigate("ipblocker")),
-        ]),
-      ]));
-      // ---- behaviour: what an address does, not what it asks for
-      const B = d.behavior || {};
-      const brow = (key, title, desc, unit, note) => {
-        const b = B[key] || { on: false, count: 10, window: 60 };
-        const on = el("input", { type: "checkbox" }); on.checked = !!b.on;
-        const count = el("input", { type: "number", min: "3", max: "100000", value: String(b.count), class: "ib-num" });
-        const win = el("input", { type: "number", min: "10", max: "3600", value: String(b.window), class: "ib-num" });
-        const save = async () => { try { await API.instabanBehavior({ [key]: { on: on.checked, count: +count.value, window: +win.value } }); toast("Saved", "good"); } catch (e) { toast(e.message, "bad"); } };
-        [on, count, win].forEach((x) => x.addEventListener("change", save));
-        return el("div", { class: "ib-brow" }, [
-          el("label", { class: "dm-check" }, [on, el("span", {}, [el("b", { text: title }), el("small", { class: "muted", text: desc })])]),
-          el("div", { class: "ib-bvals" }, [el("span", { class: "muted", text: "ban after" }), count, el("span", { class: "muted", text: unit + " within" }), win, el("span", { class: "muted", text: "s" })]),
-          note ? el("div", { class: "muted mx-small ib-bnote", text: note }) : null,
-        ].filter(Boolean));
-      };
-      body.append(card("Behaviour", [
-        el("p", { class: "muted mx-small", text: "On top of the list: an address is banned for how it behaves, whatever it asks for. Trusted addresses are never banned." }),
-        brow("errors", "Guessing paths", "Many pages that don't exist or are refused (404, 403…) in a short time: a scanner feeling around.", "error answers"),
-        brow("flood", "Hammering", "An unusual number of requests of any kind in a short time. Off by default: a busy site or a crawler can look like this.", "requests"),
-        brow("ports", "Knocking on ports", "Connections to many different ports in a short time: a port scan. Read from the Network Monitor's connection log.", "distinct ports",
-          d.ports_source ? "" : "The Network Monitor's connection log is off, so port knocks aren't seen yet. Turn it on under Network → Network Monitor."),
-      ]));
-      // ---- patterns
-      const pat = el("input", { type: "text", placeholder: "/.git/config, /etc/passwd, <script, union select, sqlmap, 203.0.113.0/24…", class: "ib-pat", spellcheck: "false", autocomplete: "off" });
-      const kind = el("select", { class: "em-select mx-narrow" }, d.kinds.map((k) => el("option", { value: k, text: KIND_LABEL[k] })));
-      const note = el("input", { type: "text", placeholder: "note (optional)", style: "max-width:220px" });
-      const add = async () => {
-        try { await API.instabanAdd(pat.value, kind.value, note.value); pat.value = note.value = ""; toast("Added", "good"); load(); } catch (e) { toast(e.message, "bad"); }
-      };
-      pat.addEventListener("keydown", (e) => { if (e.key === "Enter") add(); });
-      const importBtn = btn("Import list", () => {
-        const ta = el("textarea", { rows: 12, class: "cw-mono", placeholder: "/.git/\n/.env  # secrets file\nregex:/wp-content/uploads/.*\\.php$", spellcheck: "false" });
-        const go = el("button", { class: "btn btn-primary", text: "Import", onclick: async () => {
-          go.disabled = true;
-          try { const r = await API.instabanImport(ta.value); closeModal(); toast(`${r.added} added${r.skipped.length ? `, ${r.skipped.length} skipped` : ""}`, "good"); if (r.skipped.length) popNotice({ title: `${r.skipped.length} line${r.skipped.length === 1 ? "" : "s"} skipped`, text: r.skipped.slice(0, 3).join(" · "), kind: "warn", icon: "info", ms: 9000 }); load(); }
-          catch (e) { toast(e.message, "bad"); go.disabled = false; }
-        } });
-        openModal("Import patterns", el("div", { class: "dm-form" }, [
-          el("p", { class: "muted", text: "One pattern per line, matched as plain text inside the URL-decoded path and query. Start a line with regex: for a regular expression, starts: to match the beginning, ua: for a user agent, ip: for an address or range. Two spaces and # add a note. Lines that would match normal pages are skipped." }), ta]), [go]);
-      }, "btn-ghost");
-      const exportBtn = btn("Export", async () => { try { const t = await API.instabanExport(); downloadText("instaban-patterns.txt", t, "text/plain"); } catch (e) { toast(e.message, "bad"); } }, "btn-ghost");
-      const rows = d.patterns.map((p) => el("tr", {}, [
-        el("td", {}, el("code", { class: "ib-code", raw: true, text: p.pattern })),
-        el("td", { class: "muted", text: KIND_LABEL[p.kind] || p.kind }),
-        el("td", { class: "muted", raw: true, text: p.note || "" }),
-        el("td", { class: "num" }, p.hits ? pill(String(p.hits), "warn") : el("span", { class: "muted", text: "0" })),
-        el("td", { class: "actions" }, armed("Delete", "Sure?", async () => { try { await API.instabanDelete(p.id); load(); } catch (e) { toast(e.message, "bad"); } }, "btn-ghost")),
-      ]));
-      body.append(card(`Patterns (${d.patterns.length})`, [
-        el("div", { class: "ib-add" }, [pat, kind, note, btn("Add", add, "btn-primary")]),
-        el("p", { class: "muted mx-small", text: "Path patterns are matched on the request's path and query after URL-decoding, so %2e%2e%2f is seen as ../; user-agent patterns on the browser string; an address or range bans on sight. Nothing here is ever rendered or executed: a payload is just text that is compared." }),
-        rows.length ? el("div", { class: "table-wrap" }, el("table", { class: "mx-table ib-table" }, [
-          el("thead", {}, el("tr", {}, ["Pattern", "Match", "Note", "Hits", ""].map((h) => el("th", { text: h })))), el("tbody", {}, rows)]))
-          : empty("trap", "No patterns", "Add one above or import a list."),
-      ], "", [importBtn, exportBtn]));
-      // ---- hits
-      const hits = d.hits.map((h) => el("tr", { class: h.banned ? "" : "ib-miss" }, [
-        el("td", { class: "muted", text: ago(h.ts) }),
-        el("td", {}, el("button", { type: "button", class: `ib-ip ${h.banned ? "ip-banned" : ""}`, raw: true, text: h.ip, onclick: () => ipCard(h.ip, load) })),
-        el("td", { class: "muted", raw: true, text: h.host || h.log || "" }),
-        el("td", {}, [el("code", { class: "ib-code", raw: true, text: `${h.method} ${h.target}` }), h.ua ? el("div", { class: "muted mx-small ib-ua", raw: true, text: h.ua }) : null].filter(Boolean)),
-        el("td", {}, [el("code", { class: "ib-code muted", raw: true, text: h.pattern }), h.kind && h.kind !== "contains" ? el("div", { class: "muted mx-small", text: KIND_LABEL[h.kind] || h.kind }) : null].filter(Boolean)),
-        el("td", {}, [h.banned ? pill("banned", "bad") : pill("not banned", "dim"), h.reported ? pill("reported", "warn") : null, h.error ? el("div", { class: "muted mx-small", raw: true, text: h.error }) : null].filter(Boolean)),
-        el("td", { class: "actions" }, [h.reported || !h.banned ? null : btn("Report", () => reportIp(h.ip, load), "btn-ghost"), btn("Lookup", () => ipCard(h.ip, load), "btn-ghost")].filter(Boolean)),
-      ]));
-      body.append(card(`Hits (${d.hits.length})`, [
-        hits.length ? el("div", { class: "table-wrap" }, el("table", { class: "mx-table ib-table" }, [
-          el("thead", {}, el("tr", {}, ["When", "Address", "Site", "Request", "Pattern", "Result", ""].map((h) => el("th", { text: h })))), el("tbody", {}, hits)]))
-          : empty("shield", "No hits yet", d.enabled ? "Nothing on the list has been requested since InstaBan was turned on." : "Turn InstaBan on to start watching."),
-      ], "", [hits.length ? armed("Clear list", "Sure?", async () => { try { await API.instabanClear(); load(); } catch (e) { toast(e.message, "bad"); } }, "btn-ghost") : null, btn("↻", load, "btn-ghost")].filter(Boolean)));
-    }
-    load();
   }
 
   // ======================================================================
@@ -1347,7 +1556,8 @@ window.AuroraExtras = (ui) => {
   }
 
   return {
-    modsec: viewWaf, instaban: viewInstaBan, ddnshosts: viewDdnsHosts, visitors: viewVisitors, errors: viewErrors, bandwidth: viewBandwidth,
+    instawaff: viewInstaWaff, modsec: (root) => viewInstaWaff(root, "attacks"), instaban: (root) => viewInstaWaff(root, "bans"),   // the two old addresses still open the page
+     ddnshosts: viewDdnsHosts, visitors: viewVisitors, errors: viewErrors, bandwidth: viewBandwidth,
     rawaccess: viewRawAccess, analytics: viewAnalytics, resources: viewResources,
     _ui: { el, pageHead, empty, call, armed, seg, tile, card, chart, rank, donut, sortableTable, ipCard, reportIp, t2s, num, dur, LS, niceMax },
   };

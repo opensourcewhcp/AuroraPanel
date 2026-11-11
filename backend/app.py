@@ -2184,7 +2184,7 @@ def api_modsec_install(user: str = auth.CurrentUser):
 
 
 # --------------------------------------------------------------------------- #
-# Security: WAF Firewall (ModSecurity + OWASP CRS)
+# Security: InstaWAFF, the firewall half (ModSecurity + OWASP CRS)
 # --------------------------------------------------------------------------- #
 def _waf_call(fn):
     try:
@@ -2212,14 +2212,20 @@ def api_waf(user: str = auth.CurrentUser):
     return waf.status()
 
 
+@app.get("/api/waf/you")
+def api_waf_you(request: Request, user: str = auth.CurrentUser):
+    """The address this browser comes from, for the "Add my address" button under Exceptions."""
+    return {"ip": (request.client.host if request.client else "") or ""}
+
+
 @app.post("/api/waf")
 def api_waf_update(body: WafBody, user: str = auth.CurrentUser):
     return _waf_call(lambda: waf.update(body.model_dump(exclude_none=True)))
 
 
 @app.get("/api/waf/events")
-def api_waf_events(hours: int = 24, ip: str = "", user: str = auth.CurrentUser):
-    ev = waf.events(hours=max(1, min(hours, 24 * 30)), limit=500, ip=ip)
+def api_waf_events(hours: int = 24, ip: str = "", limit: int = 500, user: str = auth.CurrentUser):
+    ev = waf.events(hours=max(1, min(hours, 24 * 30)), limit=max(1, min(limit, 5000)), ip=ip)
     try:
         ips = sorted({e["ip"] for e in ev})
         st, since = guard.status_of(ips), guard.ban_times(ips)
@@ -4408,7 +4414,7 @@ def _metrics_start():
         from . import instaban
         instaban.start()
     except Exception as exc:
-        problems.record("InstaBan", exc, hint="InstaBan is not watching the logs. Open Security → InstaBan.")
+        problems.record("InstaBan", exc, hint="InstaBan is not watching the logs. Open Security → InstaWAFF.")
     try:
         from . import legacy_cleanup
         legacy_cleanup.cleanup()

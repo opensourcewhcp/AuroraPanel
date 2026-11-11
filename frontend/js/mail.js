@@ -127,6 +127,19 @@ window.AuroraMail = (ui) => {
   const modalWide = () => { const m = document.querySelector("#modal .modal"); if (m) m.classList.add("em-modal"); };
 
   // ------------------------------------------------------------------ Overview
+  // Email → overview. Top to bottom, in the order someone looks for things: is it healthy, what is on it,
+  // my domains, every tool by what it is for, then the settings that are touched once.
+  const EMAIL_TOOLS = [
+    ["Mailboxes", "users", [["mailaccounts", "Email Accounts", "users", "Mailboxes, passwords and quotas"], ["forwarders", "Forwarders", "forward", "Send a copy to another address"],
+      ["autoresponders", "Autoresponders", "reply", "Away and automatic replies"], ["defaultaddress", "Default Address", "at", "Catch mail for names that don't exist"],
+      ["mailinglists", "Mailing Lists", "listing", "One address, many readers"], ["calendars", "Calendars & Contacts", "calendar", "Sync with phones and computers"]]],
+    ["Delivery", "send", [["deliverability", "Email Deliverability", "send", "SPF, DKIM, DMARC and DNS health"], ["mailrouting", "Email Routing", "route", "Deliver here or on another server"],
+      ["trackdelivery", "Track Delivery", "pin", "Follow a message hop by hop"], ["mailqueue", "Mail Queue", "queue", "Messages waiting to go out"],
+      ["mailtls", "Encryption", "lock", "Certificates for mail apps"]]],
+    ["Filtering", "filter", [["spamfilters", "Spam Filters", "spam", "Scores, thresholds, what happens to spam"], ["globalfilters", "Global Email Filters", "filter", "Rules for every mailbox"],
+      ["emailfilters", "Email Filters", "filter", "Rules for one mailbox"]]],
+    ["Maintenance", "disk", [["addressimporter", "Address Importer", "upload", "Create many accounts from a file"], ["maildisk", "Email Disk Usage", "disk", "Space used by each mailbox"]]],
+  ];
   async function viewOverview(root) {
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
     root.append(body);
@@ -134,47 +147,74 @@ window.AuroraMail = (ui) => {
     try { [st, doms] = await Promise.all([API.mailStatus(), domainsAll()]); }
     catch (e) { body.innerHTML = ""; body.append(el("p", { class: "empty", text: e.message })); return; }
     body.innerHTML = "";
-    const svc = (name, on) => el("span", { class: `em-svc ${on ? "on" : "off"}` }, [el("i"), name]);
-    const hostIn = el("input", { type: "text", value: st.hostname, class: "em-mono", spellcheck: "false" });
-    const tls = st.tls || {};
-    const selfSigned = tls.cert && tls.cert.self_signed;
-    body.append(el("div", { class: "em-hero" }, [
-      el("div", { class: "em-hero-main" }, [
+    const again = () => navigate("email", { history: "none" });
+    const tls = st.tls || {}, det = st.detected || {};
+    const selfSigned = !!(tls.cert && tls.cert.self_signed);
+    const services = st.services.spamassassin !== undefined
+      ? [["Postfix", st.services.postfix], ["Dovecot", st.services.dovecot], ["SpamAssassin", st.services.spamassassin], ["OpenDKIM", st.services.opendkim]]
+      : [["Postfix", st.services.postfix], ["Dovecot", st.services.dovecot], ["Rspamd", st.services.rspamd], ["Redis", st.services["redis-server"]]];
+    const down = services.filter(([, on]) => !on).map(([n]) => n);
+    const health = down.length ? [`${down.join(", ")} ${down.length === 1 ? "is" : "are"} stopped`, "bad"] : st.queue > 20 ? [`${st.queue} messages waiting`, "warn"] : ["Sending and receiving", "good"];
+    const fact = (label, value, extra) => el("div", { class: "eo-fact" }, [el("span", { class: "eo-fact-l", text: label }), el("div", { class: "eo-fact-v" }, [typeof value === "string" ? el("b", { text: value }) : value, extra || null].filter(Boolean))]);
+    const copy = (text) => el("button", { type: "button", class: "eo-copy", title: "Copy", onclick: async () => toast(await copyText(text) ? "Copied" : "Copy failed", "good") }, icon("t_copy", 13));
+    const ptrOk = det.ptr && det.ptr === st.hostname;
+    // ---- is it healthy
+    body.append(el("div", { class: `card eo-hero ${health[1]}` }, [
+      el("div", { class: "eo-hero-top" }, [
         el("span", { class: "em-hero-ico" }, icon("mail", 30)),
-        el("div", {}, [
-          el("h2", { text: "Your mail server" }),
-          el("div", { class: "em-svcs" }, [svc("Postfix", st.services.postfix), svc("Dovecot", st.services.dovecot), ...(st.services.spamassassin !== undefined ? [svc("SpamAssassin", st.services.spamassassin), svc("OpenDKIM", st.services.opendkim)]
-            : [svc("Rspamd", st.services.rspamd), svc("Redis", st.services["redis-server"])])]),
-          el("p", { class: "muted", html: `Server name <b>${esc(st.hostname)}</b> · IP <b>${esc(st.ip || "?")}</b> · ${st.queue ? `<b>${st.queue}</b> message(s) waiting in the queue` : "queue empty"}` }),
+        el("div", { class: "eo-hero-txt" }, [
+          el("div", { class: "eo-hero-title" }, [el("h2", { text: "Mail server" }), pill(health[0], health[1])]),
+          el("div", { class: "em-svcs" }, services.map(([name, on]) => el("span", { class: `em-svc ${on ? "on" : "off"}`, title: on ? `${name} is running` : `${name} is stopped` }, [el("i"), name]))),
+        ]),
+        el("div", { class: "em-hero-act" }, [
+          st.webmail ? el("a", { class: "btn btn-primary", href: wm(st.webmail), target: "_blank", rel: "noopener" }, [icon("inbox", 15), " Open Webmail"])
+            : btn("Install Webmail", () => installComponent("webmail"), "btn-primary"),
+          btn("Send a test email", () => testMail(), "btn-ghost"),
         ]),
       ]),
-      el("div", { class: "em-hero-act" }, [
-        st.webmail ? el("a", { class: "btn btn-primary", href: wm(st.webmail), target: "_blank", rel: "noopener" }, [icon("inbox", 15), " Open Webmail"])
-          : btn("Install Webmail", () => installComponent("webmail"), "btn-primary"),
-        btn("Send a test email", () => testMail(), "btn-ghost"),
-      ]),
+      el("div", { class: "eo-facts" }, [
+        fact("Server name", el("code", { class: "eo-mono", text: st.hostname || "-" }), st.hostname ? copy(st.hostname) : null),
+        fact("IP address", el("code", { class: "eo-mono", text: st.ip || "-" }), st.ip ? copy(st.ip) : null),
+        det.ptr !== undefined ? fact("Reverse DNS", ptrOk ? pill("matches", "good") : pill(det.ptr ? "does not match" : "none", "warn")) : null,
+        fact("Encryption", selfSigned ? pill("self-signed", "warn") : tls.cert ? pill("trusted certificate", "good") : pill("not set up", "warn")),
+        fact("Queue", st.queue ? pill(`${st.queue} waiting`, st.queue > 20 ? "warn" : "dim") : pill("empty", "good")),
+      ].filter(Boolean)),
     ]));
-    if (selfSigned) body.append(el("div", { class: "dm-note" }, [icon("lock", 15), el("span", { html: "Mail is encrypted with a <b>self-signed certificate</b>. Phones and mail apps will warn about it, get a free Let's Encrypt certificate under <b>Encryption</b> once your mail host name points here." }),
+    if (selfSigned) body.append(el("div", { class: "dm-note" }, [icon("lock", 15), el("span", { text: "Mail is encrypted with a self-signed certificate, so phones and mail apps will warn about it. Get a free Let's Encrypt certificate under Encryption once your mail host name points here." }),
       btn("Encryption", () => navigate("mailtls"), "btn-ghost")]));
-    const stat = (n, label, ico, view) => el("button", { type: "button", class: "em-stat", onclick: () => navigate(view) }, [el("span", { class: "em-stat-ico" }, icon(ico, 18)), el("b", { text: String(n) }), el("span", { class: "muted", text: label })]);
-    body.append(el("div", { class: "em-stats" }, [stat(st.domains, "domains", "globe", "deliverability"), stat(st.accounts, "email accounts", "users", "mailaccounts"),
-      stat(st.forwarders, "forwarders", "forward", "forwarders"), stat(st.lists, "mailing lists", "listing", "mailinglists")]));
+    // ---- what is on it
+    const tile = (n, label, sub, ico, view, kind) => el("button", { type: "button", class: `mx-tile ${kind || ""}`, onclick: () => navigate(view) },
+      [el("div", { class: "mx-tile-l" }, [icon(ico, 15), el("span", { text: label })]), el("div", { class: "mx-tile-v", text: String(n) }), el("div", { class: "mx-tile-s", text: sub })]);
+    body.append(el("div", { class: "mx-tiles eo-tiles" }, [
+      tile(st.domains, "Domains", "that receive mail here", "globe", "deliverability", st.domains ? "accent" : ""),
+      tile(st.accounts, "Email accounts", "mailboxes", "users", "mailaccounts"),
+      tile(st.forwarders, "Forwarders", "addresses passed on", "forward", "forwarders"),
+      tile(st.lists, "Mailing lists", "one address, many readers", "listing", "mailinglists"),
+      tile(st.queue || 0, "In the queue", st.queue ? "waiting to go out" : "nothing waiting", "queue", "mailqueue", st.queue > 20 ? "warnt" : ""),
+    ]));
     if (!st.accounts) {
-      const steps = [["Create your first email account", "Pick a domain and a name, the domain is set up automatically.", "mailaccounts", st.accounts > 0],
-        ["Publish the DNS records", "MX, SPF, DKIM and DMARC so mail arrives and isn't marked as spam.", "deliverability", false],
-        ["Connect your phone and computer", "One-tap profile for iPhone/Mac; automatic setup for Thunderbird and Outlook.", "mailaccounts", false]];
+      const steps = [["Create your first email account", "Pick a domain and a name, the domain is set up automatically.", "mailaccounts"],
+        ["Publish the DNS records", "MX, SPF, DKIM and DMARC so mail arrives and isn't marked as spam.", "deliverability"],
+        ["Connect your phone and computer", "One-tap profile for iPhone/Mac; automatic setup for Thunderbird and Outlook.", "mailaccounts"]];
       body.append(el("div", { class: "card em-start" }, [el("h3", { text: "Get started in three steps" }),
         el("ol", {}, steps.map(([t, d, v]) => el("li", { onclick: () => navigate(v) }, [el("b", { text: t }), el("span", { class: "muted", text: d })])))]));
     }
-    // domains with deliverability
+    // ---- my domains, next to who may sign in
     const dl = el("div", { class: "em-domains" }, doms.domains.length ? doms.domains.map((d) => {
       const score = el("span", { class: "em-score" }, el("span", { class: "muted", text: "checking…" }));
       return el("div", { class: "em-dom" }, [avatar(d.domain), el("div", { class: "em-dom-t" }, [el("b", { text: d.domain }),
         el("span", { class: "muted", text: `${d.accounts} account${d.accounts === 1 ? "" : "s"} · routing ${d.routing}` })]), score,
-        btn("DNS health", () => { state.mailDomain = d.domain; navigate("deliverability"); }, "btn-ghost"),
-        d.accounts ? null : armed("Remove", "Click again to remove", () => call(() => API.mailDomainRemove(d.domain), `${d.domain} removed`, () => navigate("email", { history: "none" })), "btn-ghost")].filter(Boolean));
+        el("div", { class: "eo-dom-act" }, [btn("DNS health", () => { state.mailDomain = d.domain; navigate("deliverability"); }, "btn-ghost"),
+          btn("Accounts", () => { state.mailDomain = d.domain; navigate("mailaccounts"); }, "btn-ghost"),
+          d.accounts ? null : armed("Remove", "Click again to remove", () => call(() => API.mailDomainRemove(d.domain), `${d.domain} removed`, again), "btn-ghost")].filter(Boolean))]);
     }) : [empty("globe", "No mail domains yet", "Creating an email account adds its domain automatically.", btn("Create an email account", () => navigate("mailaccounts"), "btn-primary"))]);
-    body.append(el("div", { class: "card" }, [el("div", { class: "em-card-h" }, [el("h3", { text: "Domains" }), btn("Add a domain", () => addDomainModal(() => navigate("email", { history: "none" })), "btn-ghost")]), dl]));
+    const guardBox = el("div", { class: "eo-guard" });
+    body.append(el("div", { class: "eo-split" }, [
+      el("div", { class: "card eo-card" }, [el("div", { class: "em-card-h" }, [el("div", { class: "eo-h" }, [el("h3", { text: "Domains" }), pill(String(doms.domains.length), "dim")]),
+        btn("Add a domain", () => addDomainModal(again), "btn-ghost")]), dl]),
+      guardBox,
+    ]));
+    mailGuard(guardBox);
     if (doms.domains.length) API.mailDeliverability("").then((r) => {
       r.domains.forEach((x, i) => {
         const node = dl.children[i] && dl.children[i].querySelector(".em-score");
@@ -183,42 +223,39 @@ window.AuroraMail = (ui) => {
         node.append(x.local ? pill("local network", "good") : x.error ? pill("check failed", "warn") : pill(`${x.score}/${x.total} DNS checks`, x.score === x.total ? "good" : x.score >= 3 ? "warn" : "bad"));
       });
     }).catch(() => {});
-    // all tools
-    const tools = [["mailaccounts", "Email Accounts", "users"], ["forwarders", "Forwarders", "forward"], ["mailrouting", "Email Routing", "route"],
-      ["autoresponders", "Autoresponders", "reply"], ["defaultaddress", "Default Address", "at"], ["mailinglists", "Mailing Lists", "listing"],
-      ["trackdelivery", "Track Delivery", "pin"], ["globalfilters", "Global Email Filters", "filter"], ["emailfilters", "Email Filters", "filter"],
-      ["deliverability", "Email Deliverability", "send"], ["addressimporter", "Address Importer", "upload"], ["spamfilters", "Spam Filters", "spam"],
-      ["mailtls", "Encryption", "lock"], ["calendars", "Calendars & Contacts", "calendar"], ["maildisk", "Email Disk Usage", "disk"], ["mailqueue", "Mail Queue", "queue"]];
-    body.append(el("div", { class: "card" }, [el("h3", { text: "Email tools" }), el("div", { class: "em-tools" },
-      tools.map(([v, l, ic]) => el("button", { type: "button", class: "em-tool", onclick: () => navigate(v) }, [el("span", { class: "em-tool-ico" }, icon(ic, 20)), el("span", { text: l })])))]));
-    // local network mail
+    // ---- every tool, by what it is for
+    body.append(el("div", { class: "card eo-card" }, [el("div", { class: "em-card-h" }, [el("h3", { text: "Email tools" })]),
+      el("div", { class: "eo-groups" }, EMAIL_TOOLS.map(([group, gico, tools]) => el("div", { class: "eo-group" }, [
+        el("div", { class: "eo-group-h" }, [icon(gico, 14), el("span", { text: group })]),
+        ...tools.map(([v, l, ic, d]) => el("button", { type: "button", class: "eo-tool", onclick: () => navigate(v) }, [el("span", { class: "em-tool-ico" }, icon(ic, 18)),
+          el("span", { class: "eo-tool-txt" }, [el("b", { text: l }), el("small", { class: "muted", text: d })]), el("span", { class: "eo-tool-go" }, icon("chevron", 14))])),
+      ])))]));
+    // ---- set once: local mail, and the name the server introduces itself with
     const lc = st.local || {};
-    body.append(el("div", { class: "card em-local" }, [el("div", { class: "em-card-h" }, [el("h3", { text: "Local mail (no internet needed)" }),
-      lc.enabled ? pill(`on · @${lc.domain}`, "good") : pill("off")]),
-      el("p", { class: "muted", text: `Gives this ${lc.mdns ? "device" : "server"} its own mail domain, ${lc.domain}. Apps here (WordPress, cron, scripts) can use addresses like admin@${lc.domain}, and other AuroraPanel servers on the same network can send to it, they find each other by their .local name, no DNS or internet required.` }),
+    const local = el("div", { class: "card eo-card em-local" }, [el("div", { class: "em-card-h" }, [el("h3", { text: "Local mail" }), lc.enabled ? pill(`on · @${lc.domain}`, "good") : pill("off", "dim")]),
+      el("p", { class: "muted", text: `Mail that never leaves your network. This ${lc.mdns ? "device" : "server"} gets its own domain, ${lc.domain || "this-device.local"}, for apps here (WordPress, cron, scripts) and for other AuroraPanel servers nearby. No DNS or internet needed.` }),
       lc.enabled ? el("div", { class: "em-local-tips" }, [
         el("div", {}, [el("b", { text: "Here" }), el("span", { class: "muted", text: lc.accounts.length ? lc.accounts.join(", ") : `No accounts yet, create e.g. admin@${lc.domain} in Email Accounts.` })]),
         el("div", {}, [el("b", { text: "Other devices" }), el("span", { class: "muted", text: `Send to name@<their-hostname>.local (e.g. you@ns2.local). ${lc.mdns ? "This device answers its .local name (avahi is running)." : "This machine doesn't run avahi, so other devices can't find it by name, fine for mail on this server itself."}` })]),
       ]) : null,
       el("div", { class: "toolbar" }, lc.enabled ? [btn("Create an account here", () => { state.mailDomain = lc.domain; navigate("mailaccounts"); }, "btn-primary"),
-        btn("Turn off", () => call(() => API.mailLocal(false), "Local mail turned off", () => navigate("email", { history: "none" })), "btn-ghost")]
-        : [btn(`Turn on local mail as @${lc.domain || "this-device.local"}`, () => call(() => API.mailLocal(true), "Local mail is on", () => navigate("email", { history: "none" })), "btn-primary")]),
-    ].filter(Boolean)));
-    // server name: detected automatically unless set by hand
-    const det = st.detected || {};
+        btn("Turn off", () => call(() => API.mailLocal(false), "Local mail turned off", again), "btn-ghost")]
+        : [btn(`Turn on as @${lc.domain || "this-device.local"}`, () => call(() => API.mailLocal(true), "Local mail is on", again), "btn-primary")]),
+    ].filter(Boolean));
     const auto = st.hostname_mode !== "manual";
+    const hostIn = el("input", { type: "text", value: st.hostname, class: "em-mono", spellcheck: "false" });
     hostIn.disabled = auto;
-    const autoSw = sw(auto, (v) => { hostIn.disabled = v; if (v) call(() => API.mailHostname("auto"), "Server name follows DNS automatically", () => navigate("email", { history: "none" })); });
-    const guardBox = el("div", {});
-    body.append(guardBox);
-    mailGuard(guardBox);
-    body.append(el("div", { class: "card" }, [el("h3", { text: "Mail server name (HELO)" }),
-      el("p", { class: "muted", text: "The name this server introduces itself with to other mail servers. Gmail and Outlook check that it points to this server and matches the IP's reverse DNS (PTR)." }),
+    const useBtn = btn("Use this name", () => call(() => API.mailHostname(hostIn.value.trim()), "Server name saved", again), "btn-primary");
+    useBtn.disabled = auto;
+    const autoSw = sw(auto, (v) => { hostIn.disabled = useBtn.disabled = v; if (v) call(() => API.mailHostname("auto"), "Server name follows DNS automatically", again); else hostIn.focus(); });
+    const helo = el("div", { class: "card eo-card" }, [el("div", { class: "em-card-h" }, [el("h3", { text: "Mail server name (HELO)" }), pill(auto ? "automatic" : "set by hand", auto ? "good" : "dim")]),
+      el("p", { class: "muted", text: "The name this server introduces itself with. Gmail and Outlook check that it points here and matches the IP's reverse DNS (PTR)." }),
       el("div", { class: "em-toggle" }, [autoSw, el("div", {}, [el("b", { text: "Choose automatically (recommended)" }),
         el("span", { class: "muted", text: det.hostname ? `Best name now: ${det.hostname}. ${det.reason}` : "Follows your domains' DNS and the IP's reverse DNS." })])]),
-      det.ptr !== undefined ? kv([["This server's IP", det.ip || "n/a"], ["Its reverse DNS (PTR)", det.ptr ? det.ptr : "none"],
-        ["Matches the server name", det.ptr && det.ptr === st.hostname ? pill("yes", "good") : pill("no, ask your provider", "warn")]]) : null,
-      el("div", { class: "toolbar" }, [hostIn, btn("Use this name", () => { autoSw.querySelector("input").checked = false; call(() => API.mailHostname(hostIn.value.trim()), "Server name saved", () => navigate("email", { history: "none" })); }, "btn-primary")])].filter(Boolean)));
+      det.ptr !== undefined ? kv([["This server's IP", det.ip || "-"], ["Its reverse DNS (PTR)", det.ptr ? det.ptr : "none"],
+        ["Matches the server name", ptrOk ? pill("yes", "good") : pill("no, ask your provider", "warn")]]) : null,
+      el("div", { class: "eo-helo" }, [hostIn, useBtn])].filter(Boolean));
+    body.append(el("div", { class: "eo-split eo-split-even" }, [local, helo]));
   }
   function testMail(prefill) {
     const to = el("input", { type: "email", placeholder: "you@gmail.com", value: prefill || "" });

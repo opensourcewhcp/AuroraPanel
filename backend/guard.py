@@ -442,7 +442,7 @@ def _sync_waf():
         if waf.installed() and waf.module_on():
             waf.apply()
     except Exception as exc:
-        problems.record("Trusted addresses → WAF", exc, hint="The WAF may still block a trusted address. Open Security → WAF Firewall and press Apply.")
+        problems.record("Trusted addresses → WAF", exc, hint="The WAF may still block a trusted address. Open Security → InstaWAFF and press Apply.")
 
 
 def _sync_fail2ban():

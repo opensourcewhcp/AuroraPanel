@@ -336,7 +336,7 @@
     activity: "t_activity", isolation: "t_isolate", dockerapps: "t_docker", servers: "t_servers", mysites: "globe", panelusers: "t_usergear", wptoolkit: "t_wptool", migrate: "t_migrate", alerts: "t_bell", schedbackups: "t_cloudup", updates: "t_update", autossl: "t_autossl",
     visitors: "visitors", errors: "errors", bandwidth: "gauge", rawaccess: "rawlog", analytics: "chart", resources: "dashboard",
     ssh: "key", caddy: "globe", nginx: "globe", ipblocker: "ban", ssl: "lock", panelhttps: "lock", tokens: "token", hotlink: "link", secreport: "listing",
-    leech: "trap", modsec: "shield", instaban: "trap", security: "phone", fixperms: "home", virus: "virus", globalsec: "shield",
+    leech: "trap", instawaff: "shield", modsec: "shield", instaban: "trap", security: "phone", fixperms: "home", virus: "virus", globalsec: "shield",
     files: "folder", shadow: "shadow", disk: "disk", backups: "backup", cron: "cron", indexes: "indexes",
     errorpages: "error", handlers: "handler", mime: "mime", dns: "dns",
     appmgr: "packages", sysapps: "services", phpver: "brick", password: "lock", accountprefs: "services",
@@ -925,7 +925,7 @@
     indexes: "Indexes", mime: "MIME Types", errorpages: "Error Pages", handlers: "Apache Handlers",
     virus: "Virus Scanner", dns: "Track DNS",
     ssh: "SSH Access", caddy: "Caddy Websites", nginx: "Nginx Websites", ipblocker: "IP Blocker & Trust", ssl: "SSL/TLS Certificates", tokens: "Manage API Tokens",
-    hotlink: "Hotlink Protection", redirects: "Redirects", modsec: "WAF Firewall", instaban: "InstaBan", globalsec: "Global Security", secreport: "Security Report", activity: "Activity Log", isolation: "Site Isolation", dockerapps: "Docker", servers: "Servers", mysites: "My Websites", panelusers: "Panel Users", wptoolkit: "WordPress Toolkit", migrate: "Move from cPanel", alerts: "Alerts", schedbackups: "Scheduled Backups", updates: "Updates", autossl: "AutoSSL", ddnshosts: "Dynamic DNS", visitors: "Visitors", errors: "Errors", bandwidth: "Bandwidth", rawaccess: "Raw Access", analytics: "Analytics", resources: "Resource Usage", leech: "Fail2ban",
+    hotlink: "Hotlink Protection", redirects: "Redirects", instawaff: "InstaWAFF", modsec: "InstaWAFF", instaban: "InstaWAFF", globalsec: "Global Security", secreport: "Security Report", activity: "Activity Log", isolation: "Site Isolation", dockerapps: "Docker", servers: "Servers", mysites: "My Websites", panelusers: "Panel Users", wptoolkit: "WordPress Toolkit", migrate: "Move from cPanel", alerts: "Alerts", schedbackups: "Scheduled Backups", updates: "Updates", autossl: "AutoSSL", ddnshosts: "Dynamic DNS", visitors: "Visitors", errors: "Errors", bandwidth: "Bandwidth", rawaccess: "Raw Access", analytics: "Analytics", resources: "Resource Usage", leech: "Fail2ban",
     fixperms: "Fix Home Permissions", vhosts: "Domains", revproxy: "Reverse Proxy", dyndns: "Dynamic DNS Updater", zones: "Zone Editor", dmarc: "DMARC",
     mysql: "Manage Databases", mysqlwiz: "MariaDB Wizard", pgsql: "PostgreSQL Databases",
     pgwiz: "PostgreSQL Wizard",
@@ -1071,7 +1071,7 @@
     vhosts: ["apache"], revproxy: ["apache"], redirects: ["apache"], hotlink: ["apache"], indexes: ["apache"], mime: ["apache"], errorpages: ["apache"],
     handlers: ["apache"], dirprivacy: ["apache"], webdisk: ["apache"], phpver: ["web"],
     appstore: ["web", "mariadb"], app: ["web", "mariadb"], wordpress: ["web", "mariadb"],
-    modsec: ["apache", "modsecurity"], dockerapps: ["docker"], autossl: { need: ["apache"], soft: ["certbot"] }, visitors: ["apache"], analytics: ["apache"], rawaccess: ["apache"], ddnshosts: { soft: ["bind9"] }, ssl: { need: ["apache"], soft: ["certbot"] },
+    instawaff: { need: ["apache"], soft: ["modsecurity"] }, modsec: { need: ["apache"], soft: ["modsecurity"] }, dockerapps: ["docker"], autossl: { need: ["apache"], soft: ["certbot"] }, visitors: ["apache"], analytics: ["apache"], rawaccess: ["apache"], ddnshosts: { soft: ["bind9"] }, ssl: { need: ["apache"], soft: ["certbot"] },
     mysql: ["mariadb"], mysqlwiz: ["mariadb"], pgsql: ["postgresql"], pgwiz: ["postgresql"],
     ftpaccounts: ["ftp"], git: ["git"], cron: ["cron"], virus: ["clamav"], firewall: ["ufw"], leech: ["fail2ban"],
     zones: { soft: ["bind9"] },
@@ -1265,8 +1265,7 @@
       { label: "Manage API Tokens", icon: "token", view: "tokens" },
       { label: "Hotlink Protection", icon: "link", view: "hotlink" },
       { label: "Fail2ban", icon: "trap", view: "leech" },
-      { label: "WAF Firewall", icon: "shield", view: "modsec" },
-      { label: "InstaBan", icon: "trap", view: "instaban" },
+      { label: "InstaWAFF", icon: "shield", view: "instawaff" },
       { label: "Site Isolation", icon: "t_isolate", view: "isolation" },
       { label: "Two-Factor Authentication", icon: "phone", view: "security" },
       { label: "Activity Log", icon: "t_activity", view: "activity" },
@@ -5615,62 +5614,99 @@
       catch (e) { toast(e.message, "bad"); go.disabled = false; }
     }, "btn-primary");
     openModal("Trust an address", el("div", {}, [field("Address or range", target), field("Note (optional)", note),
-      el("p", { class: "dm-hint", text: "Trusted addresses are never blocked: existing bans on them are lifted, manual bans are refused, fail2ban ignores them (they're added to its ignore list automatically) and the WAF lets their requests through." })]), [go]);
+      el("p", { class: "dm-hint", text: "Trusted addresses are never blocked: existing bans on them are lifted, manual bans are refused, fail2ban ignores them (they're added to its ignore list automatically) and InstaWAFF lets their requests through." })]), [go]);
   }
   function viewIPBlocker(root) {
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
-    root.append(el("div", { class: "toolbar" }, [btn("Ban an address…", () => banDialog("", load), "btn-danger"), btn("Trust an address…", () => trustDialog("", load), "btn-primary"),
-      btn("Fail2ban settings", () => navigate("leech"), "btn-ghost"), btn("Network Monitor", () => navigate("netmon"), "btn-ghost")]), body);
-    const when = (ts) => (ts ? `${new Date(ts * 1000).toLocaleString()} (${ago(ts)})` : "n/a");
+    const found = el("span", { class: "muted ipb-found" });
+    const search = el("input", { type: "search", class: "ipb-search", placeholder: "Search every list: an address, a reason, where it was banned from…", spellcheck: "false", autocomplete: "off" });
+    root.append(el("div", { class: "toolbar ipb-bar" }, [btn("Ban an address…", () => banDialog("", load), "btn-danger"), btn("Trust an address…", () => trustDialog("", load), "btn-primary"),
+      btn("Fail2ban settings", () => navigate("leech"), "btn-ghost"), btn("Network Monitor", () => navigate("netmon"), "btn-ghost"), search, found]), body);
+    // One way to show a moment everywhere on this page: the date, the time to the second, and how long ago or how far off.
+    const DATE = { year: "numeric", month: "short", day: "numeric" }, TIME = { hour: "2-digit", minute: "2-digit", second: "2-digit" };
+    const stamp = (ts, rel) => {
+      if (!ts) return el("span", { class: "muted", text: "-" });
+      const d = new Date(ts * 1000);
+      return el("div", { class: "ipb-when", title: d.toString() }, [
+        el("div", { class: "ipb-when-top" }, [el("span", { class: "ipb-date", text: d.toLocaleDateString([], DATE) }), el("span", { class: "ipb-time", text: d.toLocaleTimeString([], TIME) })]),
+        el("small", { class: "muted", text: rel || ago(ts) })]);
+    };
+    const until = (ts) => {
+      const left = ts - Date.now() / 1000;
+      return stamp(ts, left > 0 ? `lifts in ${fmtDur(left)}` : "lifting now");
+    };
     const bare = (cidr) => String(cidr || "").replace(/\/(32|128)$/, "");
     const lookup = (ip) => { const f = (extraViews()._ui || {}).ipCard; if (f) f(ip, load); };
     const reportIp = (ip, done) => { const f = (extraViews()._ui || {}).reportIp; if (f) f(ip, done); };
     const single = (cidr) => !String(cidr).includes("/") || /\/(32|128)$/.test(cidr);
     const unban = (t) => btn("Unban", async () => { try { await API.guardUnban(t); toast(`${t} unbanned`, "good"); load(); } catch (e) { toast(e.message, "bad"); } });
+    const section = (ico, title, count, hint, content, tone) => el("div", { class: "card ipb-card" }, [
+      el("div", { class: "ipb-card-h" }, [el("span", { class: `ipb-ico ${tone || ""}` }, icon(ico, 18)), el("h3", { text: title }), el("span", { class: `pill ${count ? tone || "dim" : "dim"}`, text: String(count) }),
+        el("span", { class: "muted ipb-hint", text: hint })]), content]);
+    const nothing = (text) => el("p", { class: "muted ipb-none", text });
+    // Search: any text in a row, on every list at once. Kept while the page refreshes itself.
+    const filter = () => {
+      const words = search.value.toLowerCase().split(/\s+/).filter(Boolean);
+      let shown = 0, all = 0;
+      body.querySelectorAll("tbody tr").forEach((tr) => { const ok = words.every((w) => tr.textContent.toLowerCase().includes(w)); tr.style.display = ok ? "" : "none"; all++; if (ok) shown++; });
+      found.textContent = words.length ? `${shown} of ${all} rows` : "";
+    };
+    search.addEventListener("input", filter);
     const load = () => guardedLoad(async () => {
       let reported = {};
       const [d] = await Promise.all([API.guard(), API.abuseReported().then((r) => { reported = r || {}; }).catch(() => {})]);
       const bannedSet = new Set([...d.bans.map((b) => bare(b.cidr)), ...d.fail2ban.map((a) => a.ip)]);
+      const now = Date.now() / 1000;
       // "reported" pill: when the address was sent to its network's abuse desk (click it to read or send again)
       const repPill = (ip) => { const r = reported[ip]; return r ? el("button", { type: "button", class: "pill warn pill-btn-rep", text: `reported ${ago(r.ts)}`,
         title: `Reported to ${(r.to || []).join(", ")} on ${new Date(r.ts * 1000).toLocaleString()}, click to read or send again`, onclick: () => reportIp(ip, load) }) : null; };
-      const addr = (ip, cidr, st) => el("div", { class: "net-actions" }, [el("code", { class: `net-mono ${ipCls(st || "banned", reported[ip])}`, text: cidr || ip }), repPill(ip)]);
+      const addr = (ip, cidr, st) => el("div", { class: "ipb-addr" }, [el("code", { class: `net-mono ${ipCls(st || "banned", reported[ip])}`, text: cidr || ip }), repPill(ip)].filter(Boolean));
+      const reps = Object.entries(reported).sort((x, y) => y[1].ts - x[1].ts);
+      const soon = d.bans.filter((b) => b.expires && b.expires - now < 3600).length;
+      const stat = (ico, label, value, sub, tone) => el("div", { class: `mx-tile ${tone || ""}` }, [el("div", { class: "mx-tile-l" }, [icon(ico, 15), el("span", { text: label })]),
+        el("div", { class: "mx-tile-v", text: String(value) }), el("div", { class: "mx-tile-s", text: sub })]);
       body.innerHTML = "";
       if (!d.enabled) body.append(el("p", { class: "dm-hint", text: "The ban list is created the first time you ban or trust something." }));
-      body.append(el("h2", { class: "section-title", text: `Banned by you (${d.bans.length})` }));
-      body.append(el("p", { class: "dm-hint", text: "Every ban made from the panel, the IP card, Network Monitor, WAF Firewall, Visitors or here, with when, from where and why. “reported” means its abuse desk was told." }));
-      body.append(d.bans.length ? simpleTable(["Address / range", "Banned at", "Banned from", "Reason", "Expires", "Blocked packets", ""], d.bans.map((b) => row(
-        addr(bare(b.cidr), b.cidr), when(b.created), el("span", { class: "pill dim", text: b.source || "IP Blocker" }), b.reason || "n/a",
-        b.expires ? `${new Date(b.expires * 1000).toLocaleString()} (in ${fmtDur(b.expires - Date.now() / 1000)})` : "never",
-        b.packets, el("div", { class: "net-actions" }, [
-          single(b.cidr) ? btn("Lookup", () => lookup(bare(b.cidr)), "btn-ghost") : null,
-          single(b.cidr) && !reported[bare(b.cidr)] ? btn("Report", () => reportIp(bare(b.cidr), load), "btn-ghost") : null,
-          unban(b.cidr)].filter(Boolean)),
-      ))) : el("p", { class: "empty", text: "No manual bans." }));
-      body.append(el("h2", { class: "section-title", text: `Banned by fail2ban (${d.fail2ban.length})` }));
-      body.append(d.fail2ban.length ? simpleTable(["Address", "Caught by", "Time left", "Blocked packets", ""], d.fail2ban.map((a) => row(
-        addr(a.ip), el("span", { class: "pill warn", text: `fail2ban · ${a.jails.join(", ") || "jail"}` }), a.expires_in ? fmtDur(a.expires_in) : "until unbanned", a.packets,
-        el("div", { class: "net-actions" }, [
-          btn("Lookup", () => lookup(a.ip), "btn-ghost"),
-          reported[a.ip] ? null : btn("Report", () => reportIp(a.ip, load), "btn-ghost"),
-          unban(a.ip),
-          btn("Ban permanently", () => banDialog(a.ip, load), "btn-ghost")].filter(Boolean)),
-      ))) : el("p", { class: "empty", text: "Nothing is banned automatically right now." }));
+      body.append(el("div", { class: "mx-tiles ipb-tiles" }, [
+        stat("ban", "Banned by you and the panel", d.bans.length, d.bans.length ? `${d.bans.filter((b) => !b.expires).length} permanent${soon ? `, ${soon} lifting within the hour` : ""}` : "nothing banned", d.bans.length ? "accent" : ""),
+        stat("trap", "Banned by fail2ban", d.fail2ban.length, d.fail2ban.length ? "after repeated failed logins" : "nothing right now"),
+        stat("mail", "Reported", reps.length, reps.length ? `last ${ago(reps[0][1].ts)}` : "no reports sent"),
+        stat("check", "Trusted", d.trusted.length, "never banned or filtered", d.trusted.length ? "goodt" : ""),
+      ]));
+      body.append(section("ban", "Banned", d.bans.length, "Every ban made from the panel: InstaWAFF, the IP card, Network Monitor, Visitors or here.",
+        d.bans.length ? simpleTable(["Address / range", "Blocked at", "Banned from", "Reason", "Lifts at", "Blocked packets", ""], d.bans.map((b) => row(
+          addr(bare(b.cidr), b.cidr), stamp(b.created), el("span", { class: "pill dim", text: b.source || "IP Blocker" }), b.reason || "-",
+          b.expires ? until(b.expires) : el("span", { class: "pill bad", title: "Stays banned until you unban it", text: "permanent" }),
+          el("span", { class: "ipb-num", text: Number(b.packets || 0).toLocaleString() }), el("div", { class: "net-actions" }, [
+            single(b.cidr) ? btn("Lookup", () => lookup(bare(b.cidr)), "btn-ghost") : null,
+            single(b.cidr) && !reported[bare(b.cidr)] ? btn("Report", () => reportIp(bare(b.cidr), load), "btn-ghost") : null,
+            unban(b.cidr)].filter(Boolean)),
+        ))) : nothing("No bans. Ban an address above, or let InstaWAFF's Auto-ban do it."), "bad"));
+      body.append(section("trap", "Banned by fail2ban", d.fail2ban.length, "Lifted automatically; fail2ban does not record when a ban started.",
+        d.fail2ban.length ? simpleTable(["Address", "Caught by", "Lifts at", "Blocked packets", ""], d.fail2ban.map((a) => row(
+          addr(a.ip), el("span", { class: "pill warn", text: `fail2ban · ${a.jails.join(", ") || "jail"}` }),
+          a.expires_in ? until(now + a.expires_in) : el("span", { class: "pill bad", text: "until unbanned" }), el("span", { class: "ipb-num", text: Number(a.packets || 0).toLocaleString() }),
+          el("div", { class: "net-actions" }, [
+            btn("Lookup", () => lookup(a.ip), "btn-ghost"),
+            reported[a.ip] ? null : btn("Report", () => reportIp(a.ip, load), "btn-ghost"),
+            unban(a.ip),
+            btn("Ban permanently", () => banDialog(a.ip, load), "btn-ghost")].filter(Boolean)),
+        ))) : nothing("Nothing is banned automatically right now."), "warn"));
       // Reported to abuse desks, with whether the address is (still) banned here
-      const reps = Object.entries(reported).sort((x, y) => y[1].ts - x[1].ts);
-      body.append(el("h2", { class: "section-title", text: `Reported to abuse desks (${reps.length})` }));
-      body.append(reps.length ? simpleTable(["Address", "Reported at", "To", "From", "Evidence", "Status here", ""], reps.map(([ip, r]) => row(
-        el("code", { class: `net-mono ${bannedSet.has(ip) ? "ip-banned" : "ip-reported"}`, text: ip }), when(r.ts), (r.to || []).join(", "), r.from || "n/a", r.events ? `${r.events} event${r.events === 1 ? "" : "s"}` : "n/a",
-        bannedSet.has(ip) ? pill("banned", "bad") : pill("not banned", "dim"),
-        el("div", { class: "net-actions" }, [btn("Lookup", () => lookup(ip), "btn-ghost"), btn("Read / send again", () => reportIp(ip, load), "btn-ghost"),
-          bannedSet.has(ip) ? null : btn("Ban", () => banDialog(ip, load), "btn-danger")].filter(Boolean)),
-      ))) : el("p", { class: "empty", text: "No abuse reports sent yet. Report an attacker from its IP card, the WAF Firewall or Network Monitor, the owner's abuse desk gets the evidence by email." }));
-      body.append(el("h2", { class: "section-title", text: `Trusted (${d.trusted.length})` }));
-      body.append(d.trusted.length ? simpleTable(["Address / range", "Note", "Added", ""], d.trusted.map((t) => row(
-        el("code", { class: "net-mono ip-trusted", text: t.cidr }), t.note || "n/a", new Date(t.created * 1000).toLocaleDateString(),
-        el("div", { class: "net-actions" }, [btn("Remove", async () => { if (!confirmInline(`Stop trusting ${t.cidr}? It can then be banned by fail2ban again.`)) return; try { await API.guardUntrust(t.cidr); toast("Removed", "good"); load(); } catch (e) { toast(e.message, "bad"); } }, "btn-danger")]),
-      ))) : el("p", { class: "empty", text: "No trusted addresses. Tip: trust your own devices (or your LAN range) so a mistyped password never locks you out." }));
+      body.append(section("mail", "Reported to abuse desks", reps.length, "The owner of the network got the evidence by email.",
+        reps.length ? simpleTable(["Address", "Reported at", "To", "From", "Evidence", "Status here", ""], reps.map(([ip, r]) => row(
+          el("code", { class: `net-mono ${bannedSet.has(ip) ? "ip-banned" : "ip-reported"}`, text: ip }), stamp(r.ts), (r.to || []).join(", "), r.from || "-", r.events ? `${r.events} event${r.events === 1 ? "" : "s"}` : "-",
+          bannedSet.has(ip) ? pill("banned", "bad") : pill("not banned", "dim"),
+          el("div", { class: "net-actions" }, [btn("Lookup", () => lookup(ip), "btn-ghost"), btn("Read / send again", () => reportIp(ip, load), "btn-ghost"),
+            bannedSet.has(ip) ? null : btn("Ban", () => banDialog(ip, load), "btn-danger")].filter(Boolean)),
+        ))) : nothing("No abuse reports sent yet. Report an attacker from its IP card, InstaWAFF or Network Monitor."), "warn"));
+      body.append(section("check", "Trusted", d.trusted.length, "Never banned, ignored by fail2ban, let through by the firewall.",
+        d.trusted.length ? simpleTable(["Address / range", "Note", "Trusted since", ""], d.trusted.map((t) => row(
+          el("code", { class: "net-mono ip-trusted", text: t.cidr }), t.note || t.reason || "-", stamp(t.created),
+          el("div", { class: "net-actions" }, [btn("Remove", async () => { if (!confirmInline(`Stop trusting ${t.cidr}? It can then be banned by fail2ban again.`)) return; try { await API.guardUntrust(t.cidr); toast("Removed", "good"); load(); } catch (e) { toast(e.message, "bad"); } }, "btn-danger")]),
+        ))) : nothing("No trusted addresses. Tip: trust your own devices (or your LAN range) so a mistyped password never locks you out."), "good"));
       body.append(el("p", { class: "dm-hint", text: `Always protected: ${d.protected.join(", ")}.` }));
+      filter();
     });
     state.refreshHandler = load; load();
     const t = setInterval(load, 15000); state.cleanups.push(() => clearInterval(t));
@@ -6144,15 +6180,21 @@
               toast(`${r.domain} removed`, "good"); reload();
             } catch (err) { toast(err.message, "bad"); b.disabled = false; b.classList.remove("armed"); b.textContent = "Remove"; }
           }, "btn-ghost");
+          // A domain that still has mailboxes can't be removed: say why under what it is used for, and keep the
+          // buttons in one tidy column (Remove is shown, switched off, with the reason on hover).
+          const locked = btn("Remove", () => {}, "btn-ghost");
+          locked.disabled = true;
+          locked.title = `${r.domain} still has ${accounts} email account${accounts === 1 ? "" : "s"}. Delete ${accounts === 1 ? "it" : "them"} first.`;
           return el("tr", {}, [
-            el("td", {}, el("b", { text: r.domain })),
-            el("td", {}, el("div", { style: "display:flex;gap:6px;flex-wrap:wrap" }, [
+            el("td", {}, el("div", { class: "dwo-name" }, [el("span", { class: "dwo-ico" }, icon("globe", 16)), el("b", { text: r.domain })])),
+            el("td", {}, [el("div", { class: "dwo-used" }, [
               r.mail ? pill(`Email${accounts ? ` · ${accounts} account${accounts === 1 ? "" : "s"}` : ""}`, "good") : null,
-              r.zone ? pill("DNS zone", "dim") : null].filter(Boolean))),
-            el("td", { class: "actions" }, [
-              r.mail ? btn("Email", () => { state.mailDomain = r.domain; navigate("mailaccounts"); }, "btn-ghost") : null,
+              r.zone ? pill("DNS zone", "dim") : null].filter(Boolean)),
+              accounts ? el("div", { class: "muted dwo-note", text: `Delete its email account${accounts === 1 ? "" : "s"} first to remove this domain.` }) : null].filter(Boolean)),
+            el("td", { class: "actions" }, el("div", { class: "dwo-actions" }, [
+              r.mail ? btn(accounts ? "Email accounts" : "Email", () => { state.mailDomain = r.domain; navigate("mailaccounts"); }, "btn-ghost") : null,
               r.zone ? btn("Zone", () => navigate("zones"), "btn-ghost") : null,
-              accounts ? el("span", { class: "muted", style: "font-size:12px", text: "Delete its email accounts to remove it" }) : rm].filter(Boolean)),
+              accounts ? locked : rm].filter(Boolean))),
           ]);
         })),
       ])),

@@ -183,21 +183,37 @@ def test_small_fixes_everywhere():
     assert 'id="am-mail"' in html and 'id="avatar-dot"' in html
 
 
-def test_instaban_and_activity_cleanup_in_the_interface():
-    """Security → InstaBan: patterns are shown as text only (never HTML), the page is registered everywhere;
-    Activity Log has a Clean up dialog whose copy goes to the Recycle Bin."""
+def test_instawaff_is_one_page_for_the_firewall_and_the_ban_list():
+    """Security → InstaWAFF: the WAF and the ban list merged. Attacker text is shown as text only (never HTML),
+    every feature of the two old pages is there, and it can be searched, paged, investigated and reported from."""
     extras = (FRONT / "js" / "extras.js").read_text(encoding="utf-8")
-    view = extras[extras.index("async function viewInstaBan("):extras.index("//  Metrics → Raw Access")]
-    assert "html:" not in view and "innerHTML =" not in view.replace("body.innerHTML = \"\"", "")   # attacker text is never rendered as HTML
-    for s in ("API.instaban()", "API.instabanAdd(pat.value, kind.value, note.value)", "API.instabanImport(ta.value)", "API.instabanDelete(p.id)", "API.instabanClear()",
-              'raw: true, text: p.pattern', 'raw: true, text: `${h.method} ${h.target}`', "reportIp(h.ip, load)", "ipCard(h.ip, load)", "Trusted addresses are never banned"):
+    view = extras[extras.index("function viewInstaWaff("):extras.index("//  Domains → Dynamic DNS")]
+    assert "html:" not in view and "innerHTML =" not in view.replace('innerHTML = ""', "")   # attacker text is never rendered as HTML
+    for s in ("API.waf()", "API.instaban()", "API.wafSave(data)", "API.wafTest()", "API.wafAllow(r.id, r.msg)", "API.wafRestore(id)", "API.wafEvents(hours, \"\", IW_MAX)",
+              "API.instabanSettings(patch)", "API.instabanAdd(pat.value, kind.value, note.value)", "API.instabanImport(ta.value)", "API.instabanDelete(p.id)", "API.instabanClear()",
+              "API.instabanBehavior(", "API.instabanExport()", "API.guardBan(ip,", "API.guardUnban(ip)", "reportIp(h.ip, load)", "reportIp(ip, loadEvents)", "ipCard(h.ip, load)", "ipCard(ip, loadEvents)",
+              'raw: true, text: p.pattern', "paranoia", "threshold", "sites_off", "trusted", "server_ips", "panel_trusted"):
         assert s in view, s
-    assert "instaban: viewInstaBan" in extras
+    for tab in ("Overview", "Attacks", "Bans", "Detection", "Exceptions", "Rule level"):
+        assert f'"{tab}"]' in extras, tab
+    assert 'IW_CATS = [["app", "Application firewall"], ["knocks", "Knocks"], ["other", "Other"]]' in extras
+    assert "IW_SIZES = [100, 300, 500, 1000, 5000]" in extras and 'value: "custom", text: "Custom"' in view   # page sizes, and any number
+    assert "words().every((w) => t.includes(w))" in view                                                    # search: an address or any text
+    assert 'type: "checkbox"' not in view and view.count("sw(") >= 7                                         # switches, not checkmarks
+    assert "instawaff: viewInstaWaff" in extras and "modsec: (root) => viewInstaWaff(" in extras and "instaban: (root) => viewInstaWaff(" in extras
+    assert "function viewWaf(" not in extras and "function viewInstaBan(" not in extras
     app_js = (FRONT / "js" / "app.js").read_text(encoding="utf-8")
-    assert 'instaban: "InstaBan"' in app_js and '{ label: "InstaBan", icon: "trap", view: "instaban" }' in app_js
-    assert 'data-view="instaban"' in (FRONT / "index.html").read_text(encoding="utf-8")
+    assert 'instawaff: "InstaWAFF"' in app_js and '{ label: "InstaWAFF", icon: "shield", view: "instawaff" }' in app_js
+    assert 'view: "modsec" }' not in app_js and 'view: "instaban" }' not in app_js
+    index = (FRONT / "index.html").read_text(encoding="utf-8")
+    assert 'data-view="instawaff"' in index and 'data-view="modsec"' not in index and 'data-view="instaban"' not in index
     ops = (FRONT / "js" / "ops.js").read_text(encoding="utf-8")
-    assert '["ib", API.instaban]' in ops and 'view: "instaban"' in ops
+    assert '["ib", API.instaban]' in ops and 'view: "instawaff"' in ops and 'view: "instaban"' not in ops
+
+
+def test_activity_cleanup_in_the_interface():
+    """Activity Log has a Clean up dialog whose copy goes to the Recycle Bin."""
+    ops = (FRONT / "js" / "ops.js").read_text(encoding="utf-8")
     assert "API.auditPurge(mode, 30, keep.checked)" in ops and "Keep a copy in the Recycle Bin" in ops
 
 

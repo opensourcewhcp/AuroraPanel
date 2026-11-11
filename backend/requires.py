@@ -284,7 +284,7 @@ COMPONENTS: dict[str, dict] = {
         "check": lambda: shutil.which("clamscan", path=PATH) is not None,
     },
     "modsecurity": {
-        "name": "WAF Firewall", "icon": "shield", "size": "about 6 MB",
+        "name": "InstaWAFF firewall", "icon": "shield", "size": "about 6 MB",
         "desc": "ModSecurity with the OWASP Core Rule Set: blocks SQL injection, XSS, path traversal, scanners and other web attacks before they reach your sites.",
         "pkgs": ["libapache2-mod-security2", "modsecurity-crs"],
         "needs": ["apache"],
