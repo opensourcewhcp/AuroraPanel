@@ -126,6 +126,45 @@ def disks() -> list[dict]:
     return result
 
 
+_WIFI_RATE = {"at": 0.0, "mbps": None}
+
+
+def _wifi_rate() -> int | None:
+    """The Wi-Fi link's current rate in Mbit/s. The kernel reports no speed for wireless, NetworkManager does.
+    Asked at most twice a minute: the page polls every two seconds."""
+    import shutil
+    import subprocess
+    import time
+    if time.monotonic() - _WIFI_RATE["at"] < 30 and _WIFI_RATE["at"]:
+        return _WIFI_RATE["mbps"]
+    rate = None
+    nmcli = shutil.which("nmcli")
+    if nmcli:
+        try:
+            out = subprocess.run([nmcli, "-t", "-f", "IN-USE,RATE", "dev", "wifi", "list", "--rescan", "no"], capture_output=True, text=True, timeout=8).stdout
+            for line in out.splitlines():
+                if line.startswith("*:"):
+                    digits = "".join(c for c in line.split(":", 1)[1].split()[0] if c.isdigit())
+                    rate = int(digits) if digits else None
+                    break
+        except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+            rate = None
+    _WIFI_RATE.update(at=time.monotonic(), mbps=rate)
+    return rate
+
+
+def _iface_kind(name: str) -> str:
+    """loopback, wifi, virtual (bridges, Docker, VPN tunnels: no cable, so no link speed) or wired."""
+    import os
+    if name == "lo":
+        return "loopback"
+    if os.path.isdir(f"/sys/class/net/{name}/wireless"):
+        return "wifi"
+    if os.path.exists(f"/sys/devices/virtual/net/{name}"):
+        return "virtual"
+    return "wired"
+
+
 def networks() -> dict:
     addrs = psutil.net_if_addrs()
     stats = psutil.net_if_stats()
@@ -143,14 +182,19 @@ def networks() -> dict:
         )
         st = stats.get(name)
         counters = io.get(name)
+        kind = _iface_kind(name)
+        speed = st.speed if st else None
+        if not speed and kind == "wifi" and st and st.isup:
+            speed = _wifi_rate()
         interfaces.append(
             {
                 "name": name,
+                "kind": kind,
                 "ipv4": ipv4,
                 "ipv6": ipv6,
                 "mac": mac,
                 "is_up": st.isup if st else None,
-                "speed_mbps": st.speed if st else None,
+                "speed_mbps": speed or None,
                 "bytes_sent": counters.bytes_sent if counters else 0,
                 "bytes_recv": counters.bytes_recv if counters else 0,
             }

@@ -3710,6 +3710,16 @@ def api_portcheck(body: PortBody, user: str = auth.CurrentUser):
     return _vpn_call(lambda: portcheck.check(body.port, body.proto))
 
 
+@app.get("/api/portcheck/ports")
+def api_portcheck_ports(user: str = auth.CurrentUser):
+    return _vpn_call(portcheck.listening)
+
+
+@app.post("/api/portcheck/scan")
+def api_portcheck_scan(user: str = auth.CurrentUser):
+    return _vpn_call(portcheck.scan)
+
+
 @app.post("/api/portcheck/upnp/open")
 def api_portcheck_upnp_open(body: PortBody, user: str = auth.CurrentUser):
     return _vpn_call(lambda: portcheck.upnp_open(body.port, body.proto))

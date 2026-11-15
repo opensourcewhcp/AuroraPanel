@@ -2807,30 +2807,29 @@
   const netCard = (ico, title, sub, ...kids) => el("div", { class: "card dmm-card" }, [el("div", { class: "cw-card-h" }, [icon(ico, 16), el("div", {}, [el("h3", { text: title }), sub ? el("p", { text: sub }) : null])]), ...kids]);
 
   // ---- Overview ----
+  // Top to bottom: where this server sits on the network, what is flowing right now, every interface in one
+  // table (real ones first, Docker bridges and tunnels folded away), and a quick reachability test.
   function netOverviewTab(body) {
-    const top = el("div", { class: "net-sum" }, el("div", { class: "loading", text: "Reading network…" }));
-    const legacy = el("div", { style: "margin-top:16px" });
+    const top = el("div", {}, el("div", { class: "card vp-card" }, el("div", { class: "loading", text: "Reading network…" })));
+    const legacy = el("div");
     body.append(top, legacy);
+    const shared = { o: null };
     API.netOverview().then((o) => {
+      shared.o = o;
       top.innerHTML = "";
-      const tile = (ico, k, v, sub) => el("div", { class: "card net-tile" }, [el("span", { class: "scard-ico" }, icon(ico, 16)), el("div", {}, [el("span", { class: "muted", text: k }), el("b", { text: v }), sub ? el("span", { class: "dm-hint", text: sub }) : null])]);
-      top.append(
-        tile("home", "Hostname", o.hostname, `${o.hostname}.local on your LAN`),
-        tile("link", "You're connected via", o.panel_iface || "?", o.panel_ip || ""),
-        tile("network", "Gateway (router)", o.gateway ? o.gateway.ip : "n/a", o.gateway ? `via ${o.gateway.device}` : ""),
-        tile("dns", "DNS servers", o.dns.join(", ") || "n/a", ""));
-      if (!o.nm) top.append(el("div", { class: "dm-note", style: "grid-column:1/-1" }, [icon("info", 15), el("span", { text: "This machine's network is set up with netplan / systemd-networkd (normal on Ubuntu servers and VPSs), so it's shown read-only here. Wi-Fi, hotspot and IP changes need NetworkManager." })]));
-      o.devices.forEach((d) => {
-        const c = o.connections.find((x) => x.device === d.device);
-        top.append(el("div", { class: "card net-dev" }, [
-          el("span", { class: `net-dot ${/^connected/.test(d.state) ? "on" : ""}` }),
-          el("div", {}, [el("b", { text: `${d.device} · ${d.type}` }), el("span", { class: "muted", text: `${d.state}${d.connection ? " · " + d.connection : ""}` }),
-            c ? el("span", { class: "dm-hint", text: `${(c.live_addresses[0] || "no address")} · ${c.method === "manual" ? "static" : "DHCP"}` })
-              : d.addresses ? el("span", { class: "dm-hint", text: d.addresses.join(", ") || "no address" }) : null]),
-        ]));
-      });
+      const up = o.devices.filter((d) => /^connected/.test(d.state)).length;
+      top.append(el("div", { class: "card vp-card" }, [
+        vpHead("network", "This server on the network", `${o.devices.length} interface${o.devices.length === 1 ? "" : "s"}, ${up} connected`),
+        el("div", { class: "vp-facts" }, [
+          vpFact("Hostname", el("div", { class: "vp-key" }, [el("b", { text: o.hostname }), el("span", { class: "muted vp-small", text: `${o.hostname}.local` })])),
+          vpFact("You reach the panel via", el("div", { class: "vp-key" }, [el("b", { text: o.panel_iface || "-" }), o.panel_ip ? el("code", { class: "net-mono", text: o.panel_ip }) : null].filter(Boolean))),
+          vpFact("Gateway (router)", el("div", { class: "vp-key" }, [el("b", { text: o.gateway ? o.gateway.ip : "-" }), o.gateway ? el("span", { class: "muted vp-small", text: `via ${o.gateway.device}` }) : null].filter(Boolean))),
+          vpFact("DNS servers", o.dns.join(", ") || "-"),
+        ]),
+        !o.nm ? el("div", { class: "vp-quiet" }, [icon("info", 16), el("span", { class: "muted", text: "This machine's network is set up with netplan / systemd-networkd (normal on Ubuntu servers and VPSs), so it is shown read-only here. Wi-Fi, hotspot and IP changes need NetworkManager." })]) : null,
+      ].filter(Boolean)));
     }).catch((e) => { top.innerHTML = ""; top.append(el("p", { class: "empty", text: e.message })); });
-    netLegacy(legacy);
+    netLegacy(legacy, shared);
   }
 
   // ---- Wi-Fi ----
@@ -2987,23 +2986,22 @@
     }).catch((e) => body.append(el("p", { class: "empty", text: e.message })));
   }
 
-  function netLegacy(root) {
-    // Ping tool
-    const ping = el("div", { class: "card", style: "margin-bottom:16px" }, [
-      el("h3", { text: "Network test, ping" }),
-      el("div", { class: "toolbar", style: "margin:0" }, [
-        el("input", { id: "ping-host", type: "text", placeholder: "host or IP (e.g. google.com)", value: "8.8.8.8", style: "flex:1;min-width:200px", onkeydown: (e) => { if (e.key === "Enter") doPing(); } }),
-        el("button", { class: "btn btn-sm btn-primary", text: "Ping", onclick: doPing }),
-        el("button", { class: "btn btn-sm", text: "Traceroute", onclick: () => navigate("dns") }),
-      ]),
-      el("div", { id: "ping-out", style: "margin-top:12px" }),
-    ]);
-    const tiles = el("div", { class: "gauge-row", id: "net-tiles" });
-    const chart = el("div", { class: "chart-row", id: "net-chart", style: "grid-template-columns:1fr;margin-bottom:16px" });
+  function netLegacy(root, shared) {
+    const tiles = el("div", { class: "nw-rates", id: "net-tiles" });
+    const chart = el("div", { class: "nw-chart", id: "net-chart" });
     const body = el("div", { id: "net-body" }, el("div", { class: "loading", text: "Loading…" }));
-    root.append(ping, tiles, chart, body);
+    const host = el("input", { id: "ping-host", type: "text", placeholder: "host or IP (e.g. google.com)", value: "8.8.8.8", spellcheck: "false", autocomplete: "off", onkeydown: (e) => { if (e.key === "Enter") doPing(); } });
+    const out = el("div", { id: "ping-out" });
+    const ping = el("div", { class: "card vp-card" }, [
+      vpHead("radar", "Reachability test", "Ping a host from this server"),
+      el("div", { class: "vp-inline" }, [field("Host or IP", host), btn("Ping", () => doPing(), "btn-primary"), btn("Traceroute", () => navigate("dns"), "btn-ghost")]),
+      out,
+    ]);
+    root.append(el("div", { class: "nw-live" }, [tiles, chart]), body, ping);
 
-    let prev = null, prevT = 0;
+    let prev = null, prevT = 0, showVirtual = false;
+    const VIRTUAL = /^(br-|docker|veth|virbr|tun|tap|wg|lo$)/;
+    const KIND = { wifi: "Wi-Fi", wired: "Ethernet", virtual: "virtual", loopback: "loopback" };
     const load = async () => {
       await guardedLoad(async () => {
         const data = await API.network();
@@ -3020,38 +3018,54 @@
         tiles.innerHTML = "";
         tiles.append(netStat("Download", "↓", "#22c9a0", rxRate, rx));
         tiles.append(netStat("Upload", "↑", "#5aa2ff", txRate, tx));
-        // throughput chart (scale to max)
         chart.innerHTML = "";
         chart.append(throughputChart(netHist));
 
+        // One table for every interface: what NetworkManager says about it, joined with its counters.
+        const o = (shared && shared.o) || { devices: [], connections: [] };
+        const dev = Object.fromEntries(o.devices.map((d) => [d.device, d]));
+        const con = Object.fromEntries(o.connections.map((c) => [c.device, c]));
+        const isVirtual = (n) => (n.kind ? n.kind === "virtual" || n.kind === "loopback" : VIRTUAL.test(n.name));
+        const real = data.interfaces.filter((n) => !isVirtual(n)), virt = data.interfaces.filter(isVirtual);
+        const speed = (n) => n.speed_mbps ? el("b", { text: n.speed_mbps >= 1000 ? `${+(n.speed_mbps / 1000).toFixed(1)} Gbps` : `${n.speed_mbps} Mbps` })
+          : isVirtual(n) ? el("span", { class: "muted", title: "A virtual interface has no cable or radio, so there is no link speed", text: "virtual" })
+          : el("span", { class: "muted", title: n.is_up ? "The driver doesn't report a link speed" : "No link, so no speed", text: n.is_up ? "not reported" : "no link" });
+        const line = (n) => {
+          const d = dev[n.name], c = con[n.name];
+          const kind = KIND[n.kind] || (d && d.type) || "";
+          const state = d ? d.state.replace(" (externally)", "") : n.is_up ? "up" : "down";
+          const on = d ? /^connected/.test(d.state) : n.is_up;
+          return row(
+            el("div", { class: "pc-svc" }, [el("b", { text: n.name }), el("small", { class: "muted", text: [kind, d && d.connection && d.connection !== n.name ? d.connection : ""].filter(Boolean).join(" · ") })]),
+            el("div", { class: "nw-state" }, [el("span", { class: `net-dot ${on ? "on" : ""}` }), el("span", { text: state })]),
+            el("div", { class: "pc-svc" }, [n.ipv4 ? el("code", { class: "net-mono", text: n.ipv4 }) : el("span", { class: "muted", text: "no address" }),
+              c ? el("small", { class: "muted", text: c.method === "manual" ? "static" : "DHCP" }) : null].filter(Boolean)),
+            n.mac && n.mac !== "00:00:00:00:00:00" ? el("code", { class: "net-mono", text: n.mac }) : el("span", { class: "muted", text: "-" }),
+            el("span", { class: "ipb-num", text: fmtBytes(n.bytes_recv) }), el("span", { class: "ipb-num", text: fmtBytes(n.bytes_sent) }), speed(n));
+        };
+        const order = (a, b) => (b.is_up ? 1 : 0) - (a.is_up ? 1 : 0) || a.name.localeCompare(b.name);
+        const shown = [...real.sort(order), ...(showVirtual ? virt.sort(order) : [])];
         body.innerHTML = "";
-        const rows = data.interfaces.map((n) => el("tr", {}, [
-          el("td", { text: n.name }),
-          el("td", {}, el("span", { class: `pill ${n.is_up ? "good" : "dim"}`, text: n.is_up ? "up" : "down" })),
-          el("td", { class: "muted", text: n.ipv4 || "n/a" }),
-          el("td", { class: "muted", text: n.mac || "n/a" }),
-          el("td", { text: fmtBytes(n.bytes_recv) }),
-          el("td", { text: fmtBytes(n.bytes_sent) }),
-          el("td", { class: "muted", text: n.speed_mbps ? `${n.speed_mbps} Mbps` : "n/a" }),
+        body.append(el("div", { class: "card vp-card" }, [
+          vpHead("network", "Interfaces", `${real.length} physical${virt.length ? `, ${virt.length} virtual (Docker bridges, tunnels, loopback)` : ""}`,
+            [virt.length ? btn(showVirtual ? "Hide virtual" : `Show ${virt.length} virtual`, () => { showVirtual = !showVirtual; load(); }, "btn-ghost") : null]),
+          shown.length ? simpleTable(["Interface", "State", "Address", "MAC", "Received", "Sent", "Link speed"], shown.map(line))
+            : el("div", { class: "vp-quiet" }, [icon("info", 16), el("span", { class: "muted", text: "No physical interface found. Show the virtual ones to see what is there." })]),
         ]));
-        body.append(el("div", { class: "table-wrap" }, el("table", {}, [
-          el("thead", {}, el("tr", {}, ["Interface", "State", "IPv4", "MAC", "↓ Recv", "↑ Sent", "Speed"].map((h) => el("th", { text: h })))),
-          el("tbody", {}, rows),
-        ])));
       });
     };
     async function doPing() {
-      const host = $("#ping-host").value.trim(); if (!host) return;
-      $("#ping-out").innerHTML = '<div class="loading">Pinging…</div>';
+      const target = host.value.trim(); if (!target) return;
+      out.innerHTML = ""; out.append(el("div", { class: "loading", text: `Pinging ${target}…` }));
       try {
-        const r = await API.ping(host);
-        $("#ping-out").innerHTML = "";
-        $("#ping-out").append(el("div", { style: "display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap" }, [
+        const r = await API.ping(target);
+        out.innerHTML = "";
+        out.append(el("div", { class: "ipb-addr" }, [
           el("span", { class: `pill ${r.loss_pct === 0 ? "good" : r.loss_pct === 100 ? "bad" : "warn"}`, text: `${r.loss_pct != null ? r.loss_pct : "?"}% loss` }),
           r.avg_ms != null ? el("span", { class: "pill dim", text: `avg ${r.avg_ms} ms` }) : null,
-        ]));
-        $("#ping-out").append(el("pre", { class: "log", text: r.output }));
-      } catch (e) { $("#ping-out").innerHTML = ""; toast(e.message, "bad"); }
+        ].filter(Boolean)));
+        out.append(el("pre", { class: "log", text: r.output }));
+      } catch (e) { out.innerHTML = ""; toast(e.message, "bad"); }
     }
     const timer = setInterval(load, 2000);
     (state.cleanups = state.cleanups || []).push(() => clearInterval(timer));
@@ -5619,9 +5633,13 @@
   function viewIPBlocker(root) {
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
     const found = el("span", { class: "muted ipb-found" });
-    const search = el("input", { type: "search", class: "ipb-search", placeholder: "Search every list: an address, a reason, where it was banned from…", spellcheck: "false", autocomplete: "off" });
-    root.append(el("div", { class: "toolbar ipb-bar" }, [btn("Ban an address…", () => banDialog("", load), "btn-danger"), btn("Trust an address…", () => trustDialog("", load), "btn-primary"),
-      btn("Fail2ban settings", () => navigate("leech"), "btn-ghost"), btn("Network Monitor", () => navigate("netmon"), "btn-ghost"), search, found]), body);
+    const search = el("input", { type: "search", class: "ipb-search", placeholder: "Search this list: an address, a reason, where it was banned from…", spellcheck: "false", autocomplete: "off" });
+    root.append(el("div", { class: "ipb-top" }, [
+      el("p", { class: "muted ipb-lead", text: "One place for who is shut out and who is always let in. A ban drops everything from an address at the firewall: websites, mail, SSH, VPN and this panel." }),
+      el("div", { class: "ipb-actions" }, [btn("Fail2ban settings", () => navigate("leech"), "btn-ghost"), btn("Network Monitor", () => navigate("netmon"), "btn-ghost"),
+        btn("Trust an address…", () => trustDialog("", load)), btn("Ban an address…", () => banDialog("", load), "btn-danger")]),
+    ]), body);
+    let tab = null;   // which list is open: bans, f2b, reports or trusted. Kept while the page refreshes itself.
     // One way to show a moment everywhere on this page: the date, the time to the second, and how long ago or how far off.
     const DATE = { year: "numeric", month: "short", day: "numeric" }, TIME = { hour: "2-digit", minute: "2-digit", second: "2-digit" };
     const stamp = (ts, rel) => {
@@ -5640,21 +5658,24 @@
     const reportIp = (ip, done) => { const f = (extraViews()._ui || {}).reportIp; if (f) f(ip, done); };
     const single = (cidr) => !String(cidr).includes("/") || /\/(32|128)$/.test(cidr);
     const unban = (t) => btn("Unban", async () => { try { await API.guardUnban(t); toast(`${t} unbanned`, "good"); load(); } catch (e) { toast(e.message, "bad"); } });
-    const section = (ico, title, count, hint, content, tone) => el("div", { class: "card ipb-card" }, [
-      el("div", { class: "ipb-card-h" }, [el("span", { class: `ipb-ico ${tone || ""}` }, icon(ico, 18)), el("h3", { text: title }), el("span", { class: `pill ${count ? tone || "dim" : "dim"}`, text: String(count) }),
-        el("span", { class: "muted ipb-hint", text: hint })]), content]);
-    const nothing = (text) => el("p", { class: "muted ipb-none", text });
-    // Search: any text in a row, on every list at once. Kept while the page refreshes itself.
+    const nothing = (ico, title, text, action) => el("div", { class: "ipb-empty" }, [el("span", { class: "ipb-empty-ico" }, icon(ico, 26)), el("b", { text: title }), el("p", { class: "muted", text }), action || null].filter(Boolean));
+    // Search: any text in a row of the open list. Kept while the page refreshes itself.
     const filter = () => {
       const words = search.value.toLowerCase().split(/\s+/).filter(Boolean);
       let shown = 0, all = 0;
       body.querySelectorAll("tbody tr").forEach((tr) => { const ok = words.every((w) => tr.textContent.toLowerCase().includes(w)); tr.style.display = ok ? "" : "none"; all++; if (ok) shown++; });
-      found.textContent = words.length ? `${shown} of ${all} rows` : "";
+      found.textContent = words.length ? `${shown} of ${all}` : "";
     };
     search.addEventListener("input", filter);
+    let last = null;
     const load = () => guardedLoad(async () => {
       let reported = {};
       const [d] = await Promise.all([API.guard(), API.abuseReported().then((r) => { reported = r || {}; }).catch(() => {})]);
+      last = { d, reported };
+      draw();
+    });
+    function draw() {
+      const { d, reported } = last;
       const bannedSet = new Set([...d.bans.map((b) => bare(b.cidr)), ...d.fail2ban.map((a) => a.ip)]);
       const now = Date.now() / 1000;
       // "reported" pill: when the address was sent to its network's abuse desk (click it to read or send again)
@@ -5663,53 +5684,70 @@
       const addr = (ip, cidr, st) => el("div", { class: "ipb-addr" }, [el("code", { class: `net-mono ${ipCls(st || "banned", reported[ip])}`, text: cidr || ip }), repPill(ip)].filter(Boolean));
       const reps = Object.entries(reported).sort((x, y) => y[1].ts - x[1].ts);
       const soon = d.bans.filter((b) => b.expires && b.expires - now < 3600).length;
-      const stat = (ico, label, value, sub, tone) => el("div", { class: `mx-tile ${tone || ""}` }, [el("div", { class: "mx-tile-l" }, [icon(ico, 15), el("span", { text: label })]),
-        el("div", { class: "mx-tile-v", text: String(value) }), el("div", { class: "mx-tile-s", text: sub })]);
-      body.innerHTML = "";
-      if (!d.enabled) body.append(el("p", { class: "dm-hint", text: "The ban list is created the first time you ban or trust something." }));
-      body.append(el("div", { class: "mx-tiles ipb-tiles" }, [
-        stat("ban", "Banned by you and the panel", d.bans.length, d.bans.length ? `${d.bans.filter((b) => !b.expires).length} permanent${soon ? `, ${soon} lifting within the hour` : ""}` : "nothing banned", d.bans.length ? "accent" : ""),
-        stat("trap", "Banned by fail2ban", d.fail2ban.length, d.fail2ban.length ? "after repeated failed logins" : "nothing right now"),
-        stat("mail", "Reported", reps.length, reps.length ? `last ${ago(reps[0][1].ts)}` : "no reports sent"),
-        stat("check", "Trusted", d.trusted.length, "never banned or filtered", d.trusted.length ? "goodt" : ""),
-      ]));
-      body.append(section("ban", "Banned", d.bans.length, "Every ban made from the panel: InstaWAFF, the IP card, Network Monitor, Visitors or here.",
-        d.bans.length ? simpleTable(["Address / range", "Blocked at", "Banned from", "Reason", "Lifts at", "Blocked packets", ""], d.bans.map((b) => row(
-          addr(bare(b.cidr), b.cidr), stamp(b.created), el("span", { class: "pill dim", text: b.source || "IP Blocker" }), b.reason || "-",
-          b.expires ? until(b.expires) : el("span", { class: "pill bad", title: "Stays banned until you unban it", text: "permanent" }),
-          el("span", { class: "ipb-num", text: Number(b.packets || 0).toLocaleString() }), el("div", { class: "net-actions" }, [
-            single(b.cidr) ? btn("Lookup", () => lookup(bare(b.cidr)), "btn-ghost") : null,
-            single(b.cidr) && !reported[bare(b.cidr)] ? btn("Report", () => reportIp(bare(b.cidr), load), "btn-ghost") : null,
-            unban(b.cidr)].filter(Boolean)),
-        ))) : nothing("No bans. Ban an address above, or let InstaWAFF's Auto-ban do it."), "bad"));
-      body.append(section("trap", "Banned by fail2ban", d.fail2ban.length, "Lifted automatically; fail2ban does not record when a ban started.",
-        d.fail2ban.length ? simpleTable(["Address", "Caught by", "Lifts at", "Blocked packets", ""], d.fail2ban.map((a) => row(
-          addr(a.ip), el("span", { class: "pill warn", text: `fail2ban · ${a.jails.join(", ") || "jail"}` }),
-          a.expires_in ? until(now + a.expires_in) : el("span", { class: "pill bad", text: "until unbanned" }), el("span", { class: "ipb-num", text: Number(a.packets || 0).toLocaleString() }),
-          el("div", { class: "net-actions" }, [
-            btn("Lookup", () => lookup(a.ip), "btn-ghost"),
-            reported[a.ip] ? null : btn("Report", () => reportIp(a.ip, load), "btn-ghost"),
-            unban(a.ip),
-            btn("Ban permanently", () => banDialog(a.ip, load), "btn-ghost")].filter(Boolean)),
-        ))) : nothing("Nothing is banned automatically right now."), "warn"));
-      // Reported to abuse desks, with whether the address is (still) banned here
-      body.append(section("mail", "Reported to abuse desks", reps.length, "The owner of the network got the evidence by email.",
-        reps.length ? simpleTable(["Address", "Reported at", "To", "From", "Evidence", "Status here", ""], reps.map(([ip, r]) => row(
-          el("code", { class: `net-mono ${bannedSet.has(ip) ? "ip-banned" : "ip-reported"}`, text: ip }), stamp(r.ts), (r.to || []).join(", "), r.from || "-", r.events ? `${r.events} event${r.events === 1 ? "" : "s"}` : "-",
-          bannedSet.has(ip) ? pill("banned", "bad") : pill("not banned", "dim"),
-          el("div", { class: "net-actions" }, [btn("Lookup", () => lookup(ip), "btn-ghost"), btn("Read / send again", () => reportIp(ip, load), "btn-ghost"),
-            bannedSet.has(ip) ? null : btn("Ban", () => banDialog(ip, load), "btn-danger")].filter(Boolean)),
-        ))) : nothing("No abuse reports sent yet. Report an attacker from its IP card, InstaWAFF or Network Monitor."), "warn"));
-      body.append(section("check", "Trusted", d.trusted.length, "Never banned, ignored by fail2ban, let through by the firewall.",
+      const perm = d.bans.filter((b) => !b.expires).length;
+      const LISTS = {
+        bans: { ico: "ban", tone: "bad", label: "Banned", count: d.bans.length, sub: d.bans.length ? `${perm} permanent${soon ? `, ${soon} lifting within the hour` : ""}` : "nobody is shut out",
+          hint: "Bans made by InstaWAFF's Auto-ban, the IP card, Network Monitor, Visitors or here." },
+        f2b: { ico: "trap", tone: "warn", label: "Banned by fail2ban", count: d.fail2ban.length, sub: d.fail2ban.length ? "after repeated failed logins" : "nothing right now",
+          hint: "Lifted automatically. fail2ban does not record when a ban started." },
+        reports: { ico: "mail", tone: "warn", label: "Reported", count: reps.length, sub: reps.length ? `last ${ago(reps[0][1].ts)}` : "no reports sent",
+          hint: "The owner of the network got the evidence by email." },
+        trusted: { ico: "check", tone: "good", label: "Trusted", count: d.trusted.length, sub: "never banned or filtered",
+          hint: "Never banned, ignored by fail2ban, let through by the firewall." },
+      };
+      if (!tab || !LISTS[tab]) tab = ["bans", "f2b", "trusted", "reports"].find((k) => LISTS[k].count) || "bans";
+      const L = LISTS[tab];
+      const tabs = el("div", { class: "ipb-tabs", role: "tablist" }, Object.entries(LISTS).map(([k, x]) => el("button", { type: "button", role: "tab", class: `ipb-tab ${x.tone} ${k === tab ? "on" : ""}`,
+        onclick: () => { tab = k; search.value = ""; draw(); } }, [
+        el("span", { class: "ipb-tab-ico" }, icon(x.ico, 18)),
+        el("span", { class: "ipb-tab-txt" }, [el("span", { class: "ipb-tab-l", text: x.label }), el("small", { class: "muted", text: x.sub })]),
+        el("b", { class: "ipb-tab-n", text: String(x.count) })])));
+      let content;
+      if (tab === "bans") content = d.bans.length ? simpleTable(["Address / range", "Blocked at", "Banned from", "Reason", "Lifts at", "Blocked packets", ""], d.bans.map((b) => row(
+        addr(bare(b.cidr), b.cidr), stamp(b.created), el("span", { class: "pill dim", text: b.source || "IP Blocker" }), b.reason || "-",
+        b.expires ? until(b.expires) : el("span", { class: "pill bad", title: "Stays banned until you unban it", text: "permanent" }),
+        el("span", { class: "ipb-num", text: Number(b.packets || 0).toLocaleString() }), el("div", { class: "net-actions" }, [
+          single(b.cidr) ? btn("Lookup", () => lookup(bare(b.cidr)), "btn-ghost") : null,
+          single(b.cidr) && !reported[bare(b.cidr)] ? btn("Report", () => reportIp(bare(b.cidr), load), "btn-ghost") : null,
+          unban(b.cidr)].filter(Boolean)),
+      ))) : nothing("ban", "Nobody is banned", "Ban an address yourself, or let InstaWAFF's Auto-ban shut attackers out as they show up.",
+        el("div", { class: "ipb-empty-act" }, [btn("Ban an address…", () => banDialog("", load), "btn-danger"), btn("Open InstaWAFF", () => navigate("instawaff"), "btn-ghost")]));
+      else if (tab === "f2b") content = d.fail2ban.length ? simpleTable(["Address", "Caught by", "Lifts at", "Blocked packets", ""], d.fail2ban.map((a) => row(
+        addr(a.ip), el("span", { class: "pill warn", text: `fail2ban · ${a.jails.join(", ") || "jail"}` }),
+        a.expires_in ? until(now + a.expires_in) : el("span", { class: "pill bad", text: "until unbanned" }), el("span", { class: "ipb-num", text: Number(a.packets || 0).toLocaleString() }),
+        el("div", { class: "net-actions" }, [
+          btn("Lookup", () => lookup(a.ip), "btn-ghost"),
+          reported[a.ip] ? null : btn("Report", () => reportIp(a.ip, load), "btn-ghost"),
+          unban(a.ip),
+          btn("Ban permanently", () => banDialog(a.ip, load), "btn-ghost")].filter(Boolean)),
+      ))) : nothing("trap", "fail2ban has nobody banned", "It bans an address by itself after repeated wrong passwords on SSH, mail, FTP or this panel, and lets it back in after a while.",
+        btn("Fail2ban settings", () => navigate("leech"), "btn-ghost"));
+      else if (tab === "reports") content = reps.length ? simpleTable(["Address", "Reported at", "To", "From", "Evidence", "Status here", ""], reps.map(([ip, r]) => row(
+        el("code", { class: `net-mono ${bannedSet.has(ip) ? "ip-banned" : "ip-reported"}`, text: ip }), stamp(r.ts), (r.to || []).join(", "), r.from || "-", r.events ? `${r.events} event${r.events === 1 ? "" : "s"}` : "-",
+        bannedSet.has(ip) ? pill("banned", "bad") : pill("not banned", "dim"),
+        el("div", { class: "net-actions" }, [btn("Lookup", () => lookup(ip), "btn-ghost"), btn("Read / send again", () => reportIp(ip, load), "btn-ghost"),
+          bannedSet.has(ip) ? null : btn("Ban", () => banDialog(ip, load), "btn-danger")].filter(Boolean)),
+      ))) : nothing("mail", "No abuse reports sent yet", "A report mails the evidence from this server's logs to the network that owns the address. Send one from an IP card, InstaWAFF or Network Monitor.");
+      else content = el("div", {}, [
         d.trusted.length ? simpleTable(["Address / range", "Note", "Trusted since", ""], d.trusted.map((t) => row(
           el("code", { class: "net-mono ip-trusted", text: t.cidr }), t.note || t.reason || "-", stamp(t.created),
           el("div", { class: "net-actions" }, [btn("Remove", async () => { if (!confirmInline(`Stop trusting ${t.cidr}? It can then be banned by fail2ban again.`)) return; try { await API.guardUntrust(t.cidr); toast("Removed", "good"); load(); } catch (e) { toast(e.message, "bad"); } }, "btn-danger")]),
-        ))) : nothing("No trusted addresses. Tip: trust your own devices (or your LAN range) so a mistyped password never locks you out."), "good"));
-      body.append(el("p", { class: "dm-hint", text: `Always protected: ${d.protected.join(", ")}.` }));
+        ))) : nothing("check", "No trusted addresses", "Trust your own devices, or your whole home network, so a mistyped password never locks you out.", btn("Trust an address…", () => trustDialog("", load), "btn-primary")),
+        el("div", { class: "ipb-protected" }, [el("span", { class: "muted", text: "Always protected, whatever is on the lists:" }),
+          ...d.protected.map((x) => el("span", { class: "ipb-chip" }, [icon("lock", 12), el("span", { text: x })]))]),
+      ]);
+      const rows = L.count;
+      body.innerHTML = "";
+      if (!d.enabled) body.append(el("p", { class: "dm-hint", text: "The ban list is created the first time you ban or trust something." }));
+      body.append(tabs, el("div", { class: "card ipb-panel" }, [
+        el("div", { class: "ipb-panel-h" }, [el("span", { class: `ipb-ico ${L.tone}` }, icon(L.ico, 18)),
+          el("div", { class: "ipb-panel-t" }, [el("h3", { text: L.label }), el("span", { class: "muted", text: L.hint })]),
+          el("span", { class: "ipb-grow" }), rows > 5 ? search : null, rows > 5 ? found : null].filter(Boolean)),
+        content]));
       filter();
-    });
+    }
     state.refreshHandler = load; load();
-    const t = setInterval(load, 15000); state.cleanups.push(() => clearInterval(t));
+    const t = setInterval(() => { if (document.activeElement !== search) load(); }, 15000); state.cleanups.push(() => clearInterval(t));
   }
 
   // ---- SSL/TLS Certificates ----
@@ -5936,10 +5974,10 @@
   // ======================================================================
   function viewLeech(root) {
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
-    root.append(el("p", { class: "muted", style: "margin:0 0 14px", text: "fail2ban watches login logs and temporarily bans addresses that keep guessing passwords. Its bans go into the same ban list as yours (IP Blocker & Trust), and trusted addresses are never banned." }), body);
+    root.append(el("p", { class: "muted vp-intro", text: "fail2ban watches login logs and temporarily bans addresses that keep guessing passwords. Its bans go into the same ban list as yours (IP Blocker & Trust), and trusted addresses are never banned." }), body);
     const jp = jobPanel(root);
     state.cleanups.push(jp.stop);
-    const minsInput = (v, allowForever) => el("input", { type: "number", min: allowForever ? -1 : 1, value: v, style: "max-width:110px" });
+    const num = (v, min, ph) => el("input", { type: "number", min, value: v, placeholder: ph || "", class: "f2-num" });
     const load = () => guardedLoad(async () => {
       const d = await API.fail2ban();
       body.innerHTML = "";
@@ -5949,70 +5987,92 @@
         return;
       }
       const cfg = d.config, g = cfg.global;
-      body.append(el("div", { class: "card" }, [
-        el("div", { class: "net-card-h" }, [icon("trap", 20), el("h3", { text: "fail2ban" }), el("span", { style: "flex:1" }), pill(d.active ? "protecting" : "off", d.active ? "good" : "bad"),
-          btn(d.active ? "Turn off" : (cfg.configured ? "Turn on" : "Turn on with recommended settings"), () => {
-            const go = async () => {
-              closeModal();
-              try { await API.fail2banService(!d.active); toast(d.active ? "fail2ban stopped" : "fail2ban is protecting this Pi", "good"); load(); } catch (e) { openModal("Couldn't change fail2ban", el("pre", { class: "log", text: e.message }), []); }
-            };
-            if (!d.active) return go();
-            openModal("Turn fail2ban off?", el("p", { text: "Brute-force attempts will no longer be banned until you turn it back on. Addresses banned so far are released." }),
-              [btn("Turn off", go, "btn-danger")]);
-          }, d.active ? "btn-ghost" : "btn-primary")]),
-        !cfg.configured ? el("p", { class: "dm-hint", text: "Not yet managed by the panel, turning it on (or saving below) writes the panel's settings; the stock config is left untouched." }) : null,
-      ]));
-      // global
-      const gf = {
-        bantime: minsInput(g.bantime, true), findtime: minsInput(g.findtime), maxretry: el("input", { type: "number", min: 1, max: 1000, value: g.maxretry, style: "max-width:110px" }),
-        increment: (() => { const c = el("input", { type: "checkbox", class: "sf-switch" }); c.checked = g.increment; return c; })(),
-        maxtime_days: el("input", { type: "number", min: 1, max: 3650, value: g.maxtime_days, style: "max-width:110px" }),
-        extra_ignore: el("input", { type: "text", value: g.extra_ignore, placeholder: "extra IPs / ranges, space separated" }),
+      const avail = d.jails.filter((j) => j.available);
+      const live = avail.map((j) => j.live).filter(Boolean);
+      const sum = (k) => live.reduce((a, l) => a + (l[k] || 0), 0);
+      // ---- is it on, and what has it done
+      const flip = async (on) => {
+        try { await API.fail2banService(on); toast(on ? "fail2ban is protecting this server" : "fail2ban stopped", "good"); load(); }
+        catch (e) { openModal("Couldn't change fail2ban", el("pre", { class: "log", text: e.message }), []); load(); }
       };
-      body.append(el("div", { class: "card" }, [
-        el("h3", { text: "Default rules (every jail unless it overrides them)" }),
-        el("div", { class: "net-form" }, [
-          field("Ban for (minutes, -1 = forever)", gf.bantime), field("Count failures within (minutes)", gf.findtime), field("Failures before a ban", gf.maxretry),
-          el("label", { class: "sf-field sf-bool" }, [gf.increment, el("span", { class: "sf-label", text: "Longer bans for repeat offenders" }), el("small", { class: "dm-hint", text: "Each new ban of the same address lasts longer (up to the maximum)." })]),
-          field("Longest ban (days)", gf.maxtime_days), field("Also never ban", gf.extra_ignore, "Trusted addresses are added automatically."),
+      const power = sw(d.active, (on, input) => {
+        if (on) return flip(true);
+        input.checked = true;   // stays on until the question is answered
+        openModal("Turn fail2ban off?", el("p", { text: "Brute-force attempts will no longer be banned until you turn it back on. Addresses banned so far are released." }),
+          [btn("Turn off", () => { closeModal(); flip(false); }, "btn-danger")]);
+      }, { title: d.active ? "Turn fail2ban off" : "Turn fail2ban on" });
+      body.append(el("div", { class: `card vp-card ${d.active ? "on" : ""}` }, [
+        vpHead("trap", "fail2ban", d.active ? "Watching the login logs and banning repeat offenders" : cfg.configured ? "Off: password guessing is not being banned" : "Off. Turning it on applies the recommended settings",
+          [pill(d.active ? "protecting" : "off", d.active ? "good" : "bad"), power]),
+        el("div", { class: "vp-facts" }, [
+          vpFact("Protections on", `${avail.filter((j) => j.enabled).length} of ${avail.length}`),
+          vpFact("Banned right now", el("b", { class: sum("banned_now") ? "pc-bad" : "", text: String(sum("banned_now")) })),
+          vpFact("Failed attempts seen", Number(sum("failed_total")).toLocaleString()),
+          vpFact("Bans so far", Number(sum("banned_total")).toLocaleString()),
         ]),
+        !cfg.configured ? el("p", { class: "muted vp-small", text: "Not yet managed by the panel. Turning it on, or saving below, writes the panel's settings; the stock config is left untouched." }) : null,
+      ].filter(Boolean)));
+      // ---- defaults
+      let increment = !!g.increment;
+      const gf = { bantime: num(g.bantime, -1), findtime: num(g.findtime, 1), maxretry: num(g.maxretry, 1), maxtime_days: num(g.maxtime_days, 1),
+        extra_ignore: el("input", { type: "text", value: g.extra_ignore, placeholder: "extra addresses or ranges, space separated" }) };
+      body.append(el("div", { class: "card vp-card" }, [
+        vpHead("gear", "Default rules", "Every protection uses these unless it sets its own"),
+        el("div", { class: "f2-defaults" }, [
+          field("Failures before a ban", gf.maxretry, "Wrong passwords allowed."),
+          field("Count failures within", gf.findtime, "Minutes."),
+          field("Ban for", gf.bantime, "Minutes. -1 bans for good."),
+          field("Longest ban", gf.maxtime_days, "Days, for repeat offenders."),
+        ]),
+        el("div", { class: "f2-row" }, [sw(increment, (v) => { increment = v; }), el("div", { class: "vp-head-t" }, [el("b", { text: "Longer bans for repeat offenders" }),
+          el("span", { class: "muted", text: "Each new ban of the same address lasts longer, up to the longest ban." })])]),
+        field("Also never ban", gf.extra_ignore, "Addresses trusted under IP Blocker & Trust are added automatically."),
       ]));
-      // jails
+      // ---- protections (jails)
       const jf = {};
-      const rows = d.jails.filter((j) => j.available).map((j) => {
-        const on = el("input", { type: "checkbox", class: "sf-switch" }); on.checked = j.enabled;
-        const mr = el("input", { type: "number", min: 1, max: 1000, value: j.maxretry, style: "max-width:80px" });
-        const ft = el("input", { type: "number", min: 1, value: j.findtime === -2 ? "" : j.findtime, placeholder: "default", style: "max-width:90px" });
-        const bt = el("input", { type: "number", min: -1, value: j.bantime === -2 ? "" : j.bantime, placeholder: "default", style: "max-width:90px" });
-        jf[j.id] = { on, mr, ft, bt, j };
-        const live = j.live;
-        return row(el("div", {}, [el("b", { text: j.label }), el("div", { class: "dm-hint", text: j.desc })]), on, mr, ft, bt,
-          live ? el("span", {}, [pill(`${live.banned_now} banned`, live.banned_now ? "warn" : "dim"), el("div", { class: "dm-hint", text: `${live.failed_total} failures, ${live.banned_total} bans total` })]) : el("span", { class: "dm-hint", text: j.enabled ? "not running" : "off" }),
-          live && live.banned_ips.length ? el("div", { class: "net-chips" }, live.banned_ips.map((ip) => el("button", { type: "button", class: "net-chip ip-banned", title: "Unban", text: `${ip} ✕`, onclick: async () => {
-            try { await API.fail2banUnban(j.id, ip); await API.guardUnban(ip).catch(() => {}); toast(`${ip} unbanned`, "good"); load(); } catch (e) { toast(e.message, "bad"); } } }))) : null);
+      const rows = avail.map((j) => {
+        const toggle = sw(j.enabled, () => {});
+        const mr = num(j.maxretry, 1), ft = num(j.findtime === -2 ? "" : j.findtime, 1, "default"), bt = num(j.bantime === -2 ? "" : j.bantime, -1, "default");
+        jf[j.id] = { on: toggle.querySelector("input"), mr, ft, bt, j };
+        const l = j.live;
+        // What this protection is doing right now: how many addresses it holds, which ones, and its totals.
+        const now = !j.enabled ? el("span", { class: "muted", text: "off" }) : !l ? pill("not running", "warn") : el("div", { class: "f2-now" }, [
+          el("div", { class: "ipb-addr" }, [pill(l.banned_now ? `${l.banned_now} banned` : "nobody banned", l.banned_now ? "bad" : "good"),
+            ...(l.banned_ips || []).map((ip) => el("button", { type: "button", class: "net-chip ip-banned", title: `Unban ${ip}`, text: `${ip} ✕`, onclick: async () => {
+              try { await API.fail2banUnban(j.id, ip); await API.guardUnban(ip).catch(() => {}); toast(`${ip} unbanned`, "good"); load(); } catch (e) { toast(e.message, "bad"); } } }))]),
+          el("small", { class: "muted", text: `${Number(l.failed_total || 0).toLocaleString()} failed attempts, ${Number(l.banned_total || 0).toLocaleString()} bans so far` })]);
+        return row(el("div", { class: "pc-svc" }, [el("b", { text: j.label }), el("small", { class: "muted", text: j.desc })]), toggle, mr, ft, bt, now);
       });
-      body.append(el("h2", { class: "section-title", text: "Protections (jails)" }), el("p", { class: "dm-hint", text: "Leave time fields empty to use the defaults above. Jails for software that isn't installed are hidden." }),
-        simpleTable(["Protects", "On", "Failures", "Within (min)", "Ban (min)", "Status", "Banned now"], rows));
       const save = btn("Save & apply", async () => {
-        const global = { bantime: +gf.bantime.value, findtime: +gf.findtime.value, maxretry: +gf.maxretry.value, increment: gf.increment.checked, maxtime_days: +gf.maxtime_days.value, extra_ignore: gf.extra_ignore.value.trim() };
+        const global = { bantime: +gf.bantime.value, findtime: +gf.findtime.value, maxretry: +gf.maxretry.value, increment, maxtime_days: +gf.maxtime_days.value, extra_ignore: gf.extra_ignore.value.trim() };
         const jails = {};
         for (const [id, x] of Object.entries(jf)) jails[id] = { enabled: x.on.checked, maxretry: +x.mr.value, findtime: x.ft.value === "" ? -2 : +x.ft.value, bantime: x.bt.value === "" ? -2 : +x.bt.value };
         save.disabled = true;
         try { await API.fail2banSave(global, jails); toast("fail2ban updated", "good"); load(); }
         catch (e) { openModal("Settings not applied", el("pre", { class: "log", text: e.message }), []); save.disabled = false; }
       }, "btn-primary");
-      const manualIp = el("input", { type: "text", placeholder: "IP to ban", style: "max-width:200px" });
-      const manualJail = el("select", {}, d.jails.filter((j) => j.live).map((j) => el("option", { value: j.id, text: j.label })));
-      body.append(...[el("div", { class: "sf-actions" }, [save, btn("View log", async () => { const r = await API.fail2banLogs(); openModal("fail2ban log", el("pre", { class: "log app-log", text: r.text || "(empty)" }), []); }, "btn-ghost")]),
-        d.active ? el("div", { class: "card" }, [el("h3", { text: "Ban an address through a jail" }), el("div", { class: "toolbar", style: "margin:0" }, [manualIp, manualJail,
-          btn("Ban", async () => { try { await API.fail2banBan(manualJail.value, manualIp.value.trim()); toast("Banned", "good"); manualIp.value = ""; load(); } catch (e) { toast(e.message, "bad"); } }, "btn-danger")]),
-          el("p", { class: "dm-hint", text: "Uses that jail's ban time and repeat-offender rules. For permanent or range bans use IP Blocker & Trust." })]) : null].filter(Boolean));
+      body.append(el("div", { class: "card vp-card f2-jails" }, [
+        vpHead("shield", "Protections", "One per service. Leave a time empty to use the default; software that isn't installed is hidden.", [pill(`${avail.filter((j) => j.enabled).length} on`, "good")]),
+        simpleTable(["Protects", "On", "Failures", "Within (min)", "Ban (min)", "Right now"], rows),
+        el("div", { class: "vp-foot f2-save" }, [save, btn("View log", async () => { const r = await API.fail2banLogs(); openModal("fail2ban log", el("pre", { class: "log app-log", text: r.text || "(empty)" }), []); }, "btn-ghost"),
+          el("span", { class: "muted vp-small", text: "Changes to the defaults and to the protections are applied together." })]),
+      ]));
+      if (d.active) {
+        const manualIp = el("input", { type: "text", placeholder: "e.g. 203.0.113.9", spellcheck: "false", autocomplete: "off" });
+        const manualJail = el("select", {}, d.jails.filter((j) => j.live).map((j) => el("option", { value: j.id, text: j.label })));
+        body.append(el("div", { class: "card vp-card" }, [
+          vpHead("ban", "Ban an address through a protection", "Uses that protection's ban time and repeat-offender rules"),
+          el("div", { class: "vp-inline" }, [field("Address", manualIp), field("Protection", manualJail),
+            btn("Ban", async () => { try { await API.fail2banBan(manualJail.value, manualIp.value.trim()); toast("Banned", "good"); manualIp.value = ""; load(); } catch (e) { toast(e.message, "bad"); } }, "btn-danger")]),
+          el("p", { class: "muted vp-small", text: "For a permanent ban or a whole range, use IP Blocker & Trust." }),
+        ]));
+      }
       if (d.installed) body.append(f2bActivity(d));
     });
     // What fail2ban actually did: the failed attempts it noticed, the bans, the unbans, from its log.
     // Rows can be ticked (the header box takes the whole page) and deleted from the list, 50 to 5,000 per page.
     function f2bActivity(d) {
-      const box = el("div", { class: "card", style: "margin-top:16px" }, [el("h3", { text: "Recent activity" }), el("div", { class: "loading", text: "Reading the log…" })]);
+      const box = el("div", { class: "card f2-activity" }, [el("h3", { text: "Recent activity" }), el("div", { class: "loading", text: "Reading the log…" })]);
       const names = Object.fromEntries((d.jails || []).map((j) => [j.id, j.label]));
       const KIND = { ban: ["banned", "bad"], failure: ["failed attempt", "warn"], unban: ["unbanned", "dim"] };
       const SIZES = [50, 250, 500, 1000, 5000];
@@ -6284,11 +6344,12 @@
             catch (e) { inp.checked = !v; toast(e.message, "bad"); }
           }, { title: "Redirect all HTTP traffic to HTTPS" })),
           el("td", {}, sslPill(s.https_via ? { ...s, ...s.https_via } : s)),  // http built-in site: https comes from default-ssl
-          s.system || s.redirect_url ? el("td", { class: "muted", title: s.system ? "Apache's built-in site: change its options in Manage" : "This domain redirects, so it shows no files", text: "-" })
+          s.redirect_url && !s.system ? el("td", { class: "muted", title: "This domain redirects, so it shows no files", text: "-" })
             : el("td", {}, sw(!!s.indexes, async (v, inp) => {
-              try { await API.siteToggle(s.server_name, "indexes", v); toast(`File list ${v ? "on" : "off"} · ${s.server_name}`, "good"); load(); }
+              try { await API.siteToggle(s.system ? s.conf : s.server_name, "indexes", v); toast(`File list ${v ? "on" : "off"} · ${s.server_name}${s.system ? (s.has_http ? " (http)" : " (https)") : ""}`, "good"); load(); }
               catch (e) { inp.checked = !v; toast(e.message, "bad"); }
-            }, { title: "Show a list of the files when the folder has no index page" })),
+            }, { title: s.system ? `Show a list of the files when the folder has no index page (${s.has_http ? "http, port 80" : "https, port 443"}). If the folder's .htaccess decides this, it is updated too, for http and https alike`
+              : "Show a list of the files when the folder has no index page" })),
           el("td", { class: "actions" }, el("div", { class: "dm-acts" }, [
             el("button", { class: "btn btn-sm", onclick: () => openDomain(s.system ? s.conf : s.server_name) }, [icon("services", 13), " Manage"]),
             dmSlot(s.docroot, () => el("button", { class: "btn btn-sm btn-ghost dm-ico", title: `Files: open ${s.docroot} in the File Manager`, onclick: () => { fmState.cwd = s.docroot; navigate("files"); } }, icon("folder", 14))),
@@ -6938,7 +6999,7 @@
         el("a", { class: "btn btn-sm", href: `${d.settings.ssl !== "none" ? "https" : "http"}://${d.settings.server_name}/`, target: "_blank", rel: "noopener" }, [icon("link", 13), " Visit site"]),
       ]);
       root.append(head);
-      if (ro) root.append(el("div", { class: "dm-note warn" }, [icon("lock", 15), el("span", { text: "This is one of Apache's two built-in sites (" + d.conf + (d.has_http ? ", http on port 80" : ", https on port 443") + "). Both answer on this Pi's address, so they show the same name. They can't be removed (Apache falls back to them), and the rest of their settings are read-only, but you can turn them on or off" + (d.has_http ? " and use Force HTTPS." : " and change the certificate.") }),
+      if (ro) root.append(el("div", { class: "dm-note warn" }, [icon("lock", 15), el("span", { text: "This is one of Apache's two built-in sites (" + d.conf + (d.has_http ? ", http on port 80" : ", https on port 443") + "). Both answer on this Pi's address, so they show the same name. They can't be removed (Apache falls back to them), and the rest of their settings are read-only, but you can turn them on or off, switch the directory listing" + (d.has_http ? " and use Force HTTPS." : " and change the certificate.") }),
         el("button", { class: "btn btn-sm", style: "margin-left:auto;flex-shrink:0", text: d.enabled ? "Disable site" : "Enable site", onclick: async (e) => {
           if (d.hand_copy) return fixLayout();  // a2dissite can't touch a hand-made copy: walk the user through fixing that first
           e.target.disabled = true;
@@ -7143,7 +7204,13 @@
         toggleRow("gzip", "Gzip compression", "Compress HTML, CSS, JS and JSON, pages load faster."),
         toggleRow("cache_static", "Browser caching", "Let browsers keep images, fonts, CSS and JS for a week/month."),
         toggleRow("security_headers", "Security headers", "X-Frame-Options, nosniff and a safe Referrer-Policy."),
-        toggleRow("indexes", "Directory listing", "Show a file list for folders without an index page."),
+        ro ? el("div", { class: "dm-trow" }, [  // built-in sites: applied at once, the rest of the page stays read-only
+          el("div", {}, [el("b", { text: "Directory listing" }), el("span", { text: "Show a file list for folders without an index page." })]),
+          sw(s.indexes, async (v, inp) => {
+            try { await API.siteToggle(d.conf, "indexes", v); toast(`File list ${v ? "on" : "off"} · ${d.settings.server_name}`, "good"); load(); }
+            catch (e) { inp.checked = !v; toast(e.message, "bad"); }
+          }),
+        ]) : toggleRow("indexes", "Directory listing", "Show a file list for folders without an index page."),
         toggleRow("allow_override", "Allow .htaccess", "Needed by WordPress & most PHP apps (and the Redirects / Indexes tools)."),
         toggleRow("maintenance", "Maintenance mode", "Visitors get a friendly “be right back” page (HTTP 503)."),
       ));
@@ -7310,32 +7377,43 @@
     return s.active ? pill("Running", "good") : pill("Stopped", "bad");
   }
 
+  // Shared look of the Network pages: a card head with an icon tile, facts as label-over-value tiles, a copy button.
+  const vpHead = (ico, title, sub, right) => el("div", { class: "vp-head" }, [el("span", { class: "vp-ico" }, icon(ico, 20)),
+    el("div", { class: "vp-head-t" }, [el("h3", { text: title }), sub ? el("span", { class: "muted", text: sub }) : null].filter(Boolean)), el("span", { class: "vp-grow" }), ...(right || []).filter(Boolean)]);
+  const vpFact = (label, value, wide) => el("div", { class: `vp-fact ${wide ? "wide" : ""}` }, [el("span", { class: "vp-fact-l", text: label }),
+    el("div", { class: "vp-fact-v" }, typeof value === "object" && value ? value : el("b", { text: value == null || value === "" ? "-" : String(value) }))]);
+  const vpCopy = (text) => el("button", { type: "button", class: "eo-copy", title: "Copy", onclick: async () => toast(await copyText(text) ? "Copied" : "Copy failed", "good") }, icon("t_copy", 13));
+
   function endpointCard(settings, onSaved) {
     const ep = el("input", { type: "text", value: settings.endpoint || "", placeholder: settings.ddns_hostname || settings.public_ip || "vpn.example.com" });
     const dns = el("input", { type: "text", value: settings.dns || "" });
-    const src = { custom: "your custom setting", ddns: "your Dynamic DNS hostname", public_ip: "your current public IP (changes? set up Dynamic DNS)" }[settings.endpoint_source];
-    return el("div", { class: "card" }, [
-      el("h3", { text: "Where clients connect" }),
-      kv([["Clients will connect to", el("b", { text: settings.effective_endpoint || "unknown" })], ["Source", src], ["Public IP right now", settings.public_ip]]),
-      el("div", { class: "net-form" }, [
+    const src = { custom: ["set by you", "dim"], ddns: ["Dynamic DNS hostname", "good"], public_ip: ["public IP, can change", "warn"] }[settings.endpoint_source] || ["unknown", "dim"];
+    const where = settings.effective_endpoint || "unknown";
+    return el("div", { class: "card vp-card" }, [
+      vpHead("globe", "Where clients connect", "The address written into every client config"),
+      el("div", { class: "vp-endpoint" }, [el("code", { text: where }), settings.effective_endpoint ? vpCopy(where) : null, pill(src[0], src[1])].filter(Boolean)),
+      settings.endpoint_source === "public_ip" ? el("p", { class: "muted vp-small", text: "Home connections change their IP. Set up Dynamic DNS so client configs keep working when it does." }) : null,
+      el("div", { class: "vp-facts" }, [vpFact("Public IP right now", settings.public_ip), settings.ddns_hostname ? vpFact("Dynamic DNS hostname", settings.ddns_hostname) : null].filter(Boolean)),
+      el("div", { class: "net-form vp-form" }, [
         field("Endpoint override (hostname or IP)", ep, "Leave empty to use Dynamic DNS, or else the public IP."),
         field("DNS servers for VPN clients", dns, "Comma separated IPv4, e.g. 1.1.1.1, 9.9.9.9"),
       ]),
-      el("div", { class: "toolbar", style: "margin:12px 0 0" }, [
+      el("div", { class: "vp-foot" }, [
         btn("Save", async () => {
           try { await API.vpnSettings({ endpoint: ep.value.trim(), dns: dns.value.trim() }); toast("Saved, re-download client configs to pick up changes", "good"); onSaved && onSaved(); }
           catch (e) { toast(e.message, "bad"); }
         }, "btn-primary"),
         btn("Set up Dynamic DNS", () => navigate("dyndns"), "btn-ghost"),
       ]),
-    ]);
+    ].filter(Boolean));
   }
 
   // ---- VPN Overview ----
   function viewVPNOverview(root) {
-    root.append(el("p", { class: "muted", style: "margin:0 0 14px", text: "Run your own VPN server on this Pi so your devices can reach home, and browse through your home connection, from anywhere. Pick any (or all) of the three; each is independent." }));
+    root.append(el("p", { class: "muted vp-intro", text: "Run your own VPN server on this Pi so your devices can reach home, and browse through your home connection, from anywhere. Pick any (or all) of the three; each is independent." }));
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
     root.append(body);
+    const line = (k, v) => el("div", { class: "vp-row" }, [el("span", { class: "muted", text: k }), el("b", { text: v == null || v === "" ? "-" : String(v) })]);
     const load = () => guardedLoad(async () => {
       const d = await API.vpnOverview();
       body.innerHTML = "";
@@ -7343,26 +7421,27 @@
         const s = d[k] || {};
         const ports = s.error ? [] : info.ports(s);
         const clients = (s.peers || s.clients || s.users || []).filter((c) => !c.revoked);
-        return el("div", { class: "card net-vpn-card" }, [
-          el("div", { class: "net-card-h" }, [icon(info.icon, 20), el("h3", { text: info.name }), el("span", { style: "flex:1" }), vpnStatusPill(s)]),
-          el("p", { class: "muted", text: info.desc }),
-          kv([
-            ["Port", ports.map((p) => `${p.proto.toUpperCase()} ${p.port}`).join(" + ")],
-            s.configured ? ["Clients", `${clients.length} (${clients.filter((c) => c.online).length} online)`] : null,
-            s.configured ? ["Subnet", s.subnet] : null,
-          ]),
-          el("div", { class: "toolbar", style: "margin:auto 0 0" }, [
+        const online = clients.filter((c) => c.online).length;
+        return el("div", { class: `card vp-card vp-proto ${s.active ? "on" : ""}` }, [
+          vpHead(info.icon, info.name, null, [vpnStatusPill(s)]),
+          el("p", { class: "muted vp-desc", text: info.desc }),
+          el("div", { class: "vp-rows" }, [
+            line("Port", ports.map((p) => `${p.proto.toUpperCase()} ${p.port}`).join(" + ")),
+            s.configured ? line("Clients", `${clients.length}${clients.length ? ` · ${online} online` : ""}`) : null,
+            s.configured ? line("Subnet", s.subnet) : null,
+          ].filter(Boolean)),
+          el("div", { class: "vp-foot" }, [
             btn(s.configured ? "Manage" : s.installed ? "Set up" : "Install", () => navigate(info.view), "btn-primary"),
             ports.length ? btn("Check port", () => gotoPortCheck(ports[0].port, ports[0].proto), "btn-ghost") : null,
-          ]),
+          ].filter(Boolean)),
         ]);
       });
-      body.append(el("div", { class: "net-grid" }, cards), endpointCard(d.settings, load),
-        el("div", { class: "card" }, [
-          el("h3", { text: "Reaching the VPN from outside" }),
-          el("p", { class: "muted", text: "Your router must forward the VPN's port to this Pi. Use the Port Checker: it tests the port from the internet, detects double NAT / CGNAT and tells you exactly what to change on the router." }),
-          btn("Open Port Checker", () => navigate("portcheck"), "btn-primary"),
-        ]));
+      body.append(el("div", { class: "vp-cards" }, cards), el("div", { class: "vp-split" }, [endpointCard(d.settings, load),
+        el("div", { class: "card vp-card" }, [
+          vpHead("radar", "Reaching the VPN from outside", "Your router has to let it in"),
+          el("p", { class: "muted", text: "Your router must forward the VPN's port to this Pi. The Port Checker tests the port from the internet, detects double NAT and CGNAT, and tells you exactly what to change on the router." }),
+          el("div", { class: "vp-foot" }, [btn("Open Port Checker", () => navigate("portcheck"), "btn-primary")]),
+        ])]));
     });
     state.refreshHandler = load; load();
   }
@@ -7374,26 +7453,27 @@
     const ctl = async (action) => {
       try { await API.vpnControl(kind, action); toast(`${info.name}: ${action}`, "good"); reload(); } catch (e) { toast(e.message, "bad"); }
     };
-    return el("div", { class: "card" }, [
-      el("div", { class: "net-card-h" }, [icon(info.icon, 20), el("h3", { text: `${info.name} server` }), el("span", { style: "flex:1" }), vpnStatusPill(s)]),
-      kv([
-        ["Listening on", ports.map((p) => `${p.proto.toUpperCase()} ${p.port}`).join(" + ")],
-        ["VPN subnet", s.subnet],
-        ["IP forwarding", pill(s.forwarding ? "on" : "off", s.forwarding ? "good" : "bad")],
-        ["NAT for clients", pill(s.nat ? "on" : "off", s.nat ? "good" : "bad")],
-        kind === "wireguard" ? ["Server public key", el("code", { class: "net-mono", text: s.public_key })] : null,
-        kind === "ipsec" ? ["Certificate issued for", s.host] : null,
-      ]),
-      el("div", { class: "toolbar", style: "margin:14px 0 0" }, [
+    const onOff = (v) => pill(v ? "on" : "off", v ? "good" : "bad");
+    return el("div", { class: `card vp-card vp-server ${s.active ? "on" : ""}` }, [
+      vpHead(info.icon, `${info.name} server`, s.active ? "Running and accepting clients" : "Stopped: clients can't connect until it is started", [vpnStatusPill(s)]),
+      el("div", { class: "vp-facts" }, [
+        vpFact("Listening on", ports.map((p) => `${p.proto.toUpperCase()} ${p.port}`).join(" + ")),
+        vpFact("VPN subnet", s.subnet),
+        vpFact("IP forwarding", onOff(s.forwarding)),
+        vpFact("NAT for clients", onOff(s.nat)),
+        kind === "ipsec" ? vpFact("Certificate issued for", s.host) : null,
+        kind === "wireguard" ? vpFact("Server public key", el("div", { class: "vp-key" }, [el("code", { class: "net-mono", text: s.public_key }), s.public_key ? vpCopy(s.public_key) : null].filter(Boolean)), true) : null,
+      ].filter(Boolean)),
+      el("div", { class: "vp-foot" }, [
         s.active ? btn("Restart", () => ctl("restart")) : btn("Start", () => ctl("start"), "btn-primary"),
         s.active ? btn("Stop", () => { if (confirmInline(`Stop ${info.name}? Connected clients will drop.`)) ctl("stop"); }, "btn-ghost") : null,
         kind !== "ipsec" ? btn("Run self-test", async () => {
           try { const r = await API.vpnSelftest(kind); watchJob(jp, r.job, `${info.name} self-test`, reload); } catch (e) { toast(e.message, "bad"); }
         }) : null,
         ...ports.map((p) => btn(`Check ${p.proto.toUpperCase()} ${p.port}`, () => gotoPortCheck(p.port, p.proto), "btn-ghost")),
-      ]),
-      kind !== "ipsec" ? el("p", { class: "dm-hint", style: "margin-top:10px", text: "Self-test connects a real temporary client from an isolated network namespace on this Pi, pings through the tunnel and out to the internet, then removes it." }) : null,
-    ]);
+      ].filter(Boolean)),
+      kind !== "ipsec" ? el("p", { class: "dm-hint vp-small", text: "Self-test connects a real temporary client from an isolated network namespace on this Pi, pings through the tunnel and out to the internet, then removes it." }) : null,
+    ].filter(Boolean));
   }
 
   // Generic 3-phase VPN view scaffold: install → set up → manage (auto-refresh).
@@ -7456,17 +7536,21 @@
           try { const r = await API.vpnClientAdd("wireguard", { name: name.value.trim(), tunnel: tunnel.value }); name.value = ""; toast(`Client ${r.name} added (${r.ip})`, "good"); await reload(); showWgConfig(r.name); }
           catch (e) { toast(e.message, "bad"); }
         }, "btn-primary");
-        const addCard = el("div", { class: "card" }, [el("h3", { text: "Add a client (device)" }), el("div", { class: "net-form" }, [field("Name", name), field("Routing", tunnel)]), el("div", { style: "margin-top:12px" }, add)]);
+        name.addEventListener("keydown", (e) => { if (e.key === "Enter") add.click(); });
+        const addCard = el("div", { class: "card vp-card" }, [vpHead("plus", "Add a client", "One per device. You get a QR code for phones and a .conf file for computers."),
+          el("div", { class: "vp-inline" }, [field("Name", name), field("Routing", tunnel), add])]);
         const update = (st) => {
           head.innerHTML = ""; head.append(vpnServerCard("wireguard", st, reload, jp));
           list.innerHTML = "";
-          list.append(el("h2", { class: "section-title", text: `Clients (${st.peers.length})` }));
-          if (!st.peers.length) { list.append(el("p", { class: "empty", text: "No clients yet, add one below." })); return; }
-          list.append(simpleTable(["Name", "VPN IP", "Status", "Last handshake", "Connected from", "Received / Sent", "Routing", ""],
+          const on = st.peers.filter((p) => p.online).length;
+          const box = el("div", { class: "card vp-card" }, [vpHead("users", "Clients", st.peers.length ? `${st.peers.length} device${st.peers.length === 1 ? "" : "s"}, ${on} online` : "No devices yet", [pill(String(st.peers.length), st.peers.length ? "good" : "dim")])]);
+          list.append(box);
+          if (!st.peers.length) { box.append(el("p", { class: "muted", text: "No clients yet. Add the first one below." })); return; }
+          box.append(simpleTable(["Name", "VPN IP", "Status", "Last handshake", "Connected from", "Received / Sent", "Routing", ""],
             st.peers.map((p) => row(
-              el("b", { text: p.name }), p.ip,
+              el("b", { text: p.name }), el("code", { class: "net-mono", text: p.ip }),
               p.disabled ? pill("disabled") : pill(p.online ? "online" : "offline", p.online ? "good" : "dim"),
-              ago(p.latest_handshake), p.endpoint || "n/a", `${fmtBytes(p.rx)} / ${fmtBytes(p.tx)}`, p.tunnel,
+              p.latest_handshake ? ago(p.latest_handshake) : "never", p.endpoint || "-", `${fmtBytes(p.rx)} / ${fmtBytes(p.tx)}`, p.tunnel === "full" ? "full tunnel" : p.tunnel === "split" ? "home network only" : p.tunnel,
               el("div", { class: "net-actions" }, [
                 btn("Config / QR", () => showWgConfig(p.name)),
                 btn(p.disabled ? "Enable" : "Disable", async () => { try { await API.wgToggle(p.name, !p.disabled); reload(); } catch (e) { toast(e.message, "bad"); } }, "btn-ghost"),
@@ -7791,31 +7875,34 @@
   // ---- Dynamic DNS ----
   function viewDynDNS(root) {
     const statusBox = el("div"), formBox = el("div");
-    root.append(el("p", { class: "muted", style: "margin:0 0 14px", text: "Home internet IPs change. Dynamic DNS gives you a fixed hostname (e.g. myhome.duckdns.org) that this Pi keeps pointed at your current IP, every 5 minutes, even when the panel is closed. VPN clients then connect to the hostname." }), statusBox, formBox);
+    root.append(el("p", { class: "muted vp-intro", text: "Home internet IPs change. Dynamic DNS gives you a fixed hostname (e.g. myhome.duckdns.org) that this Pi keeps pointed at your current IP, every 5 minutes, even when the panel is closed. VPN clients then connect to the hostname." }), statusBox, formBox);
     let d = null, chosen = null;
     function drawStatus() {
       statusBox.innerHTML = "";
       const c = d.config || {}, last = d.last || {};
-      if (d.ddclient_active) statusBox.append(el("div", { class: "card net-warn" }, [
-        el("p", { text: "The old ddclient service is also running. Two updaters for the same name fight each other, stop ddclient once you use this page." }),
+      if (d.ddclient_active) statusBox.append(el("div", { class: "card vp-warn" }, [
+        el("span", { class: "vp-ico warn" }, icon("warning", 20)),
+        el("div", { class: "vp-head-t" }, [el("b", { text: "The old ddclient service is also running" }),
+          el("span", { class: "muted", text: "Two updaters for the same name fight each other. Stop ddclient once you use this page." })]),
         btn("Stop & disable ddclient", async () => { try { d = await API.ddnsStopDdclient(); drawStatus(); toast("ddclient stopped", "good"); } catch (e) { toast(e.message, "bad"); } }),
       ]));
       if (!c.provider) return;
       const match = d.resolved_ip && last.ip && d.resolved_ip === last.ip;
-      statusBox.append(el("div", { class: "card" }, [
-        el("div", { class: "net-card-h" }, [icon("refresh", 20), el("h3", { text: c.hostname || "" }), el("span", { style: "flex:1" }),
-          c.enabled ? (last.ok ? pill("Updating", "good") : pill("Failing", "bad")) : pill("Disabled")]),
-        kv([
-          ["Provider", (d.providers[c.provider] || {}).name || c.provider],
-          ["Public IP", last.ip],
-          ["Hostname resolves to", el("span", {}, [el("span", { text: d.resolved_ip || "not resolving yet" }), " ", d.resolved_ip ? pill(match ? "matches" : "stale (DNS TTL, wait a few min)", match ? "good" : "warn") : null])],
-          ["Last update", `${ago(last.ts)}, ${last.message || ""}`],
-          ["Automatic updates", pill(d.timer_active ? "every 5 min" : "off", d.timer_active ? "good" : "dim")],
-        ]),
-        el("div", { class: "toolbar", style: "margin:14px 0 0" }, [
+      statusBox.append(el("div", { class: `card vp-card ${c.enabled && last.ok ? "on" : ""}` }, [
+        vpHead("refresh", c.hostname || "Your hostname", (d.providers[c.provider] || {}).name || c.provider,
+          [c.hostname ? vpCopy(c.hostname) : null, c.enabled ? (last.ok ? pill("Updating", "good") : pill("Failing", "bad")) : pill("Disabled")]),
+        el("div", { class: "vp-facts" }, [
+          vpFact("Public IP", last.ip),
+          vpFact("Hostname resolves to", el("div", { class: "vp-key" }, [el("b", { text: d.resolved_ip || "not resolving yet" }),
+            d.resolved_ip ? pill(match ? "matches" : "stale, wait a few minutes", match ? "good" : "warn") : null].filter(Boolean))),
+          vpFact("Last update", last.ts ? ago(last.ts) : "never"),
+          vpFact("Automatic updates", pill(d.timer_active ? "every 5 min" : "off", d.timer_active ? "good" : "dim")),
+          last.message ? vpFact("The provider answered", el("code", { class: "net-mono", text: last.message }), true) : null,
+        ].filter(Boolean)),
+        el("div", { class: "vp-foot" }, [
           btn("Update now", async () => { try { const r = await API.ddnsUpdate(); toast(`Sent ${r.ip}: ${r.message}`, "good"); load(); } catch (e) { toast(e.message, "bad"); load(); } }, "btn-primary"),
           c.enabled ? btn("Disable", async () => { try { d = await API.ddnsDisable(); drawStatus(); } catch (e) { toast(e.message, "bad"); } }, "btn-ghost") : null,
-        ]),
+        ].filter(Boolean)),
       ]));
     }
     function drawForm() {
@@ -7823,8 +7910,10 @@
       const c = d.config || {};
       chosen = chosen || c.provider || "duckdns";
       const prov = d.providers[chosen];
-      const seg = el("div", { class: "cw-seg" }, Object.entries(d.providers).map(([k, p]) =>
-        el("button", { type: "button", class: k === chosen ? "active" : "", text: p.name, onclick: () => { chosen = k; drawForm(); } })));
+      // Providers as a row of cards to pick from: the name, and a tick on the one in use.
+      const picker = el("div", { class: "vp-provs", role: "tablist" }, Object.entries(d.providers).map(([k, pr]) =>
+        el("button", { type: "button", class: `vp-prov ${k === chosen ? "on" : ""}`, onclick: () => { chosen = k; drawForm(); } },
+          [el("b", { text: pr.name }), k === c.provider ? el("small", { class: "muted", text: "in use" }) : null].filter(Boolean))));
       const inputs = {};
       const fields = prov.fields.map(([key, label, ph, secret]) => {
         const same = c.provider === chosen;
@@ -7840,15 +7929,16 @@
         try { const r = await API.ddnsSave(chosen, vals, true); toast(`${r.config.hostname} → ${r.result ? r.result.ip : "?"}`, "good"); load(); }
         catch (e) { toast(e.message, "bad"); save.disabled = false; }
       }, "btn-primary");
-      formBox.append(el("div", { class: "card" }, [
-        el("h3", { text: c.provider ? "Change provider / credentials" : "Get a free hostname" }),
-        seg,
-        el("p", { class: "muted", style: "margin:12px 0" }, [
-          el("span", { text: prov.note + " " }),
+      formBox.append(el("div", { class: "card vp-card" }, [
+        vpHead("globe", c.provider ? "Change provider or credentials" : "Get a free hostname", "1. Pick a provider   2. Paste what it gave you   3. Save"),
+        el("div", { class: "vp-step" }, "Provider"), picker,
+        el("div", { class: "vp-prov-note" }, [
+          el("span", { class: "muted", text: prov.note + " " }),
           prov.signup ? el("a", { href: prov.signup, target: "_blank", rel: "noopener noreferrer", text: `Sign up at ${prov.name} ↗` }) : null,
-        ]),
-        el("div", { class: "net-form" }, fields),
-        el("div", { style: "margin-top:14px" }, save),
+        ].filter(Boolean)),
+        el("div", { class: "vp-step" }, `Your ${prov.name} details`),
+        el("div", { class: "net-form vp-form" }, fields),
+        el("div", { class: "vp-foot" }, [save]),
       ]));
     }
     const load = () => guardedLoad(async () => { d = await API.ddns(); drawStatus(); drawForm(); });
@@ -7856,24 +7946,93 @@
   }
 
   // ---- Port Checker ----
+  // Two jobs on one page: every port this machine has open and whether the internet can see it (one button
+  // tests them all), and a detailed check of any single port that says where it is blocked and what to change.
   function viewPortCheck(root) {
     const preset = state.portPreset || {}; state.portPreset = null;
-    const port = el("input", { type: "number", min: 1, max: 65535, value: preset.port || "", placeholder: "e.g. 51820" });
-    let proto = preset.proto || "udp";
-    const seg = el("div", { class: "cw-seg cw-seg-sm" }, ["tcp", "udp"].map((p) => el("button", { type: "button", class: p === proto ? "active" : "", text: p.toUpperCase(),
-      onclick: (e) => { proto = p; seg.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b === e.target)); } })));
-    const presets = el("div", { class: "net-presets" });
-    const result = el("div");
     const jp = jobPanel(root);
     state.cleanups.push(jp.stop);
-    const go = btn("Check port", () => check(), "btn-primary");
-    root.prepend(
-      el("p", { class: "muted", style: "margin:0 0 14px", text: "Tests whether a port on this Pi can be reached from the internet, and if not, pinpoints where it's blocked: the service, the Pi's firewall, your router, or a second router / ISP NAT in front of it." }),
-      el("div", { class: "card" }, [
-        el("div", { class: "net-form" }, [field("Port", port), field("Protocol", seg)]),
-        presets,
-        el("div", { style: "margin-top:14px" }, go),
-      ]), result);
+    const listBox = el("div"), oneBox = el("div"), result = el("div");
+    root.prepend(el("p", { class: "muted vp-intro", text: "See every port this server has open and whether the internet can reach it, or test one port and find out where it is blocked: the service, the server's firewall, your router, or a second router or ISP NAT in front of it." }),
+      listBox, oneBox, result);
+
+    // ---------------------------------------------------------------- all open ports
+    let data = null, scanning = false, show = "all", q = "";
+    const scopeOf = (r) => (r.local_only ? "local" : "net");
+    const outside = (r) => {
+      if (r.local_only) return pill("this machine only", "dim");
+      if (!data.checked) return el("span", { class: "muted", text: "not tested yet" });
+      if (r.outside === true) return r.private ? el("span", { class: "pill bad", title: "This service belongs on your own network", text: "visible, should not be" }) : pill("visible from the internet", "good");
+      if (r.outside === false) return pill("not visible", "dim");
+      return el("span", { class: "pill warn", title: r.why, text: r.proto === "udp" ? "UDP, can't be tested" : "no answer from the test" });
+    };
+    function drawList() {
+      listBox.innerHTML = "";
+      if (!data) { listBox.append(el("div", { class: "card vp-card" }, el("div", { class: "loading", text: "Reading the open ports…" }))); return; }
+      const rows = data.ports, net = rows.filter((r) => !r.local_only);
+      const s = data.summary;
+      const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+      const shown = rows.filter((r) => (show === "all" || scopeOf(r) === show || (show === "visible" && r.outside === true)) &&
+        words.every((w) => `${r.port} ${r.proto} ${r.service} ${r.process} ${r.address} ${r.local_only ? "this machine only local" : "network"} ${r.outside === true ? "visible" : ""}`.toLowerCase().includes(w)));
+      const go = btn(scanning ? "Testing from the internet…" : data.checked ? "Test all again" : "Test all from the internet", () => scanAll(), "btn-primary");
+      go.disabled = scanning;
+      const search = el("input", { type: "search", class: "pc-search", placeholder: "Search: a port, a service, a program…", spellcheck: "false", autocomplete: "off" });
+      search.value = q;
+      search.addEventListener("input", () => { q = search.value; const at = search.selectionStart; drawList(); const n = listBox.querySelector(".pc-search"); if (n) { n.focus(); n.setSelectionRange(at, at); } });
+      const seg = el("div", { class: "cw-seg cw-seg-sm" }, [["all", `All ${rows.length}`], ["net", `Open to the network ${net.length}`], ["local", `This machine only ${rows.length - net.length}`],
+        ...(data.checked ? [["visible", `Visible from the internet ${s.visible}`]] : [])].map(([k, label]) =>
+        el("button", { type: "button", class: k === show ? "active" : "", text: label, onclick: () => { show = k; drawList(); } })));
+      const fw = data.firewall || {};
+      listBox.append(el("div", { class: "card vp-card" }, [
+        vpHead("plug", "Ports open on this server", data.checked ? `Tested from the internet ${ago(data.checked)}` : "Listed from this server. Press the button to test them all from the internet.", [go]),
+        el("div", { class: "vp-facts" }, [
+          vpFact("Open ports", String(rows.length)),
+          vpFact("Open to the network", String(net.length)),
+          vpFact("Visible from the internet", data.checked ? el("b", { class: s.exposed.length ? "pc-bad" : "", text: String(s.visible) }) : el("span", { class: "muted", text: "not tested yet" })),
+          vpFact("Public address", data.public_ip ? el("div", { class: "vp-key" }, [el("b", { text: data.public_ip }), vpCopy(data.public_ip)]) : "-"),
+          vpFact("Server firewall", pill(!fw.installed ? "not installed" : fw.active ? "on" : "off", fw.active ? "good" : "warn")),
+        ]),
+        data.checked && s.exposed.length ? el("div", { class: "vp-warn pc-alert" }, [el("span", { class: "vp-ico warn" }, icon("warning", 20)),
+          el("div", { class: "vp-head-t" }, [el("b", { text: `${s.exposed.length === 1 ? "A service" : `${s.exposed.length} services`} that should stay private can be reached from the internet` }),
+            el("span", { class: "muted", text: `Port${s.exposed.length === 1 ? "" : "s"} ${s.exposed.join(", ")}. Databases, file sharing and printing belong on your own network: remove the port forward on your router, or block the port in the firewall.` })]),
+          btn("Firewall", () => navigate("firewall"), "btn-ghost")]) : null,
+        el("div", { class: "pc-bar" }, [seg, el("span", { class: "vp-grow" }), search]),
+        shown.length ? simpleTable(["Port", "Service", "Listens on", "Server firewall", "From the internet", ""], shown.map((r) => row(
+          el("div", { class: "pc-port" }, [el("b", { text: String(r.port) }), el("span", { class: "muted", text: r.proto.toUpperCase() })]),
+          el("div", { class: "pc-svc" }, [el("b", { text: r.service || r.process || "Unknown service" }), r.service && r.process ? el("small", { class: "muted", text: r.process }) : null].filter(Boolean)),
+          r.local_only ? pill("this machine only", "dim") : el("div", { class: "pc-svc" }, [pill("the network", "good"), el("small", { class: "muted", text: ["0.0.0.0", "*", "::"].includes(r.address) ? "every interface" : r.address })]),
+          r.local_only ? el("span", { class: "muted", text: "-" }) : r.firewall === null ? el("span", { class: "muted", text: "no firewall" }) : pill(r.firewall ? "allowed" : "blocked", r.firewall ? "good" : "bad"),
+          el("div", { class: "pc-svc" }, [outside(r), data.checked && r.why && !r.local_only && r.outside !== true ? el("small", { class: "muted pc-why", title: r.why, text: r.why }) : null].filter(Boolean)),
+          r.local_only ? el("span") : el("div", { class: "net-actions" }, [btn("Details", () => { port.value = r.port; setProto(r.proto); check(); }, "btn-ghost")]),
+        ))) : el("div", { class: "ipb-empty" }, [el("span", { class: "ipb-empty-ico" }, icon("plug", 26)), el("b", { text: rows.length ? "No port matches" : "Nothing is listening" }),
+          el("p", { class: "muted", text: rows.length ? "Try another search or filter." : "No program on this server has a port open." })]),
+        el("p", { class: "dm-hint vp-small", text: "The test asks an outside service (portchecker.io, then ifconfig.co) to connect to this server's public address on each TCP port. UDP has no handshake an outside tester can see, so it is proven only once a VPN client connects from the internet." }),
+      ].filter(Boolean)));
+    }
+    async function loadList() {
+      try { data = await API.portList(); data.summary = { visible: 0, exposed: [] }; } catch (e) { listBox.innerHTML = ""; listBox.append(el("p", { class: "empty", text: e.message })); return; }
+      drawList();
+    }
+    async function scanAll() {
+      scanning = true; drawList();
+      try { data = await API.portScan(); toast(`${data.summary.visible} of ${data.summary.total} ports are visible from the internet`, data.summary.exposed.length ? "bad" : "good"); }
+      catch (e) { toast(e.message, "bad"); }
+      scanning = false; drawList();
+    }
+
+    // ---------------------------------------------------------------- one port, in detail
+    const port = el("input", { type: "number", min: 1, max: 65535, value: preset.port || "", placeholder: "e.g. 51820" });
+    let proto = preset.proto || "udp";
+    const seg = el("div", { class: "cw-seg cw-seg-sm" }, ["tcp", "udp"].map((p) => el("button", { type: "button", class: p === proto ? "active" : "", "data-p": p, text: p.toUpperCase(), onclick: () => setProto(p) })));
+    function setProto(p) { proto = p; seg.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.p === p)); }
+    const presets = el("div", { class: "net-presets" });
+    const go = btn("Check this port", () => check(), "btn-primary");
+    port.addEventListener("keydown", (e) => { if (e.key === "Enter") check(); });
+    oneBox.append(el("div", { class: "card vp-card" }, [
+      vpHead("radar", "Check one port in detail", "Finds where it is blocked and tells you what to change on the router"),
+      el("div", { class: "vp-inline" }, [field("Port", port), field("Protocol", seg), go]),
+      presets,
+    ]));
     API.vpnOverview().then((o) => {
       const list = [];
       if (o.wireguard && o.wireguard.configured) list.push(["WireGuard", o.wireguard.port, "udp"]);
@@ -7881,7 +8040,7 @@
       if (o.ipsec && o.ipsec.configured) list.push(["IPsec IKE", 500, "udp"], ["IPsec NAT-T", 4500, "udp"]);
       list.push(["SSH", 22, "tcp"], ["HTTP", 80, "tcp"], ["HTTPS", 443, "tcp"]);
       presets.append(el("span", { class: "dm-hint", text: "Quick pick: " }), ...list.map(([n, p, pr]) => el("button", { type: "button", class: "cw-chip", text: `${n} ${pr.toUpperCase()} ${p}`,
-        onclick: () => { port.value = p; proto = pr; seg.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.textContent.toLowerCase() === pr)); check(); } })));
+        onclick: () => { port.value = p; setProto(pr); check(); } })));
     }).catch(() => {});
 
     const line = (ok, title, text) => el("div", { class: `net-chk ${ok === true ? "ok" : ok === false ? "bad" : "unk"}` }, [
@@ -7889,9 +8048,10 @@
 
     async function check() {
       const p = +port.value;
-      if (!p) { toast("Enter a port", "bad"); return; }
+      if (!p) { toast("Enter a port", "bad"); port.focus(); return; }
       go.disabled = true;
-      result.innerHTML = ""; result.append(el("div", { class: "loading", text: `Checking ${proto.toUpperCase()} ${p} from outside… (up to ~20 s)` }));
+      result.innerHTML = ""; result.append(el("div", { class: "card vp-card" }, el("div", { class: "loading", text: `Checking ${proto.toUpperCase()} ${p} from outside… (up to about 20 s)` })));
+      result.scrollIntoView({ behavior: "smooth", block: "nearest" });
       try { draw(await API.portCheck(p, proto)); }
       catch (e) { result.innerHTML = ""; toast(e.message, "bad"); }
       go.disabled = false;
@@ -7900,21 +8060,21 @@
     function draw(r) {
       result.innerHTML = "";
       const P = `${r.proto.toUpperCase()} ${r.port}`;
-      const verdict = { open: ["Open, reachable from the internet", "good"], closed: ["Closed, not reachable from the internet", "bad"], unverified: ["Can't be verified automatically (UDP)", "warn"] }[r.verdict];
+      const isIPv4 = (s) => /^\d{1,3}(\.\d{1,3}){3}$/.test(s || "");
+      const verdict = { open: ["Open: reachable from the internet", "good", "check"], closed: ["Closed: not reachable from the internet", "bad", "ban"], unverified: ["Can't be verified automatically (UDP)", "warn", "warning"] }[r.verdict];
       const L = r.listen || {}, F = r.firewall || {}, U = r.upnp || {};
       const checks = [
-        line(L.listening ? true : r.temp_listener ? null : false, "Service on this Pi",
+        line(L.listening ? true : r.temp_listener ? null : false, "Service on this server",
           L.listening ? `${L.process || "Something"} is listening on ${L.address}` : r.temp_listener ? "Nothing listens here, a temporary listener was used for the test" : `Nothing is listening on ${P}`),
-        line(!F.active || F.allowed ? true : false, "Pi firewall (ufw)", !F.installed ? "Not installed" : !F.active ? "Inactive, not blocking" : F.allowed ? `Allows ${P}` : `Active and does NOT allow ${P}`),
+        line(!F.active || F.allowed ? true : false, "Server firewall", !F.installed ? "Not installed" : !F.active ? "Inactive, not blocking" : F.allowed ? `Allows ${P}` : `Active and does NOT allow ${P}`),
         line(r.nat ? false : U.available ? true : null, "Router / NAT",
           r.nat === "double" ? `Double NAT: your router (${r.gateway}) gets ${U.router_wan_ip} from another router in front of it` :
           r.nat === "cgnat" ? `Carrier-grade NAT: router WAN ${U.router_wan_ip} is not a public address` :
           U.available ? `Router holds the public IP ${r.public_ip}` : "Router doesn't answer UPnP, can't inspect it (that's fine)"),
-        r.inner_hop != null ? line(r.inner_hop, `Forward on your router (${r.gateway})`, r.inner_hop ? `Works: ${U.router_wan_ip}:${r.port} reaches this Pi` : `${U.router_wan_ip}:${r.port} does not reach this Pi`) : null,
+        r.inner_hop != null ? line(r.inner_hop, `Forward on your router (${r.gateway})`, r.inner_hop ? `Works: ${U.router_wan_ip}:${r.port} reaches this server` : `${U.router_wan_ip}:${r.port} does not reach this server`) : null,
         line(r.external, "From the internet", r.evidence ? r.evidence : r.external === true ? `${r.public_ip}:${r.port} answered the outside probe` : r.external === false ? `${r.public_ip}:${r.port} did not answer the outside probe` :
           "UDP has no handshake an outside prober can see. It counts as proven once a VPN client connects from outside (e.g. phone on mobile data)."),
       ].filter(Boolean);
-      const steps = r.steps.length ? el("ol", { class: "net-steps" }, r.steps.map((s) => el("li", { text: s }))) : null;
       const links = [];
       if (isIPv4(r.gateway)) links.push(el("a", { class: "btn btn-sm", href: `http://${r.gateway}/`, target: "_blank", rel: "noopener noreferrer", text: `Open router ${r.gateway} ↗` }));
       if (r.nat === "double" && isIPv4(r.upstream_router)) links.push(el("a", { class: "btn btn-sm", href: `http://${r.upstream_router}/`, target: "_blank", rel: "noopener noreferrer", text: `Open upstream router ${r.upstream_router} ↗` }));
@@ -7922,29 +8082,35 @@
       if (!U.installed) upnp.push(btn("Install UPnP tools", async () => { try { const j = await API.upnpInstall(); watchJob(jp, j.job, "Installing miniupnpc", () => check()); } catch (e) { toast(e.message, "bad"); } }, "btn-ghost"));
       else if (U.available && !r.upnp_mapping) upnp.push(btn(`Open ${P} automatically (UPnP)`, async () => { try { await API.upnpOpen(r.port, r.proto); toast("Router accepted the mapping", "good"); check(); } catch (e) { toast(e.message, "bad"); } }));
       else if (r.upnp_mapping) upnp.push(btn("Remove UPnP mapping", async () => { try { await API.upnpClose(r.port, r.proto); toast("Mapping removed", "good"); check(); } catch (e) { toast(e.message, "bad"); } }, "btn-ghost"));
-      result.append(el("div", { class: "card" }, [
-        el("div", { class: "net-card-h" }, [icon("plug", 20), el("h3", { text: P }), el("span", { style: "flex:1" }), pill(verdict[0], verdict[1])]),
+      result.append(el("div", { class: `card vp-card pc-result ${verdict[1]}` }, [
+        el("div", { class: "vp-head" }, [el("span", { class: `vp-ico pc-v-${verdict[1]}` }, icon(verdict[2], 20)),
+          el("div", { class: "vp-head-t" }, [el("h3", { text: P }), el("span", { class: "muted", text: verdict[0] })]), el("span", { class: "vp-grow" }), pill(r.verdict, verdict[1])]),
         el("div", { class: "net-checks" }, checks),
-      ]));
-      if (steps) result.append(el("div", { class: "card" }, [
-        el("h3", { text: "What to do" }), steps,
-        kv([["This Pi (LAN)", r.lan_ip], ["Router", r.gateway], ["Public IP", r.public_ip], ["Protocol", r.proto.toUpperCase()], ["Port", r.port]]),
-        el("div", { class: "toolbar", style: "margin:14px 0 0" }, [...links, ...upnp, btn("Check again", () => check(), "btn-primary")]),
-        U.available && r.nat === "double" ? el("p", { class: "dm-hint", text: "UPnP only opens your own router, the upstream one still needs a manual forward." }) : null,
-      ]));
+        el("div", { class: "vp-facts" }, [vpFact("This server (LAN)", r.lan_ip), vpFact("Router", r.gateway), vpFact("Public IP", r.public_ip)]),
+        r.steps.length ? el("div", { class: "pc-todo" }, [el("div", { class: "vp-step" }, "What to do"), el("ol", { class: "net-steps" }, r.steps.map((s) => el("li", { text: s })))]) : null,
+        el("div", { class: "vp-foot" }, [btn("Check again", () => check(), "btn-primary"), ...links, ...upnp]),
+        U.available && r.nat === "double" ? el("p", { class: "dm-hint vp-small", text: "UPnP only opens your own router, the upstream one still needs a manual forward." }) : null,
+      ].filter(Boolean)));
     }
+    loadList();
+    state.refreshHandler = loadList;
     if (preset.port) check();
   }
 
   // ---- Network Monitor ----
   function viewNetMon(root) {
     let hours = 24, scope = "internet";
-    const ctrl = el("div", { class: "card net-mon-ctrl" });
+    const ctrl = el("div", { class: "card vp-card" });
     const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
-    root.append(el("p", { class: "muted", style: "margin:0 0 14px", text: "Who tried to reach this Pi: every new inbound connection attempt (also on closed or firewalled ports), plus logins and VPN handshakes, successful and failed." }), ctrl, body);
+    root.append(el("p", { class: "muted vp-intro", text: "Who tried to reach this server: every new inbound connection attempt (also on closed or firewalled ports), plus logins and VPN handshakes, successful and failed." }), ctrl, body);
+    // A list in its own card: icon, title, how many, and a short line when there is nothing to show.
+    const listCard = (ico, title, sub2, count, content, emptyText) => el("div", { class: "card vp-card" }, [
+      vpHead(ico, title, sub2, [pill(String(count), count ? "warn" : "dim")]),
+      count ? content : el("div", { class: "vp-quiet" }, [icon("check", 16), el("span", { class: "muted", text: emptyText })])]);
     const segOf = (opts, cur, set) => el("div", { class: "cw-seg cw-seg-sm" }, opts.map(([v, l]) => el("button", { type: "button", class: v === cur ? "active" : "", text: l,
       onclick: (e) => { set(v); e.target.parentNode.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b === e.target)); load(); } })));
-    const tile = (label, value, kind) => el("div", { class: `nm-tile ${kind || ""}` }, [el("div", { class: "nm-tile-v", text: String(value) }), el("div", { class: "nm-tile-l", text: label })]);
+    const tile = (ico, label, value, sub2, kind) => el("div", { class: `mx-tile ${kind || ""}` }, [el("div", { class: "mx-tile-l" }, [icon(ico, 15), el("span", { text: label })]),
+      el("div", { class: "mx-tile-v", text: String(value) }), el("div", { class: "mx-tile-s", text: sub2 })]);
     const scopePill = (s) => pill({ internet: "internet", lan: "LAN", private: "private", local: "local" }[s] || s, s === "internet" ? "warn" : "dim");
     const outcomePill = (o) => pill({ ok: "success", fail: "failed", attempt: "attempt" }[o] || o, o === "ok" ? "good" : o === "fail" ? "bad" : "dim");
     // Ban / Trust / Unban for one address, depending on its current status.
@@ -7998,50 +8164,52 @@
       const d = await API.netmon(hours, scope);
       try { reported = await API.abuseReported(); } catch (e) { reported = {}; }
       ctrl.innerHTML = "";
+      const period = { 1: "the last hour", 24: "the last 24 hours", 168: "the last 7 days" }[hours];
       ctrl.append(...[
-        el("div", { class: "net-card-h" }, [icon("radar", 20), el("h3", { text: "Connection logging" }), el("span", { style: "flex:1" }),
-          pill(d.logging ? "recording" : "off", d.logging ? "good" : "dim"),
-          d.logging ? btn("Turn off", async () => { try { await API.netmonLogging(false); load(); } catch (e) { toast(e.message, "bad"); } }, "btn-ghost")
-                    : btn("Turn on", async () => { try { await API.netmonLogging(true); toast("Recording new connection attempts", "good"); load(); } catch (e) { toast(e.message, "bad"); } }, "btn-primary")]),
-        !d.logging ? el("p", { class: "dm-hint", text: d.nft ? "Off: only logins and VPN events are shown. Turn on to also record every inbound connection attempt (rate-limited, stored in the system journal)." : "nftables is not installed, install any VPN first to enable connection logging." }) : null,
-        el("div", { class: "toolbar", style: "margin:12px 0 0" }, [
+        vpHead("radar", "Connection logging", d.logging ? "Recording every new inbound connection attempt" : d.nft ? "Off: only logins and VPN events are shown" : "nftables is not installed",
+          [pill(d.logging ? "recording" : "off", d.logging ? "good" : "dim"),
+            d.nft || d.logging ? sw(d.logging, async (v) => { try { await API.netmonLogging(v); if (v) toast("Recording new connection attempts", "good"); load(); } catch (e) { toast(e.message, "bad"); load(); } }) : null]),
+        !d.logging ? el("p", { class: "muted vp-small", text: d.nft ? "Turn it on to also record every inbound connection attempt (rate-limited, kept in the system journal). InstaWAFF needs it to catch port knocks." : "Install any VPN first: that brings nftables, which connection logging needs." }) : null,
+        el("div", { class: "pc-bar" }, [
           segOf([["internet", "Internet only"], ["all", "Everything"], ["lan", "LAN only"]], scope, (v) => { scope = v; }),
           segOf([[1, "1 h"], [24, "24 h"], [168, "7 days"]], hours, (v) => { hours = v; }),
+          el("span", { class: "vp-grow" }),
+          btn("Bans & trusted list", () => navigate("ipblocker"), "btn-ghost"), btn("Fail2ban", () => navigate("leech"), "btn-ghost"), btn("InstaWAFF", () => navigate("instawaff"), "btn-ghost"),
         ]),
       ].filter(Boolean));
       body.innerHTML = "";
       const top = d.ports[0];
-      body.append(el("div", { class: "nm-tiles" }, [
-        tile("connection attempts", d.total), tile("unique sources", d.sources.length),
-        tile("failed logins", d.failed_logins, d.failed_logins ? "bad" : ""), tile("blocked by bans", d.blocked_total || 0),
-        tile(top && top.service ? `most targeted · ${top.service}` : "most targeted", top ? (top.port != null ? `:${top.port}` : top.service || "n/a") : "n/a"),
+      body.append(el("div", { class: "mx-tiles nm-tiles5" }, [
+        tile("radar", "Connection attempts", Number(d.total || 0).toLocaleString(), `in ${period}`, d.total ? "accent" : ""),
+        tile("users", "Unique sources", d.sources.length, "different addresses"),
+        tile("key", "Failed logins", d.failed_logins, d.failed_logins ? "wrong passwords" : "none", d.failed_logins ? "warnt" : ""),
+        tile("ban", "Blocked by bans", Number(d.blocked_total || 0).toLocaleString(), "dropped at the firewall"),
+        tile("plug", "Most targeted", top ? (top.port != null ? String(top.port) : top.service || "-") : "-", top ? (top.service || `${top.count} attempts`) : "nothing targeted"),
       ]));
-      body.append(el("div", { class: "toolbar" }, [btn("Bans & trusted list", () => navigate("ipblocker"), "btn-ghost"), btn("Fail2ban", () => navigate("leech"), "btn-ghost")]));
-      body.append(el("h2", { class: "section-title", text: "Logins & VPN events" }));
-      body.append(d.events.length ? simpleTable(["When", "Via", "Result", "User", "From", ""],
-        d.events.slice(0, 150).map((e) => {
-          const tr = row(when(e.ts), e.source, outcomePill(e.outcome), e.user || "n/a", el("span", {}, [el("span", { class: `net-mono ${ipCls(e.status, reported[e.ip])}`, text: e.ip || "n/a" }), " ", e.scope ? scopePill(e.scope) : null]),
-            ipActions(e.ip, e.status, e.scope));
-          tr.title = e.detail || "";
-          return tr;
-        })) : el("p", { class: "empty", text: "No login or VPN events in this period." }));
-      body.append(el("h2", { class: "section-title", text: "Sources" }));
-      body.append(d.sources.length ? simpleTable(["IP address", "Where", "Attempts", "Ports tried", "First seen", "Last seen", ""],
-        d.sources.map((s) => row(el("code", { class: `net-mono ${ipCls(s.status, reported[s.ip])}`, text: s.ip }), scopePill(s.scope),
-          s.blocked ? `${s.count} (${s.blocked} blocked)` : s.count,
-          el("div", { class: "net-chips" }, s.ports.map((p) => el("span", { class: "net-chip", text: `${p.key}${p.count > 1 ? " ×" + p.count : ""}` }))),
-          ago(s.first), ago(s.last), ipActions(s.ip, s.status, s.scope))))
-        : el("p", { class: "empty", text: d.logging ? "No connection attempts recorded in this period." : "Connection logging is off." }));
-      if (d.ports.length) {
-        body.append(el("h2", { class: "section-title", text: "Targeted ports" }));
-        body.append(simpleTable(["Port", "Service", "Attempts", "Sources"], d.ports.map((p) => row(`${p.port ?? "any"}/${p.proto}`, p.service || "n/a", p.count, p.sources))));
-      }
-      if (d.recent.length) {
-        body.append(el("h2", { class: "section-title", text: "Latest attempts" }));
-        body.append(simpleTable(["When", "From", "To port", "Service", "Result"],
-          d.recent.slice(0, 100).map((c) => row(when(c.ts), c.src, `${c.port ?? "any"}/${c.proto}`, c.service || "n/a",
-            c.blocked ? pill("blocked (banned)", "bad") : pill("reached the Pi", "dim")))));
-      }
+      body.append(listCard("key", "Logins and VPN events", "SSH, mail, FTP, this panel and the VPNs", d.events.length,
+        d.events.length ? simpleTable(["When", "Via", "Result", "User", "From", ""],
+          d.events.slice(0, 150).map((e) => {
+            const tr = row(when(e.ts), e.source, outcomePill(e.outcome), e.user || "-", el("span", { class: "ipb-addr" }, [el("span", { class: `net-mono ${ipCls(e.status, reported[e.ip])}`, text: e.ip || "-" }), e.scope ? scopePill(e.scope) : null].filter(Boolean)),
+              ipActions(e.ip, e.status, e.scope));
+            tr.title = e.detail || "";
+            return tr;
+          })) : null, `No login or VPN events in ${period}.`));
+      body.append(listCard("users", "Sources", "Who knocked, how often and on which ports", d.sources.length,
+        d.sources.length ? simpleTable(["IP address", "Where", "Attempts", "Ports tried", "First seen", "Last seen", ""],
+          d.sources.map((s) => row(el("code", { class: `net-mono ${ipCls(s.status, reported[s.ip])}`, text: s.ip }), scopePill(s.scope),
+            s.blocked ? `${s.count} (${s.blocked} blocked)` : s.count,
+            el("div", { class: "net-chips" }, s.ports.map((p) => el("span", { class: "net-chip", text: `${p.key}${p.count > 1 ? " ×" + p.count : ""}` }))),
+            ago(s.first), ago(s.last), ipActions(s.ip, s.status, s.scope)))) : null,
+        d.logging ? `No connection attempts recorded in ${period}.` : "Connection logging is off, so attempts are not recorded."));
+      if (d.ports.length || d.recent.length) body.append(el("div", { class: "vp-split vp-split-even" }, [
+        listCard("plug", "Targeted ports", "What they were after", d.ports.length,
+          d.ports.length ? simpleTable(["Port", "Service", "Attempts", "Sources"], d.ports.map((p) => row(
+            el("div", { class: "pc-port" }, [el("b", { text: String(p.port ?? "any") }), el("span", { class: "muted", text: String(p.proto || "").toUpperCase() })]), p.service || "-", p.count, p.sources))) : null, "No port was targeted."),
+        listCard("listing", "Latest attempts", "Newest first", d.recent.length,
+          d.recent.length ? simpleTable(["When", "From", "To port", "Service", "Result"],
+            d.recent.slice(0, 100).map((c) => row(when(c.ts), el("code", { class: "net-mono", text: c.src }), `${c.port ?? "any"}/${c.proto}`, c.service || "-",
+              c.blocked ? pill("blocked (banned)", "bad") : pill("reached the server", "dim")))) : null, "Nothing recent."),
+      ]));
     });
     state.refreshHandler = load; load();
     const t = setInterval(load, 20000);

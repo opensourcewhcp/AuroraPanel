@@ -50,6 +50,7 @@ _last_save = 0.0
 _WOULD: dict[str, float] = {}   # Detect only: when an address last got a behaviour hit, nobody cuts it off so it would repeat on every line
 WOULD_BAN = "Detect only: would have been banned"
 NOT_BANNING = "Auto-ban is off: recorded, not banned"
+BANNED_LATER = "Banned after this hit"
 
 
 def _watching(s: dict, mode: str | None) -> bool:
@@ -326,8 +327,17 @@ def overview() -> dict:
         reported = set(abuse.reported().get("reported", {}).keys()) if hasattr(abuse, "reported") else set()
     except Exception:
         reported = set()
+    # A hit that was only recorded (Detect only, Auto-ban off) can be banned afterwards, by hand or by a later
+    # hit: the list shows what is true now, not what was true when the line was read.
+    try:
+        now_banned = {ip for ip, st in guard.status_of(sorted({h["ip"] for h in hits if not h.get("banned")})).items() if st == "banned"}
+    except Exception:
+        now_banned = set()
     for h in hits:
         h["reported"] = h.get("reported") or h["ip"] in reported
+        if not h.get("banned") and h["ip"] in now_banned:
+            h["banned"] = True
+            h["error"] = BANNED_LATER if h.get("error") in (WOULD_BAN, NOT_BANNING, "") else h["error"]
     day = int(time.time()) - 86400
     return {**settings(), "patterns": sorted(s["patterns"], key=lambda x: (-x.get("hits", 0), x["pattern"])), "hits": hits,
             "hits_24h": sum(1 for h in s["hits"] if h["ts"] >= day), "trusted": len(guard.trusted_cidrs()), "kinds": list(KINDS)}

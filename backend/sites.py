@@ -272,6 +272,11 @@ def list_sites() -> dict:
         except (SiteError, OSError):
             continue
         cert = _cert_info(s) if s["ssl"] != "none" else None
+        if system:  # what visitors really get: apache2.conf and the folder's .htaccess count too
+            try:
+                s["indexes"] = _file_list_state(f)["on"]
+            except (SiteError, OSError):
+                pass
         sites.append({
             "server_name": s["server_name"], "aliases": s["aliases"], "docroot": s["docroot"],
             "conf": f.name, "enabled": _enabled(f.name), "managed": s["_managed"],
@@ -313,6 +318,11 @@ def get_site(name: str) -> dict:
     system = conf.name in SYSTEM_CONFS
     src = _live_conf(conf) if system else conf
     s = _settings_from_conf(src)
+    if system:
+        try:
+            s["indexes"] = _file_list_state(conf)["on"]
+        except (SiteError, OSError):
+            pass
     cert = _cert_info(s) if s["ssl"] != "none" else None
     has_http = _has_http(conf) if system else True
     return {"settings": {k: v for k, v in s.items() if not k.startswith("_")}, "managed": s["_managed"],
@@ -671,7 +681,9 @@ def quick_toggle(name: str, key: str, value: bool) -> dict:
             return _set_system_enabled(AVAIL / cur["conf"], bool(value))
         if key == "force_https":
             return _set_system_force_https(AVAIL / cur["conf"], bool(value))
-        raise SiteError("System default sites can only be enabled/disabled or use Force HTTPS")
+        if key == "indexes":
+            return _set_system_indexes(AVAIL / cur["conf"], bool(value))
+        raise SiteError("System default sites can only be enabled/disabled, use Force HTTPS or switch the file list")
     s = cur["settings"]
     if key == "force_https" and value and s["ssl"] == "none":
         s["ssl"] = "selfsigned"   # needs *a* cert; upgrade to Let's Encrypt from Manage
@@ -978,6 +990,129 @@ def set_system_custom(conf_name: str, custom: str) -> dict:
     r = _run(["systemctl", "reload", "apache2"])
     if r.returncode != 0:
         _run(["systemctl", "restart", "apache2"])
+    return {"ok": True}
+
+
+_FL_BEGIN, _FL_END = "# aurora-file-list begin", "# aurora-file-list end"
+_FL_BLOCK = re.compile(rf"\n[ \t]*{re.escape(_FL_BEGIN)}.*?{re.escape(_FL_END)}[ \t]*", re.S)
+_VHOST = re.compile(r"(?m)^[ \t]*<VirtualHost\b[^>]*>.*?(?=\n[ \t]*</VirtualHost>)", re.S | re.I)
+_DIR_SEC = re.compile(r"(?m)^[ \t]*<Directory\s+\"?([^\">\n]+?)\"?\s*>(.*?)^[ \t]*</Directory>", re.S | re.I)
+
+
+def _dir_sections(text: str, docroot: str) -> list[tuple[int, str]]:
+    """(path length, body) of every <Directory> in text that covers docroot, in config order."""
+    root = docroot.rstrip("/") or "/"
+    out = []
+    for m in _DIR_SEC.finditer(re.sub(r"(?m)^[ \t]*#.*$", "", text)):
+        p = m.group(1).strip()
+        if p.startswith("~"):
+            continue
+        p = p.rstrip("/") or "/"
+        if p == "/" or p == root or root.startswith(p + "/"):
+            out.append((len(p), m.group(2)))
+    return out
+
+
+def _walk_options(lines, listing: bool, override: bool) -> tuple[bool, bool]:
+    """Follow Options / AllowOverride the way Apache merges them: a bare option list replaces what was
+    inherited, +/- ones adjust it; the last AllowOverride wins."""
+    for ln in lines:
+        w = ln.split()
+        if len(w) < 2:
+            continue
+        k, vals = w[0].lower(), [v.lower() for v in w[1:]]
+        if k == "options":
+            if any(v[0] not in "+-" for v in vals):
+                listing = "indexes" in vals or "all" in vals
+            elif "+indexes" in vals:
+                listing = True
+            elif "-indexes" in vals:
+                listing = False
+        elif k == "allowoverride":
+            override = "all" in vals or any(v == "options" or (v.startswith("options=") and ("indexes" in v or "all" in v)) for v in vals)
+    return listing, override
+
+
+def _htaccess_rel(docroot: str) -> str | None:
+    """docroot as the .htaccess tools want it (relative to /var/www), None when it lies elsewhere."""
+    from . import apache
+    try:
+        return Path(docroot).resolve().relative_to(apache.APACHE_ROOT).as_posix()
+    except (ValueError, OSError):
+        return None
+
+
+def _file_list_state(conf: Path, text: str | None = None) -> dict:
+    """Whether a built-in site really lists files: apache2.conf and the site's own <Directory> blocks,
+    then the document root's .htaccess when overrides are allowed there (it has the last word)."""
+    from . import apache
+    if text is None:
+        text = _live_conf(conf).read_text(errors="replace")
+    vh = _VHOST.search(text)
+    m = re.search(r"(?im)^\s*DocumentRoot\s+\"?([^\"\n]+?)\"?\s*$", vh.group(0)) if vh else None
+    if not m:
+        raise SiteError(f"{conf.name} has no site with a DocumentRoot")
+    docroot = m.group(1)
+    rules = []
+    try:
+        rules += _dir_sections((APACHE / "apache2.conf").read_text(errors="replace"), docroot)
+    except OSError:
+        pass
+    rules += _dir_sections(vh.group(0), docroot)
+    rules.sort(key=lambda r: r[0])  # Apache applies shorter paths first, same paths in config order
+    listing, override = False, False
+    for _, body in rules:
+        listing, override = _walk_options(body.splitlines(), listing, override)
+    on, via = listing, "conf"
+    rel = _htaccess_rel(docroot) if override else None
+    if rel is not None:
+        try:
+            ht, _ = _walk_options(apache._read_lines(rel), listing, True)
+            if ht != listing:
+                on, via = ht, "htaccess"
+        except apache.ApacheError:
+            pass
+    return {"on": on, "via": via, "conf": listing, "docroot": docroot, "htaccess_rel": rel}
+
+
+def _set_system_indexes(conf: Path, on: bool) -> dict:
+    """File list on/off for a built-in site: a marked <Directory> block in its VirtualHost (the rest of the
+    file is untouched, and the block goes away again when the file says the same without it). When the
+    document root's .htaccess overrides that, the .htaccess is switched too."""
+    from . import apache
+    live = _live_conf(conf)
+    text = live.read_text(errors="replace")
+    bare = _FL_BLOCK.sub("", text)
+    st = _file_list_state(conf, bare)
+    new = bare
+    if st["conf"] != on:
+        vh = _VHOST.search(bare)
+        new = bare[:vh.end()] + "\n".join([
+            "", f"    {_FL_BEGIN}", f'    <Directory "{st["docroot"]}">', f"        Options {'+' if on else '-'}Indexes",
+            "    </Directory>", f"    {_FL_END}"]) + bare[vh.end():]
+    if new != text:
+        SITE_BAK.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(live, SITE_BAK / f"{conf.name}.{int(time.time())}")
+        if on and not (APACHE / "mods-enabled" / "autoindex.load").exists():
+            _run(["a2enmod", "-q", "autoindex"])
+        live.write_text(new, encoding="utf-8")
+        test = _run(["apache2ctl", "configtest"])
+        if test.returncode != 0:
+            live.write_text(text, encoding="utf-8")
+            err = "\n".join(l for l in (test.stderr + test.stdout).splitlines() if "AH00558" not in l).strip()
+            raise SiteError("Apache rejected the config, nothing was changed:\n" + err[:1500])
+        if _run(["systemctl", "reload", "apache2"]).returncode != 0:
+            _run(["systemctl", "restart", "apache2"])
+    st = _file_list_state(conf, new)
+    if st["on"] != on and st["via"] == "htaccess":
+        rel = st["htaccess_rel"]
+        try:
+            apache.set_indexes(rel, on, apache.get_indexes(rel)["directory_index"])
+        except apache.ApacheError as exc:
+            raise SiteError(f"{st['docroot']}/.htaccess decides the file list here and couldn't be changed: {exc}") from exc
+        st = _file_list_state(conf, new)
+    if st["on"] != on:
+        raise SiteError(f"The file list is still {'on' if st['on'] else 'off'}: something else in Apache's config decides it for {st['docroot']}")
     return {"ok": True}
 
 

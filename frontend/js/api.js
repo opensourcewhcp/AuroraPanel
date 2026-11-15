@@ -402,6 +402,8 @@ const API = (() => {
     ddnsDisable: () => request("POST", "/api/ddns/disable"),
     ddnsStopDdclient: () => request("POST", "/api/ddns/stop-ddclient"),
     portCheck: (port, proto) => request("POST", "/api/portcheck", { port, proto }),
+    portList: () => request("GET", "/api/portcheck/ports"),
+    portScan: () => request("POST", "/api/portcheck/scan"),
     upnpOpen: (port, proto) => request("POST", "/api/portcheck/upnp/open", { port, proto }),
     upnpClose: (port, proto) => request("POST", "/api/portcheck/upnp/close", { port, proto }),
     upnpInstall: () => request("POST", "/api/portcheck/upnp/install"),

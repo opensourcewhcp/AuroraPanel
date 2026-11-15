@@ -138,6 +138,117 @@ class _TempListener:
         self.sock.close()
 
 
+# What usually sits on a port, so the list reads as services and not as numbers.
+KNOWN = {20: "FTP data", 21: "FTP", 22: "SSH", 25: "Mail (SMTP)", 53: "DNS", 67: "DHCP", 68: "DHCP", 80: "Web (HTTP)", 110: "Mail (POP3)", 111: "rpcbind",
+         123: "Time (NTP)", 137: "Windows names", 138: "Windows names", 139: "Windows file sharing", 143: "Mail (IMAP)", 443: "Web (HTTPS)", 445: "Windows file sharing",
+         465: "Mail sending (SMTPS)", 500: "IPsec IKE", 587: "Mail sending", 631: "Printing", 993: "Mail (IMAPS)", 995: "Mail (POP3S)", 1194: "OpenVPN",
+         3306: "MariaDB / MySQL", 4500: "IPsec NAT-T", 5353: "mDNS (.local names)", 5432: "PostgreSQL", 6379: "Redis", 11211: "Memcached", 27017: "MongoDB", 51820: "WireGuard"}
+# Services that belong on your own network: seeing one of these from the internet is a finding, not a success.
+PRIVATE = {111, 137, 138, 139, 445, 631, 3306, 5432, 6379, 11211, 27017}
+
+
+def _firewall_rules() -> dict:
+    """The host firewall, read once: is it on, and the text its rules are matched in."""
+    from . import firewall
+    if firewall._firewalld():
+        st = firewall.status()
+        return {"installed": True, "active": st["active"], "kind": "firewalld", "rules": [r["rule"] for r in st["rules"]]}
+    ufw = shutil.which("ufw", path=APT_ENV["PATH"])
+    if not ufw:
+        return {"installed": False, "active": False, "kind": "ufw", "text": ""}
+    out = subprocess.run([ufw, "status"], capture_output=True, text=True, timeout=10).stdout
+    return {"installed": True, "active": "Status: active" in out, "kind": "ufw", "text": out}
+
+
+def _allowed(fw: dict, port: int, proto: str) -> bool | None:
+    """Does the host firewall let this port in? None when there is no firewall to ask."""
+    if not fw["installed"]:
+        return None
+    if not fw["active"]:
+        return True
+    if fw["kind"] == "firewalld":
+        return any(re.match(rf"(?:\S*,)?{port}(/{proto})?\b.*ALLOW", r) for r in fw["rules"])
+    return bool(re.search(rf"^{port}(/{proto})?\s+(\(v6\)\s+)?ALLOW", fw["text"], re.M))
+
+
+def listening() -> dict:
+    """Every port something on this machine listens on: what it is, whether it answers other machines or only
+    this one, and whether the host firewall lets it in. Nothing leaves the machine for this."""
+    from . import netmgr
+    net = default_route()
+    fw = _firewall_rules()
+    rows: dict[tuple, dict] = {}
+    for p in netmgr.ports()["ports"]:
+        if not isinstance(p["port"], int):
+            continue
+        local = p["scope"] == "this machine only"
+        key = (p["port"], p["proto"])
+        r = rows.get(key)
+        if r is None:
+            proc = "" if p["process"] == "?" else p["process"]
+            rows[key] = {"port": p["port"], "proto": p["proto"], "process": proc, "service": KNOWN.get(p["port"], ""), "local_only": local,
+                         "address": p["address"], "private": p["port"] in PRIVATE}
+        else:
+            r["local_only"] = r["local_only"] and local   # one socket on every interface is enough to be reachable
+            if not local:
+                r["address"] = p["address"]
+    out = sorted(rows.values(), key=lambda r: (r["port"], r["proto"]))
+    for r in out:
+        r["firewall"] = None if r["local_only"] else _allowed(fw, r["port"], r["proto"])
+        r["outside"], r["why"] = (False, "Only answers on this machine itself") if r["local_only"] else (None, "")
+    return {"ports": out, "public_ip": public_ip(), "lan_ip": net.get("ip"), "gateway": net.get("gateway"),
+            "firewall": {"installed": fw["installed"], "active": fw["active"]}, "checked": 0}
+
+
+def _probe_many(ip: str, ports: list[int]) -> dict[int, bool]:
+    """One outside test for a batch of TCP ports. Ports the service didn't answer for are left out."""
+    out: dict[int, bool] = {}
+    for i in range(0, len(ports), 20):
+        chunk = ports[i:i + 20]
+        try:
+            req = urllib.request.Request("https://portchecker.io/api/v1/query", data=json.dumps({"host": ip, "ports": chunk}).encode(),
+                                         headers={**UA, "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=40) as r:
+                d = json.loads(r.read().decode())
+            for c in d.get("check") or []:
+                out[int(c["port"])] = bool(c["status"])
+        except Exception as quiet_exc:
+            problems.quiet(quiet_exc)
+    for port in [p for p in ports if p not in out][:6]:   # the batch service was down or skipped some: ask one by one, a few
+        one = _probe_tcp(ip, port)
+        if one is not None:
+            out[port] = one
+    return out
+
+
+def scan() -> dict:
+    """Test every listening port from the internet in one go. TCP is probed from outside; UDP has no handshake an
+    outside prober can see, so it counts as proven only once a VPN client has connected from outside."""
+    d = listening()
+    pip = d["public_ip"]
+    tcp = [r["port"] for r in d["ports"] if r["proto"] == "tcp" and not r["local_only"]]
+    seen = _probe_many(pip, tcp) if pip and tcp else {}
+    for r in d["ports"]:
+        if r["local_only"]:
+            continue
+        if r["proto"] == "udp":
+            ev = _evidence(r["port"], "udp")
+            r["outside"], r["why"] = (True, ev) if ev else (None, "UDP can't be tested from outside. It counts as proven once a VPN client connects from the internet.")
+        elif not pip:
+            r["outside"], r["why"] = None, "This server's public address couldn't be found"
+        else:
+            o = seen.get(r["port"])
+            r["outside"] = o
+            r["why"] = (f"{pip}:{r['port']} answered a connection from the internet" if o else
+                        "No answer from the internet: the router or a firewall keeps it in" if o is False else "The outside test service didn't answer for this port")
+    d["checked"] = int(time.time())
+    d["summary"] = {"total": len(d["ports"]), "visible": sum(1 for r in d["ports"] if r["outside"] is True),
+                    "hidden": sum(1 for r in d["ports"] if r["outside"] is False and not r["local_only"]),
+                    "local": sum(1 for r in d["ports"] if r["local_only"]), "unknown": sum(1 for r in d["ports"] if r["outside"] is None),
+                    "exposed": [r["port"] for r in d["ports"] if r["outside"] is True and r["private"]]}
+    return d
+
+
 def _evidence(port: int, proto: str) -> str | None:
     from . import ipsec, openvpn, wireguard
     for mod in (wireguard, openvpn, ipsec):

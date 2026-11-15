@@ -262,8 +262,47 @@ def set_auto(enabled: bool, mode: str = "security", reboot: bool = False, reboot
     return {"ok": True, **auto_status()}
 
 
+def unfinished() -> list[dict]:
+    """Packages dpkg left half-done: unpacked but not configured, half-installed, or waiting on a trigger.
+    One of these makes every later apt-get end in "Sub-process /usr/bin/dpkg returned an error code"."""
+    r = _run(["dpkg-query", "-W", "-f=${db:Status-Abbrev}\t${Package}\t${Version}\n"], 60)
+    out = []
+    for line in (r.stdout or "").splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        st = parts[0].strip()
+        # second letter: n not installed, c config files only, i installed; anything else is a package stuck halfway
+        if len(st) >= 2 and (st[1] not in "nci" or (len(st) > 2 and st[2].strip())):
+            out.append({"name": parts[1], "version": parts[2], "state": {"U": "unpacked, not set up", "F": "set-up failed", "H": "half installed",
+                                                                           "W": "waiting for another package", "t": "set-up pending"}.get(st[1], "broken")})
+    return out
+
+
+def repair(log) -> bool:
+    """Finish what an interrupted or failed run left behind: set up half-installed packages, then let apt
+    fetch whatever they still miss. Returns True when nothing is left unfinished."""
+    stuck = unfinished()
+    if stuck:
+        log(f"• Finishing {len(stuck)} package{'' if len(stuck) == 1 else 's'} left half-installed: " + ", ".join(f"{p['name']} ({p['state']})" for p in stuck[:10]))
+    r = _run(["dpkg", "--configure", "-a", "--force-confdef", "--force-confold"], 1800)
+    tail = ((r.stdout or "") + (r.stderr or "")).strip()
+    if tail:
+        log(tail[-3000:])
+    if r.returncode != 0 or unfinished():
+        log("• Asking apt to repair what is still broken")
+        log.apt(["-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold", "-f", "install"], timeout=1800)
+    left = unfinished()
+    if left:
+        log("✖ Still not set up: " + ", ".join(f"{p['name']} ({p['state']})" for p in left[:10]))
+    elif stuck:
+        log("✓ Repaired")
+    return not left
+
+
 def install(names: list[str] | None = None) -> jobs.Job:
-    """Upgrade everything (or only the named packages) with a progress bar."""
+    """Upgrade everything (or only the named packages) with a progress bar. A package an earlier run left
+    half-installed is finished first, and when apt fails the panel repairs and tries once more by itself."""
     for j in jobs.find(updates="install"):
         if j.status == "running":
             return j
@@ -284,15 +323,25 @@ def install(names: list[str] | None = None) -> jobs.Job:
 
     def fn(log):
         log.progress(1, "Checking what's new")
-        log.apt(["update"], (1, 10))
-        if pkgs:
-            log(f"• Upgrading {len(pkgs)} package(s): {' '.join(pkgs[:20])}{' …' if len(pkgs) > 20 else ''}")
-            rc = log.apt(["install", "--only-upgrade", "-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold", *pkgs], (10, 95), timeout=7200)
-        else:
-            log("• Upgrading every package that has a new version")
-            rc = log.apt(["-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold", "full-upgrade"], (10, 95), timeout=7200)
+        if unfinished():      # an earlier run stopped halfway: nothing installs until that is finished
+            log.progress(2, "Finishing an interrupted install")
+            repair(log)
+        log.apt(["update"], (2, 10))
+        keep = ["-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold"]
+        args = ["install", "--only-upgrade", *keep, *pkgs] if pkgs else [*keep, "full-upgrade"]
+        log(f"• Upgrading {len(pkgs)} package(s): {' '.join(pkgs[:20])}{' …' if len(pkgs) > 20 else ''}" if pkgs else "• Upgrading every package that has a new version")
+        rc = log.apt(args, (10, 80), timeout=7200)
         if rc != 0:
-            raise UpdateError(f"apt-get failed (exit {rc}) — see the log")
+            log.progress(82, "Repairing and trying again")
+            log(f"• apt-get stopped (exit {rc}). Repairing and trying once more")
+            ok = repair(log)
+            rc = log.apt(args, (85, 95), timeout=7200)
+            if rc != 0 or not ok:
+                left = unfinished()
+                names_left = ", ".join(p["name"] for p in left[:6])
+                raise UpdateError((f"{names_left} could not be set up, even after a repair and a second try. " if left else f"apt-get failed twice (exit {rc}). ")
+                                  + "The log above shows what its own install script said. Everything else is installed; this package can also be removed under Packages.")
+            log("✓ The second try went through")
         log.progress(96, "Cleaning up")
         _run(["apt-get", "-y", "autoremove", "--purge"], 600)
         data = refresh(update_lists=False)

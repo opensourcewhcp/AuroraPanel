@@ -125,3 +125,94 @@ def test_updates_routes(admin, tmp_path, monkeypatch):
     d = admin.get("/api/updates").json()
     assert d["security"] == 1 and d["packages"][0]["security"] and d["reboot"]["required"] and d["auto"]["enabled"]
     assert admin.post("/api/updates/auto", json={"enabled": True, "mode": "weird"}).status_code == 400
+
+
+class _Log:
+    """What a job hands to its function: a log, a progress bar and apt."""
+    def __init__(self, answers):
+        self.lines, self.calls, self.answers = [], [], list(answers)
+
+    def __call__(self, text):
+        self.lines.append(text)
+
+    def progress(self, pct, stage=None):
+        pass
+
+    def apt(self, args, span=(0, 100), timeout=1800, env=None):
+        self.calls.append(" ".join(args))
+        return self.answers.pop(0) if self.answers else 0
+
+
+def _install_fn(monkeypatch, names=None):
+    got = {}
+    monkeypatch.setattr(updates.jobs, "find", lambda **kw: [])
+    monkeypatch.setattr(updates.jobs, "launch_fn", lambda title, fn, meta=None: got.update(fn=fn) or object())
+    monkeypatch.setattr(updates.distro, "is_dnf", lambda: False)
+    monkeypatch.setattr(updates, "refresh", lambda update_lists=True: {"total": 0})
+    monkeypatch.setattr(updates, "reboot_info", lambda: {"required": False})
+    updates.install(names)
+    return got["fn"]
+
+
+def test_half_installed_packages_are_read_from_dpkg(monkeypatch):
+    out = "ii \tbash\t5.2\nrc \told-thing\t1\niF \tgoogle-cloud-cli\t593.0.0-0\niU \tfoo\t2\niH \tbar\t3\nun \tgone\t\nii \tzsh\t5.9\n"
+    monkeypatch.setattr(updates, "_run", lambda argv, timeout=600: subprocess.CompletedProcess(argv, 0, out, ""))
+    assert [(p["name"], p["state"]) for p in updates.unfinished()] == [("google-cloud-cli", "set-up failed"), ("foo", "unpacked, not set up"), ("bar", "half installed")]
+
+
+def test_an_interrupted_install_is_finished_before_upgrading(monkeypatch):
+    stuck = [[{"name": "google-cloud-cli", "version": "593", "state": "set-up failed"}]]
+    ran = []
+    monkeypatch.setattr(updates, "unfinished", lambda: stuck[0])
+
+    def run(argv, timeout=600):
+        ran.append(" ".join(argv))
+        if argv[:2] == ["dpkg", "--configure"]:
+            stuck[0] = []                       # setting it up again worked
+        return subprocess.CompletedProcess(argv, 0, "Setting up google-cloud-cli (593) ...", "")
+    monkeypatch.setattr(updates, "_run", run)
+    log = _Log([0, 0])
+    assert _install_fn(monkeypatch)(log)["ok"] is True
+    assert ran[0] == "dpkg --configure -a --force-confdef --force-confold"
+    assert log.calls[0] == "update" and log.calls[1].endswith("full-upgrade") and len(log.calls) == 2     # no second try needed
+    assert any("left half-installed: google-cloud-cli (set-up failed)" in l for l in log.lines) and any("Repaired" in l for l in log.lines)
+
+
+def test_a_failed_upgrade_is_repaired_and_tried_once_more(monkeypatch):
+    stuck = [[]]
+    monkeypatch.setattr(updates, "unfinished", lambda: stuck[0])
+
+    def run(argv, timeout=600):
+        if argv[:2] == ["dpkg", "--configure"]:
+            stuck[0] = []
+        return subprocess.CompletedProcess(argv, 0, "", "")
+    monkeypatch.setattr(updates, "_run", run)
+    log = _Log([0, 100, 0])                      # update fine, upgrade fails, second try fine
+
+    def apt(args, span=(0, 100), timeout=1800, env=None, real=log.apt):
+        rc = real(args, span, timeout, env)
+        if rc == 100:
+            stuck[0] = [{"name": "google-cloud-cli", "version": "593", "state": "set-up failed"}]   # what the failed run left behind
+        return rc
+    log.apt = apt
+    assert _install_fn(monkeypatch)(log)["ok"] is True
+    assert [c.split()[-1] for c in log.calls] == ["update", "full-upgrade", "full-upgrade"]
+    assert any("Repairing and trying once more" in l for l in log.lines) and any("second try went through" in l for l in log.lines)
+
+
+def test_when_the_repair_cannot_help_the_error_names_the_package(monkeypatch):
+    stuck = [[]]
+    monkeypatch.setattr(updates, "unfinished", lambda: stuck[0])
+    monkeypatch.setattr(updates, "_run", lambda argv, timeout=600: subprocess.CompletedProcess(argv, 1, "", "post-installation script subprocess returned error exit status 1"))
+    log = _Log([0, 100, 100, 100])
+
+    def apt(args, span=(0, 100), timeout=1800, env=None, real=log.apt):
+        rc = real(args, span, timeout, env)
+        if rc == 100:
+            stuck[0] = [{"name": "google-cloud-cli", "version": "593", "state": "set-up failed"}]
+        return rc
+    log.apt = apt
+    with pytest.raises(updates.UpdateError, match="google-cloud-cli could not be set up, even after a repair and a second try"):
+        _install_fn(monkeypatch, ["google-cloud-cli"])(log)
+    assert any(c.endswith("-f install") for c in log.calls)                                               # apt was asked to repair too
+    assert sum(1 for c in log.calls if "--only-upgrade" in c) == 2                                        # exactly one retry, no loop

@@ -294,6 +294,10 @@ def test_detect_only_records_but_never_bans_or_reports(armed, monkeypatch):
     assert r["hits"] == 1 and r["bans"] == 0 and armed["bans"] == [] and armed["sent"] == []
     hit = instaban.overview()["hits"][0]
     assert hit["banned"] is False and hit["error"] == instaban.WOULD_BAN
+    # banned by hand afterwards: the recorded hit says so, and can now be reported
+    monkeypatch.setattr(guard, "status_of", lambda ips: {ip: "banned" for ip in ips if ip == "203.0.113.7"})
+    hit = instaban.overview()["hits"][0]
+    assert hit["banned"] is True and hit["error"] == instaban.BANNED_LATER
 
 
 def test_detect_only_does_not_repeat_a_behaviour_hit_on_every_line(armed, monkeypatch):
