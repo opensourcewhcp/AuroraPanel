@@ -19,34 +19,104 @@
   const LANGS = [["en", "English", "English"], ["es", "Español", "Spanish"], ["de", "Deutsch", "German"], ["fr", "Français", "French"],
     ["it", "Italiano", "Italian"], ["pt-BR", "Português (Brasil)", "Portuguese (Brazil)"], ["pl", "Polski", "Polish"], ["uk", "Українська", "Ukrainian"],
     ["ru", "Русский", "Russian"], ["tr", "Türkçe", "Turkish"], ["zh-CN", "中文（简体）", "Chinese (Simplified)"], ["ja", "日本語", "Japanese"], ["hi", "हिन्दी", "Hindi"]];
-  const I18N = { lang: "en", dict: null };
-  const tr = (s) => (I18N.dict && typeof s === "string" && Object.prototype.hasOwnProperty.call(I18N.dict, s) ? I18N.dict[s] : s);
-  const EN_TEXT = new WeakMap();  // a static text node's original English, so a later language change starts from it
+  const I18N = { lang: "en", dict: null, pats: [], cache: new Map() };
+  const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+  // A sentence with values in it is one dictionary entry, the values written {0}, {1}: "{0} files scanned".
+  // Each becomes a pattern, tried (most specific first) on any rendered string that has no entry of its own.
+  function compilePatterns(dict) {
+    const pats = [];
+    for (const key of Object.keys(dict || {})) {
+      if (!/\{\d+\}/.test(key)) continue;
+      const parts = key.split(/\{(\d+)\}/);  // text, number, text, number, ..., text
+      const texts = parts.filter((_, i) => i % 2 === 0);
+      const weight = texts.join("").replace(/[^\p{L}]/gu, "").length;
+      if (weight < 4) continue;  // too little text to tell it from data
+      let src = "^";
+      parts.forEach((p, i) => { src += i % 2 === 0 ? p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : "([\\s\\S]*?)"; });
+      pats.push({ rx: new RegExp(src + "$"), anchor: texts.reduce((a, b) => (b.length > a.length ? b : a), ""),
+        order: parts.filter((_, i) => i % 2 === 1).map(Number), out: dict[key], weight, len: texts.join("").length });
+    }
+    return pats.sort((a, b) => b.weight - a.weight || b.len - a.len);
+  }
+  function tr(s, depth = 0) {
+    const d = I18N.dict;
+    if (!d || typeof s !== "string" || !s) return s;
+    if (hasOwn(d, s)) return d[s];
+    const cached = I18N.cache.get(s);
+    if (cached !== undefined) return cached;
+    let out = s;
+    const core = s.trim();
+    if (core !== s && hasOwn(d, core)) out = s.replace(core, d[core]);
+    else if (depth < 3 && s.length < 3000) {
+      for (const p of I18N.pats) {
+        if (!s.includes(p.anchor)) continue;
+        const m = p.rx.exec(s);
+        if (!m) continue;
+        out = p.out.replace(/\{(\d+)\}/g, (_, n) => { const i = p.order.indexOf(Number(n)); return i < 0 ? "" : tr(m[i + 1], depth + 1); });
+        break;
+      }
+    }
+    if (I18N.cache.size > 5000) I18N.cache.clear();
+    I18N.cache.set(s, out);
+    return out;
+  }
+  // Text that reaches the page without el() (innerHTML, textContent, the static shell) is translated where it
+  // lands. EN_TEXT / TR_ATTR remember the English and what it became, so our own change isn't taken for new text.
+  const EN_TEXT = new WeakMap();  // text node -> its English
+  const TR_TEXT = new WeakMap();  // text node -> what we last wrote there
+  const TR_ATTR = new WeakMap();  // element -> { title: { en, out }, ... }
+  const TR_ATTRS = ["title", "placeholder", "aria-label"];
+  const TR_SKIP = "script, style, code, pre, textarea, [data-raw], [contenteditable], .xterm";
   const enText = (node) => [...node.childNodes].map((x) => (x.nodeType === 3 && EN_TEXT.has(x) ? EN_TEXT.get(x) : x.textContent)).join("").trim();
+  function translateText(t) {
+    const p = t.parentElement;
+    if (!p || p.closest(TR_SKIP)) return;
+    if (TR_TEXT.has(t) && TR_TEXT.get(t) !== t.nodeValue) EN_TEXT.delete(t);  // the page wrote new text into this node
+    const en = EN_TEXT.has(t) ? EN_TEXT.get(t) : t.nodeValue;
+    const core = en.trim();
+    if (!core) return;
+    EN_TEXT.set(t, en);
+    const out = en.replace(core, tr(host(core)));
+    TR_TEXT.set(t, out);
+    if (t.nodeValue !== out) t.nodeValue = out;
+  }
+  function translateAttrs(x) {
+    if (x.closest("[data-raw]")) return;
+    for (const a of TR_ATTRS) {
+      if (!x.hasAttribute(a)) continue;
+      const now = x.getAttribute(a);
+      let all = TR_ATTR.get(x);
+      if (!all) TR_ATTR.set(x, (all = {}));
+      if (!all[a] || all[a].out !== now) all[a] = { en: now, out: now };  // first sight, or the page set a new one
+      const out = tr(host(all[a].en));
+      all[a].out = out;
+      if (now !== out) x.setAttribute(a, out);
+    }
+  }
   function translateStatic(root) {
     if (!root) return;
+    if (root.nodeType === 3) { translateText(root); return; }
+    if (root.nodeType !== 1) return;
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     const nodes = [];
     let n;
     while ((n = walker.nextNode())) nodes.push(n);
-    for (const t of nodes) {
-      const p = t.parentElement;
-      if (!p || p.closest("script, style, code, pre, textarea, [data-raw]")) continue;
-      const en = EN_TEXT.has(t) ? EN_TEXT.get(t) : t.nodeValue;
-      const core = en.trim();
-      if (!core) continue;
-      if (!EN_TEXT.has(t)) EN_TEXT.set(t, en);
-      t.nodeValue = en.replace(core, tr(core));
-    }
-    root.querySelectorAll("[title], [placeholder], [aria-label]").forEach((x) => {
-      for (const a of ["title", "placeholder", "aria-label"]) {
-        if (!x.hasAttribute(a)) continue;
-        const key = "en" + a.replace("-", "");
-        const en = x.dataset[key] || x.getAttribute(a);
-        x.dataset[key] = en;
-        x.setAttribute(a, tr(en));
+    nodes.forEach(translateText);
+    if (TR_ATTRS.some((a) => root.hasAttribute(a))) translateAttrs(root);
+    root.querySelectorAll("[title], [placeholder], [aria-label]").forEach(translateAttrs);
+  }
+  let trObserver = null;
+  function watchTranslations() {
+    if (trObserver) { trObserver.disconnect(); trObserver = null; }
+    if (!I18N.dict || typeof MutationObserver === "undefined") return;
+    trObserver = new MutationObserver((muts) => {
+      for (const m of muts) {
+        if (m.type === "childList") m.addedNodes.forEach(translateStatic);
+        else if (m.type === "characterData") translateText(m.target);
+        else translateAttrs(m.target);
       }
     });
+    trObserver.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: TR_ATTRS });
   }
   async function setLanguage(lang) {
     lang = LANGS.some(([v]) => v === lang) ? lang : "en";
@@ -54,17 +124,18 @@
     if (lang !== "en") {
       try { const r = await fetch(`/i18n/${lang}.json`, { cache: "no-cache" }); if (r.ok) dict = await r.json(); } catch (e) { dict = null; }
     }
-    I18N.lang = lang; I18N.dict = dict;
+    I18N.lang = lang; I18N.dict = dict; I18N.pats = compilePatterns(dict); I18N.cache = new Map();
     document.documentElement.lang = lang;
     try { localStorage.setItem("aurora-lang", lang); } catch (e) {}
     translateStatic(document.body);
+    watchTranslations();
   }
   const el = (tag, attrs = {}, children = []) => {
     const node = document.createElement(tag);
     // raw: data shown exactly as it is (log lines, URLs, user agents), never reworded, never parsed as HTML.
-    const h = attrs.raw ? (s) => s : (s) => host(tr(s));
+    const h = attrs.raw ? (s) => s : (s) => tr(host(s));
     for (const [k, v] of Object.entries(attrs)) {
-      if (k === "raw") continue;
+      if (k === "raw") { if (v) node.setAttribute("data-raw", ""); continue; }
       if (k === "class") node.className = v;
       else if (k === "html") node.innerHTML = h(v);
       else if (k === "text") node.textContent = h(v);
@@ -97,7 +168,7 @@
   let toastTimer = null;
   function toast(msg, kind = "good") {
     const t = $("#toast");
-    t.textContent = host(tr(msg));
+    t.textContent = tr(host(msg));
     t.className = `toast ${kind}`;
     t.hidden = false;
     clearTimeout(toastTimer);
@@ -4442,6 +4513,8 @@
           field("Login prompt text", sLabel), field("First user", sUser), field("Password", sPw.node, "Leave empty to generate one.")]),
         el("div", { style: "margin-top:12px" }, btn("Protect site", async () => {
           if (!sSel.value) return toast("Pick a domain or subdomain", "bad");
+          const picked = sites.find((s) => s.server_name === sSel.value);
+          if (picked && (picked.inside || []).length && !confirmInline(`${picked.docroot} also holds these sites, so they get the same login:\n\n${picked.inside.join("\n")}\n\nContinue?`)) return;
           const password = sPw.value() || genPassword();
           try { await API.dirPrivacyProtectSite({ site: sSel.value, label: sLabel.value.trim(), name: sUser.value.trim(), password }); load(); showPw(sUser.value.trim(), password); } catch (e) { toast(e.message, "bad"); }
         }, "btn-primary"))]);
@@ -6346,14 +6419,15 @@
           el("td", {}, sslPill(s.https_via ? { ...s, ...s.https_via } : s)),  // http built-in site: https comes from default-ssl
           s.redirect_url && !s.system ? el("td", { class: "muted", title: "This domain redirects, so it shows no files", text: "-" })
             : el("td", {}, sw(!!s.indexes, async (v, inp) => {
-              try { await API.siteToggle(s.system ? s.conf : s.server_name, "indexes", v); toast(`File list ${v ? "on" : "off"} · ${s.server_name}${s.system ? (s.has_http ? " (http)" : " (https)") : ""}`, "good"); load(); }
+              try { const r = await API.siteToggle(s.system ? s.conf : s.server_name, "indexes", v); toast(`File list ${v ? "on" : "off"} · ${s.server_name}${s.system ? (r && r.both ? " (http and https)" : s.has_http ? " (http)" : " (https)") : ""}`, "good"); load(); }
               catch (e) { inp.checked = !v; toast(e.message, "bad"); }
-            }, { title: s.system ? `Show a list of the files when the folder has no index page (${s.has_http ? "http, port 80" : "https, port 443"}). If the folder's .htaccess decides this, it is updated too, for http and https alike`
+            }, { title: s.system ? (s.indexes_linked ? "Show a list of the files when the folder has no index page. Force HTTPS is on, so every visit ends up on https: this switch and the other row's are the same one"
+              : `Show a list of the files when the folder has no index page (${s.has_http ? "http, port 80" : "https, port 443"}). http and https each have their own switch`)
               : "Show a list of the files when the folder has no index page" })),
           el("td", { class: "actions" }, el("div", { class: "dm-acts" }, [
             el("button", { class: "btn btn-sm", onclick: () => openDomain(s.system ? s.conf : s.server_name) }, [icon("services", 13), " Manage"]),
             dmSlot(s.docroot, () => el("button", { class: "btn btn-sm btn-ghost dm-ico", title: `Files: open ${s.docroot} in the File Manager`, onclick: () => { fmState.cwd = s.docroot; navigate("files"); } }, icon("folder", 14))),
-            dmSlot(s.docroot && !s.system, () => el("button", { class: "btn btn-sm btn-ghost dm-ico", title: `Password protect ${s.server_name} (Basic Auth, Directory Privacy)`, onclick: () => navigate("dirprivacy", { arg: s.server_name }) }, icon("lock", 14))),
+            dmSlot(s.docroot, () => el("button", { class: "btn btn-sm btn-ghost dm-ico", title: `Password protect ${s.server_name} (Basic Auth, Directory Privacy)`, onclick: () => navigate("dirprivacy", { arg: s.server_name }) }, icon("lock", 14))),
             dmSlot(!isIp(s.server_name), () => el("button", { class: "btn btn-sm btn-ghost dm-ico", title: "DNS zone", onclick: () => openZone(s.server_name.replace(/^www\./, "")) }, icon("zone", 14))),
             dmSlot(!isIp(s.server_name), () => el("button", { class: "btn btn-sm btn-ghost dm-ico", title: "DNS & WHOIS check", onclick: () => showDomainInfo(s.server_name) }, icon("search", 13))),
             dmSlot(s.docroot, () => shadowBtn(`site:${s.server_name}`)),
@@ -8768,6 +8842,15 @@
     if (d.installed && d.running) return true;
     const s = DB_SERVERS[app];
     box.innerHTML = "";
+    if (d.external) {  // another control panel's, or built by hand: no Install button, a second copy would fight it
+      box.append(el("div", { class: "card" }, [
+        el("h3", { text: `${s.name} is managed outside this panel` }),
+        el("p", { class: "muted", style: "margin:0 0 14px" }, [el("span", { text: `${s.name} is on this server at ` }), el("code", { raw: true, text: d.external }),
+          el("span", { text: ", but it was installed by hand or by another control panel, so its databases aren't managed here. Use the tools it came with." })]),
+        el("div", { class: "toolbar" }, [btn("Open System Applications", () => navigate("sysapps"), "btn-ghost")]),
+      ]));
+      return false;
+    }
     const install = !d.installed;
     const act = install
       ? el("button", { class: "btn btn-primary", text: d.broken ? `Repair ${s.name}` : `Install ${s.name}`, onclick: async (e) => {
@@ -9140,8 +9223,19 @@
       ]);
     }
 
+    // Put here by hand or by another control panel: shown, and left alone (a second copy would fight it for the port).
+    function externalCard(a) {
+      return el("div", { class: "card sa-card sa-off" }, [
+        el("div", { class: "sa-head" }, [el("h3", { text: a.name }), el("span", { style: "flex:1" }), el("span", { class: "pill warn", text: "Managed elsewhere" })]),
+        el("p", { class: "muted sa-desc", text: a.desc }),
+        el("p", { class: "muted sa-facts" }, [el("span", { text: "Found at " }), el("code", { raw: true, text: a.external }), a.ram_mb != null ? el("span", { raw: true, text: ` · RAM ${a.ram_mb} MB` }) : null]),
+        el("p", { class: "muted sa-desc", text: "Installed outside this panel, by hand or by another control panel. The panel leaves it alone: use the tools it came with." }),
+      ]);
+    }
+
     function card(a) {
       if (a.docker) return dockerCard(a);
+      if (a.external) return externalCard(a);
       const server = a.group === "server";
       const noUnits = server && !(a.units || []).length;
       const pill = a.broken ? el("span", { class: "pill bad", text: "Install incomplete" })
@@ -10162,8 +10256,8 @@
 
   // Lightweight synchronous confirm/prompt using window dialogs where allowed,
   // falling back gracefully. (Served over http on the LAN, dialogs are fine.)
-  function confirmInline(msg) { return window.confirm(msg); }
-  function promptInline(msg, def) { return window.prompt(msg, def !== undefined ? def : ""); }
+  function confirmInline(msg) { return window.confirm(tr(host(msg))); }
+  function promptInline(msg, def) { return window.prompt(tr(host(msg)), def !== undefined ? def : ""); }
 
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
 

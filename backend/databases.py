@@ -39,6 +39,10 @@ def _password(pw: str) -> str:
     return pw
 
 
+_EXTERNAL_MSG = ("{name} is on this server at {path}, but it was installed outside this panel (by hand or by another "
+                 "control panel), so its databases aren't managed here. Use the tools it came with.")
+
+
 # =========================== MariaDB / MySQL ===============================
 _MY_SERVER_PKGS = ("mariadb-server", "mysql-server", "default-mysql-server")
 _MY_UNITS = ("mariadb", "mysql")
@@ -48,7 +52,7 @@ def mysql_status() -> dict:
     """Is a MariaDB/MySQL *server* installed and running? The mysql client alone (pulled in
     by phpMyAdmin, PHP, …) isn't enough: without the server every query fails with
     "Can't connect to local server through socket '/run/mysqld/mysqld.sock'"."""
-    st = {"installed": False, "running": False, "broken": False}
+    st = {"installed": False, "running": False, "broken": False, "external": None}
     if not IS_LINUX:
         return st
     if shutil.which("dpkg-query"):
@@ -58,6 +62,9 @@ def mysql_status() -> dict:
         st["installed"] = any(f.startswith("ii") for f in flags)
         # e.g. "iF" (half-configured) / "iU" (unpacked): an install that failed part-way.
         st["broken"] = not st["installed"] and any(f[:1] == "i" and f[1:2] not in ("i", "n") for f in flags)
+        if not st["installed"] and not st["broken"]:
+            from . import sysapps
+            st["external"] = sysapps._unpackaged("mariadb")  # there, but not from a package: another panel's, or built by hand
     else:
         st["installed"] = bool(shutil.which("mariadbd") or shutil.which("mysqld") or Path("/usr/sbin/mariadbd").exists())
     if st["installed"] or st["broken"]:
@@ -73,6 +80,8 @@ def mysql_require():
     if st["broken"]:
         raise DatabaseError("MariaDB's installation didn't finish. Click Repair in System Applications → Extras "
                             "(or the Repair button on the Databases page).")
+    if st["external"]:
+        raise DatabaseError(_EXTERNAL_MSG.format(name="MariaDB/MySQL", path=st["external"]))
     if not st["installed"]:
         raise DatabaseError("MariaDB isn't installed on this Pi. Install it from System Applications → Extras "
                             "(or the Install button on the Databases page).")
@@ -380,7 +389,11 @@ def pg_status() -> dict:
         out = subprocess.run(["pg_lsclusters", "-h"], capture_output=True, text=True, timeout=10)
         # columns: ver cluster port status owner datadir log
         running = any(len(c) > 3 and c[3].startswith("online") for c in (l.split() for l in out.stdout.splitlines()))
-    return {"installed": installed, "running": running}
+    external = None
+    if IS_LINUX and not installed:
+        from . import sysapps
+        external = sysapps.external("postgresql")
+    return {"installed": installed, "running": running, "external": external}
 
 
 def pg_repair() -> dict:
@@ -411,6 +424,8 @@ def pg_require():
     if not IS_LINUX:
         raise DatabaseError("PostgreSQL management is only available on Linux")
     st = pg_status()
+    if st["external"]:
+        raise DatabaseError(_EXTERNAL_MSG.format(name="PostgreSQL", path=st["external"]))
     if not st["installed"]:
         raise DatabaseError("PostgreSQL isn't installed on this Pi. Install it from System Applications → Extras "
                             "(or the Install button on the PostgreSQL Databases page).")
@@ -794,5 +809,11 @@ def overview() -> dict:
 def install_pkg(pkg: str) -> jobs.Job:
     if pkg not in ("phppgadmin", "phpmyadmin", "postgresql", "mariadb-server"):
         raise DatabaseError("Unsupported package")
-    env = {"DEBIAN_FRONTEND": "noninteractive", "PATH": distro.PATH}
+    app_id = {"mariadb-server": "mariadb", "postgresql": "postgresql"}.get(pkg)
+    if app_id:
+        from . import sysapps
+        path = sysapps.external(app_id)
+        if path:
+            raise DatabaseError(_EXTERNAL_MSG.format(name=sysapps.CATALOG[app_id]["name"], path=path))
+    env ={"DEBIAN_FRONTEND": "noninteractive", "PATH": distro.PATH}
     return jobs.launch(f"install {pkg}", ["apt-get", "-y", "install", pkg], env=env)

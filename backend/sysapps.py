@@ -9,6 +9,7 @@ server may own port 80: installing/starting a second one requires an explicit
 from __future__ import annotations
 
 import glob
+import os
 import platform
 import re
 import shutil
@@ -156,6 +157,66 @@ def _dpkg_broken(pkgs: list[str]) -> set[str]:
     return broken
 
 
+# Server software that is on the system without a package: built by hand, or put there by another control
+# panel (aaPanel compiles into /www/server and links the programs into /usr/bin). Installing our package on
+# top would start a second copy on the same ports, so such an app is reported and otherwise left alone.
+# app id -> (program names looked up on PATH, other places it is commonly found).
+_EXTERNAL: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "apache": (("apache2", "httpd"), ("/www/server/apache/bin/httpd", "/usr/local/apache2/bin/httpd", "/usr/local/apache/bin/httpd")),
+    "nginx": (("nginx",), ("/www/server/nginx/sbin/nginx", "/usr/local/nginx/sbin/nginx")),
+    "lighttpd": (("lighttpd",), ()),
+    "caddy": (("caddy",), ()),
+    "mariadb": (("mariadbd", "mysqld", "mysqld_safe"), ("/www/server/mysql/bin/mysqld", "/usr/local/mysql/bin/mysqld")),
+    "postgresql": (("postgres",), ("/www/server/pgsql/bin/postgres", "/usr/local/pgsql/bin/postgres")),
+    "redis": (("redis-server",), ("/www/server/redis/src/redis-server",)),
+    "memcached": (("memcached",), ("/usr/local/memcached/bin/memcached",)),
+    "vsftpd": (("vsftpd",), ()),
+}
+_EXT_PATH = distro.BASE_PATH + ":/usr/local/sbin:/usr/local/bin"
+
+
+def _owned(path: str) -> bool:
+    """Does a package own this file? Asked of the system's own package manager, for the link and what it points to."""
+    for p in dict.fromkeys((path, os.path.realpath(path))):
+        argv = ["rpm", "-qf", p] if distro.is_dnf() else ["dpkg-query", "-S", p]
+        try:
+            r = subprocess.run(argv, capture_output=True, text=True, timeout=15, env={"PATH": distro.BASE_PATH, "LC_ALL": "C"})
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if r.returncode == 0:
+            return True
+    return False
+
+
+def _unpackaged(app_id: str) -> str | None:
+    """Where this app's server program is, when it is there and no package owns it."""
+    if not IS_LINUX or app_id not in _EXTERNAL:
+        return None
+    names, places = _EXTERNAL[app_id]
+    found = next((p for p in (shutil.which(n, path=_EXT_PATH) for n in names) if p), None) \
+        or next((p for p in places if os.path.isfile(p)), None)
+    if not found or _owned(found):
+        return None
+    return os.path.realpath(found)
+
+
+def external(app_id: str) -> str | None:
+    """Path of an app that was installed outside the panel's package (see _EXTERNAL), else None."""
+    if not IS_LINUX or app_id not in _EXTERNAL:
+        return None
+    pkg = CATALOG[app_id]["pkg"]
+    if _dpkg_status([pkg]).get(pkg) or pkg in _dpkg_broken([pkg]) or (app_id == "postgresql" and _pg_server_pkgs()):
+        return None
+    return _unpackaged(app_id)
+
+
+def _refuse_external(app_id: str) -> None:
+    path = external(app_id)
+    if path:
+        raise SysAppError(f"{CATALOG[app_id]['name']} is already on this server at {path}, installed outside this panel "
+                          "(by hand or by another control panel). The panel leaves it alone, so two copies never fight over the same port.")
+
+
 def _pg_server_pkgs() -> dict[str, str]:
     """Installed versioned server packages (postgresql-17 …) -> version. The "postgresql"
     metapackage is optional, so these are what really say Postgres is installed."""
@@ -239,10 +300,12 @@ def status() -> dict:
     for k, v in CATALOG.items():
         svc = services[k]
         installed = versions.get(v["pkg"]) is not None
+        is_broken = not installed and v["pkg"] in broken
         apps.append({
+            "external": None if installed or is_broken else _unpackaged(k),
             "id": k, "name": v["name"], "group": v["group"], "desc": v["desc"], "ram_typical": v["ram"],
             "package": v["pkg"], "service": svc, "installed": installed, "version": versions.get(v["pkg"]),
-            "broken": not installed and v["pkg"] in broken,
+            "broken": is_broken,
             "active": bool(svc and active.get(svc)), "ram_mb": ram.get(k),
             "docroot": _docroot(k) if installed else None,
         })
@@ -341,6 +404,9 @@ def _check_port80(app_id: str, switch: bool):
     other = _running_web_server(app_id)
     if not other:
         return
+    if external(other):
+        raise SysAppError(f"{CATALOG[other]['name']} is running on port 80 and was installed outside this panel, so the panel won't stop it. "
+                          f"Stop it yourself first if you want {CATALOG[app_id]['name']} here instead.")
     if not switch:
         msg = f"{CATALOG[other]['name']} is running on port 80. Stop it and switch to {CATALOG[app_id]['name']}?"
         if other == "apache":
@@ -360,6 +426,7 @@ def install(app_id: str, switch: bool = False) -> jobs.Job:
         except requires.RequiresError as e:
             raise SysAppError(str(e))
     v = _app(app_id)
+    _refuse_external(app_id)
     _check_port80(app_id, switch)
     global _web_cache
     _web_cache = (0.0, None)
@@ -373,6 +440,7 @@ def install(app_id: str, switch: bool = False) -> jobs.Job:
 def uninstall(app_id: str) -> jobs.Job:
     _require_linux()
     v = _app(app_id)
+    _refuse_external(app_id)
     if app_id == "redis" and not distro.is_dnf():  # Fedora's spam filter doesn't use Redis
         from . import requires
         if requires.installed("mail"):
@@ -405,6 +473,7 @@ def control(app_id: str, action: str, switch: bool = False) -> dict:
                 raise SysAppError(out.stderr.strip() or f"systemctl {action} failed")
         return {"ok": True, "service": " ".join(units), "action": action}
     _app(app_id)
+    _refuse_external(app_id)
     svc = _service(app_id)
     if not svc:
         raise SysAppError("This application has no service (is it installed?)")

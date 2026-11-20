@@ -292,6 +292,10 @@ def list_sites() -> dict:
     for x in sites:
         if x["system"] and x["has_http"] and https:
             x["https_via"] = {"ssl": https["ssl"], "cert_expires": https["cert_expires"]}
+            if x["force_https"] and x["docroot"] == https["docroot"]:
+                # Port 80 only redirects: what visitors get is the https site's file list, on both rows.
+                x["indexes"] = https["indexes"]
+                x["indexes_linked"] = https["indexes_linked"] = True
     return {"supported": True, "sites": sites, "certbot": bool(shutil.which("certbot")), "server": _server_state()}
 
 
@@ -840,6 +844,8 @@ def _set_system_force_https(conf: Path, on: bool) -> dict:
     r = _run(["systemctl", "reload", "apache2"])
     if r.returncode != 0:
         _run(["systemctl", "restart", "apache2"])
+    if on:
+        _fl_follow_https(conf)
     return {"ok": True}
 
 
@@ -1075,45 +1081,136 @@ def _file_list_state(conf: Path, text: str | None = None) -> dict:
     return {"on": on, "via": via, "conf": listing, "docroot": docroot, "htaccess_rel": rel}
 
 
+def _fl_peers(conf: Path) -> list[Path]:
+    """The built-in sites serving the same folder as conf, itself first: http (port 80) and https (port 443)
+    usually share one document root, and so one .htaccess."""
+    root = _file_list_state(conf)["docroot"]
+    out = [conf]
+    for name in sorted(SYSTEM_CONFS):
+        p = AVAIL / name
+        if p == conf or not p.is_file():
+            continue
+        try:
+            if _file_list_state(p)["docroot"] == root:
+                out.append(p)
+        except (SiteError, OSError):
+            pass
+    return out
+
+
+def _fl_linked(peers: list[Path]) -> bool:
+    """With Force HTTPS on, port 80 only redirects: there is one file list, the https site's, and both switches are it."""
+    try:
+        http = [p for p in peers if _has_http(p)]
+        https = [p for p in peers if not _has_http(p) and _enabled(p.name)]
+        return bool(https) and any(_settings_from_conf(_live_conf(p))["force_https"] for p in http)
+    except (SiteError, OSError):
+        return False
+
+
+def _htaccess_without_indexes(lines: list[str]) -> list[str] | None:
+    """These .htaccess lines with +Indexes / -Indexes taken out, so each site's own config decides the file
+    list. None when a complete "Options ..." list is there: that one replaces whatever the sites say."""
+    out = []
+    for ln in lines:
+        m = re.match(r"(?i)^(\s*)Options\s+(.+?)\s*$", ln)
+        if not m:
+            out.append(ln)
+            continue
+        vals = m.group(2).split()
+        if any(v[0] not in "+-" for v in vals):
+            return None
+        rest = [v for v in vals if v.lower() not in ("+indexes", "-indexes")]
+        if rest:
+            out.append(f"{m.group(1)}Options {' '.join(rest)}")
+    return out
+
+
 def _set_system_indexes(conf: Path, on: bool) -> dict:
     """File list on/off for a built-in site: a marked <Directory> block in its VirtualHost (the rest of the
-    file is untouched, and the block goes away again when the file says the same without it). When the
-    document root's .htaccess overrides that, the .htaccess is switched too."""
+    file is untouched, and the block goes away again when the file says the same without it).
+
+    http and https each have their own switch. The folder's .htaccess is shared by both, so an Indexes
+    setting there is moved into the two site files: the other port keeps exactly what it showed before.
+    While Force HTTPS is on, port 80 only redirects, so both switches are one and move together."""
     from . import apache
-    live = _live_conf(conf)
-    text = live.read_text(errors="replace")
-    bare = _FL_BLOCK.sub("", text)
-    st = _file_list_state(conf, bare)
-    new = bare
-    if st["conf"] != on:
-        vh = _VHOST.search(bare)
-        new = bare[:vh.end()] + "\n".join([
-            "", f"    {_FL_BEGIN}", f'    <Directory "{st["docroot"]}">', f"        Options {'+' if on else '-'}Indexes",
-            "    </Directory>", f"    {_FL_END}"]) + bare[vh.end():]
-    if new != text:
-        SITE_BAK.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(live, SITE_BAK / f"{conf.name}.{int(time.time())}")
-        if on and not (APACHE / "mods-enabled" / "autoindex.load").exists():
+    peers = _fl_peers(conf)
+    linked = _fl_linked(peers)
+    want = {p: on if (p == conf or linked) else _file_list_state(p)["on"] for p in peers}
+    ts = int(time.time())
+    rel = _file_list_state(conf)["htaccess_rel"]
+    ht_old = None
+    if rel is not None:
+        try:
+            lines = apache._read_lines(rel)
+            freed = _htaccess_without_indexes(lines)
+            if freed is not None and freed != lines:
+                SITE_BAK.mkdir(parents=True, exist_ok=True)
+                (SITE_BAK / f"{conf.name}.htaccess.{ts}").write_text("\n".join(lines) + "\n", encoding="utf-8")
+                apache._write_lines(rel, freed)
+                ht_old = lines
+        except apache.ApacheError:
+            ht_old = None  # unreadable: left alone, and the check at the end says what still decides
+    old: dict[Path, str] = {}
+
+    def undo():
+        for live, text in old.items():
+            live.write_text(text, encoding="utf-8")
+        if ht_old is not None:
+            apache._write_lines(rel, ht_old)
+
+    for p in peers:
+        live = _live_conf(p)
+        text = live.read_text(errors="replace")
+        bare = _FL_BLOCK.sub("", text)
+        st = _file_list_state(p, bare)
+        new = bare
+        if st["conf"] != want[p]:
+            vh = _VHOST.search(bare)
+            new = bare[:vh.end()] + "\n".join([
+                "", f"    {_FL_BEGIN}", f'    <Directory "{st["docroot"]}">', f"        Options {'+' if want[p] else '-'}Indexes",
+                "    </Directory>", f"    {_FL_END}"]) + bare[vh.end():]
+        if new != text:
+            SITE_BAK.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(live, SITE_BAK / f"{p.name}.{ts}")
+            old[live] = text
+            live.write_text(new, encoding="utf-8")
+    if old:
+        if any(want.values()) and not (APACHE / "mods-enabled" / "autoindex.load").exists():
             _run(["a2enmod", "-q", "autoindex"])
-        live.write_text(new, encoding="utf-8")
         test = _run(["apache2ctl", "configtest"])
         if test.returncode != 0:
-            live.write_text(text, encoding="utf-8")
+            undo()
             err = "\n".join(l for l in (test.stderr + test.stdout).splitlines() if "AH00558" not in l).strip()
             raise SiteError("Apache rejected the config, nothing was changed:\n" + err[:1500])
         if _run(["systemctl", "reload", "apache2"]).returncode != 0:
             _run(["systemctl", "restart", "apache2"])
-    st = _file_list_state(conf, new)
+    shared = False
+    st = _file_list_state(conf)
     if st["on"] != on and st["via"] == "htaccess":
-        rel = st["htaccess_rel"]
+        # A complete Options list in the .htaccess has the last word, for http and https alike: switch it there.
         try:
-            apache.set_indexes(rel, on, apache.get_indexes(rel)["directory_index"])
+            apache.set_indexes(st["htaccess_rel"], on, apache.get_indexes(st["htaccess_rel"])["directory_index"])
         except apache.ApacheError as exc:
             raise SiteError(f"{st['docroot']}/.htaccess decides the file list here and couldn't be changed: {exc}") from exc
-        st = _file_list_state(conf, new)
+        shared = True
+        st = _file_list_state(conf)
     if st["on"] != on:
         raise SiteError(f"The file list is still {'on' if st['on'] else 'off'}: something else in Apache's config decides it for {st['docroot']}")
-    return {"ok": True}
+    both = len(peers) > 1 and (linked or shared)
+    return {"ok": True, **({"both": True, "why": "force_https" if linked else "htaccess"} if both else {})}
+
+
+def _fl_follow_https(conf: Path) -> None:
+    """Force HTTPS was just turned on: from now on visitors only ever see the https site's file list, so the
+    http site takes the same setting. Turning Force HTTPS off later then changes nothing about the lists."""
+    try:
+        https = [p for p in _fl_peers(conf) if not _has_http(p) and _enabled(p.name)]
+        if https:
+            _set_system_indexes(https[0], _file_list_state(https[0])["on"])
+    except (SiteError, OSError) as quiet_exc:
+        from . import problems
+        problems.quiet(quiet_exc)
 
 
 def _docroot_deletable(name: str, docroot: str) -> Path:

@@ -54,8 +54,17 @@ def _run(argv: list[str], timeout: int = 60) -> subprocess.CompletedProcess:
         return subprocess.CompletedProcess(argv, 1, "", str(exc))
 
 
+def external() -> str | None:
+    """An Nginx that another control panel or a hand build put here and that keeps its settings somewhere
+    other than /etc/nginx: files written to conf.d would never be read, so its sites aren't managed here."""
+    if CONF_DIR.is_dir():
+        return None
+    from . import sysapps
+    return sysapps.external("nginx")
+
+
 def installed() -> bool:
-    return shutil.which("nginx", path=distro.BASE_PATH) is not None
+    return shutil.which("nginx", path=distro.BASE_PATH) is not None and external() is None
 
 
 def _active(unit: str) -> bool:
@@ -327,7 +336,7 @@ def _get(name: str) -> tuple[dict, bool]:
 
 def status() -> dict:
     if not installed():
-        return {"installed": False, "active": False, "sites": [], "apache_active": _active(_apache_unit())}
+        return {"installed": False, "external": external(), "active": False, "sites": [], "apache_active": _active(_apache_unit())}
     v = _run(["nginx", "-v"], 10)
     active = _active("nginx")
     other = [p.name for p in CONF_DIR.glob("*.conf") if not p.name.startswith(PREFIX) and p != DEFAULT_CONF]

@@ -151,7 +151,9 @@ window.AuroraNginx = (ui) => {
       }
       body.replaceChildren();
       if (!d.installed) {
-        body.append(el("p", { class: "dm-note warn", text: "Nginx isn't installed. Install it under System Applications." }), btn("Open System Applications", () => navigate("sysapps"), "btn-primary"));
+        if (d.external) body.append(el("p", { class: "dm-note warn" }, [el("span", { text: "Nginx is on this server at " }), el("code", { raw: true, text: d.external }),
+          el("span", { text: ", installed outside this panel (by hand or by another control panel). It keeps its settings somewhere this page doesn't write to, so its websites aren't managed here. Use the tools it came with." })]));
+        else body.append(el("p", { class: "dm-note warn", text: "Nginx isn't installed. Install it under System Applications." }), btn("Open System Applications", () => navigate("sysapps"), "btn-primary"));
         return;
       }
       if (!d.active) {

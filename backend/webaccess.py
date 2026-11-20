@@ -65,13 +65,14 @@ def _store(p: Path, d: dict):
 
 def _site_docroots() -> dict[str, str]:
     """server_name -> resolved document root of every site Apache serves. A subdomain is a site of
-    its own here, so protecting it means protecting its root."""
+    its own here, so protecting it means protecting its root. The two built-in sites (http and https
+    on the server's own address) share a name and a folder, so they are one entry."""
     try:
         from . import sites
         out = {}
         for s in sites.list_sites().get("sites", []):
             root = s.get("docroot") or (s.get("settings") or {}).get("docroot")
-            if s.get("system") or not root:
+            if not root or not s.get("server_name"):
                 continue
             out[str(s["server_name"]).lower()] = str(Path(root).resolve())
         return out
@@ -633,9 +634,12 @@ def privacy_sites() -> dict:
     """Every site (domains and subdomains alike) and whether its whole document root is behind a login."""
     dirs = _load(DP_STATE)
     out = []
-    for name, root in sorted(_site_docroots().items()):
+    roots = _site_docroots()
+    for name, root in sorted(roots.items()):
         d = dirs.get(root) or {}
-        out.append({"server_name": name, "docroot": root, "protected": bool(d and d.get("enabled", True) and d.get("users")),
+        # Sites whose folder lies inside this one get the same login: say so before it surprises anyone.
+        inside = sorted(n for n, r in roots.items() if n != name and Path(root) in Path(r).parents)
+        out.append({"server_name": name, "docroot": root, "inside": inside, "protected": bool(d and d.get("enabled", True) and d.get("users")),
                     "enabled": bool(d) and d.get("enabled", True), "label": d.get("label"), "users": sorted(d.get("users", []))})
     return {"apache": bool(shutil.which("apache2ctl")), "sites": out}
 

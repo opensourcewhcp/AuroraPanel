@@ -139,7 +139,7 @@ def test_interface_languages_ship_as_dictionaries():
     for lang in langs[1:]:
         d = json.loads((FRONT / "i18n" / f"{lang}.json").read_text(encoding="utf-8"))
         assert d["Preferences"] and d["Sign in"] and d["Save"] and d["Password & Security"], lang
-    assert "const h = attrs.raw ? (s) => s : (s) => host(tr(s));" in app_js and "t.textContent = host(tr(msg));" in app_js
+    assert "const h = attrs.raw ? (s) => s : (s) => tr(host(s));" in app_js and "t.textContent = tr(host(msg));" in app_js
     assert 'tr(TITLES[view] || view)' in app_js and "translateStatic(document.body)" in app_js
     assert 'class: `lang-opt' in app_js
 
