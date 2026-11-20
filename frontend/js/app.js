@@ -38,24 +38,30 @@
     }
     return pats.sort((a, b) => b.weight - a.weight || b.len - a.len);
   }
-  function tr(s, depth = 0) {
+  // translate() works the answer out; tr() remembers it. Text written as HTML goes through translate() only,
+  // so markup never comes out of a store that other text (messages, values from the address bar) was put into.
+  function translate(s, depth = 0) {
+    const d = I18N.dict;
+    if (!d || typeof s !== "string" || !s) return s;
+    if (hasOwn(d, s)) return d[s];
+    const core = s.trim();
+    if (core !== s && hasOwn(d, core)) return s.replace(core, d[core]);
+    if (depth >= 3 || s.length >= 3000) return s;
+    for (const p of I18N.pats) {
+      if (!s.includes(p.anchor)) continue;
+      const m = p.rx.exec(s);
+      if (!m) continue;
+      return p.out.replace(/\{(\d+)\}/g, (_, n) => { const i = p.order.indexOf(Number(n)); return i < 0 ? "" : translate(m[i + 1], depth + 1); });
+    }
+    return s;
+  }
+  function tr(s) {
     const d = I18N.dict;
     if (!d || typeof s !== "string" || !s) return s;
     if (hasOwn(d, s)) return d[s];
     const cached = I18N.cache.get(s);
     if (cached !== undefined) return cached;
-    let out = s;
-    const core = s.trim();
-    if (core !== s && hasOwn(d, core)) out = s.replace(core, d[core]);
-    else if (depth < 3 && s.length < 3000) {
-      for (const p of I18N.pats) {
-        if (!s.includes(p.anchor)) continue;
-        const m = p.rx.exec(s);
-        if (!m) continue;
-        out = p.out.replace(/\{(\d+)\}/g, (_, n) => { const i = p.order.indexOf(Number(n)); return i < 0 ? "" : tr(m[i + 1], depth + 1); });
-        break;
-      }
-    }
+    const out = translate(s);
     if (I18N.cache.size > 5000) I18N.cache.clear();
     I18N.cache.set(s, out);
     return out;
@@ -137,7 +143,7 @@
     for (const [k, v] of Object.entries(attrs)) {
       if (k === "raw") { if (v) node.setAttribute("data-raw", ""); continue; }
       if (k === "class") node.className = v;
-      else if (k === "html") node.innerHTML = h(v);
+      else if (k === "html") node.innerHTML = attrs.raw ? v : translate(host(v));
       else if (k === "text") node.textContent = h(v);
       else if ((k === "placeholder" || k === "title") && typeof v === "string") node.setAttribute(k, h(v));
       else if (k.startsWith("on")) { if (typeof v === "function") node.addEventListener(k.slice(2), v); }  // never inline handlers
