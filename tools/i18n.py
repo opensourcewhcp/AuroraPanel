@@ -242,6 +242,8 @@ def _decide(stack: list[Frame], prev: Tok | None, nxt: Tok | None) -> bool | Non
     if nxt is not None and nxt.kind == "p" and nxt.val in ("===", "!==", "==", "!=", "."):
         return False
     top = stack[-1] if stack else None
+    if top is not None and top.open == "tpl" and top.callee:
+        return top.callee == "@text"  # a value written straight into layout HTML: text between tags, or part of a tag
     if nxt is not None and nxt.kind == "p" and nxt.val == ":" and top is not None and top.open == "{" and not top.block \
             and prev is not None and prev.kind == "p" and prev.val in ("{", ","):
         return False  # an object key
@@ -329,9 +331,14 @@ def _walk(toks: list[Tok], stack: list[Frame], found: list[tuple[str, bool | Non
                     chain.insert(0, None)
             for part in chain:
                 if part is not None and part.kind == "tpl":
+                    before = ""
+                    layout = _is_layout("".join(x for x in part.parts if isinstance(x, str)))
                     for piece in part.parts:
+                        if isinstance(piece, str):
+                            before += piece
                         if isinstance(piece, list):
-                            stack.append(Frame("tpl"))
+                            where = None if not layout else "@tag" if before.rfind("<") > before.rfind(">") else "@text"
+                            stack.append(Frame("tpl", where))
                             _walk(piece, stack, found)
                             stack.pop()
             if verdict is not False:
@@ -369,15 +376,19 @@ def _renumber(key: str) -> str:
     return PH.sub(lambda m: "{%d}" % seen.setdefault(m.group(1), len(seen)), key)
 
 
+def _is_layout(text: str) -> bool:
+    return bool(STRUCT.search(text) or re.search(r"\bclass=|\bstyle=|\bhref=", text))
+
+
 def _keys_from(text: str, ui: bool | None) -> list[str]:
     """What to store for one literal: itself, or (for a block of layout HTML) the pieces of text inside it."""
     if "{0}" in text and not PH.sub("", text).strip(" \n\t·:,.()[]/-—–|"):
         return []  # nothing but values
-    if STRUCT.search(text) or re.search(r"\bclass=|\bstyle=|\bhref=", text):
+    if _is_layout(text):
         out = []
-        for piece in re.split(r"<[^>]*>", text):
+        for piece in re.split(r"<[^>]*>", text):  # what stands between two tags is on screen as it is
             piece = piece.strip()
-            if piece and _wordy(piece, False) and not piece.startswith("{0}") | False:
+            if piece and _wordy(piece, True):
                 out.append(_renumber(piece))
         return [p for p in out if PH.sub("", p).strip()]
     if not _wordy(text, bool(ui)):

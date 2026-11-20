@@ -73,6 +73,19 @@ def test_layout_html_gives_its_text_pieces_not_the_markup():
     assert {"Firewall is off", "Open ports"} <= got and not any("<div" in k or "class=" in k for k in got)
 
 
+def test_layout_html_keeps_short_labels_and_values_written_into_it():
+    js = r'''
+    c.innerHTML = `<div class="split ${big ? "wide" : "slim"}"><b>${fmtBytes(m.used)} in use</b><span>${fmtBytes(m.free)} available</span></div>
+      <span class="chip ${hot ? "chip-bad" : ""}">${t == null ? "n/a" : hot ? "throttled" : "nominal"}</span>
+      <div class="svc"><span><b>${up}</b> running</span><span><b>${all}</b> loaded</span></div>
+      <button data-go="firewall">${I("chevron", 14)}${ok ? `${n} rule${n === 1 ? "" : "s"} · manage` : "Set up"}</button>
+      ${n < 2 ? '<div class="chart-empty">collecting…</div>' : ""}`;
+    '''
+    got = keys(js)
+    assert {"{0} in use", "{0} available", "throttled", "nominal", "running", "loaded", "{0} rule{1} · manage", "Set up", "collecting…"} <= got
+    assert not got & {"wide", "slim", "chip-bad", "chevron", "firewall", "s"}     # parts of a tag, arguments, a plural ending
+
+
 def test_wordy_tells_text_from_code():
     yes = ["Not installed", "Loading…", "about 40 MB download; uses ~80–150 MB RAM while running", "Version <b>{0}</b>", "2 files changed"]
     no = ["btn btn-sm btn-ghost", "margin:0 0 14px", "display:flex;gap:8px", "/var/www/html", "https://example.com/x", "app.js",

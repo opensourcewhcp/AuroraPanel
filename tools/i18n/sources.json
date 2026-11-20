@@ -201,6 +201,9 @@
 " Limits & cleanup": [
 "frontend/js/ops.js"
 ],
+" MHz": [
+"frontend/js/app.js"
+],
 " Manage": [
 "frontend/js/app.js"
 ],
@@ -514,6 +517,9 @@
 "# PowerShell as Administrator. The file is saved to Downloads.": [
 "frontend/js/app.js"
 ],
+"# aurora: {0}": [
+"frontend/js/app.js"
+],
 "%email%": [
 "frontend/js/mail.js"
 ],
@@ -522,6 +528,12 @@
 ],
 "%subject%": [
 "frontend/js/mail.js"
+],
+"&lt;command&gt;": [
+"frontend/js/app.js"
+],
+"&myip=": [
+"frontend/js/extras.js"
 ],
 "'{0}' already exists at the destination — enable overwrite to replace it": [
 "backend/files.py"
@@ -623,6 +635,9 @@
 "+ Add rule": [
 "frontend/js/mail.js"
 ],
+"+{0} more": [
+"frontend/js/app.js"
+],
 ", NS, A, www, mail, MX and SPF records like a fresh cPanel zone": [
 "frontend/js/app.js"
 ],
@@ -673,6 +688,9 @@
 ],
 ", only apps and sites on this server can connect. Nothing else can reach it.": [
 "frontend/js/ops.js"
+],
+", or use": [
+"frontend/js/app.js"
 ],
 ", re-create its container (Settings → Save) to use it": [
 "frontend/js/ops.js"
@@ -742,6 +760,15 @@
 ],
 ".htaccess is a symlink; refusing to follow it": [
 "backend/apache.py"
+],
+".jsonl); restoring it lands in the panel's backup folder": [
+"frontend/js/ops.js"
+],
+".local (e.g. you@ns2.local). {0}": [
+"frontend/js/mail.js"
+],
+".r2.cloudflarestorage.com": [
+"frontend/js/ops.js"
 ],
 ".ssh is a symlink; refusing to write through it": [
 "backend/sshaccess.py"
@@ -956,6 +983,12 @@
 "frontend/js/app.js"
 ],
 "<code>sites-enabled/{0}</code> is a regular file that was copied and edited by hand, not the link to <code>sites-available/{1}</code> that Apache's tools expect. Apache loads it fine, but <code>a2dissite</code> / <code>a2ensite</code>, what “Disable site” and “Enable site” use, can't manage it. The panel can put it right in one go:": [
+"frontend/js/app.js"
+],
+"@localhost:3306/{0}\n\nmysql -u": [
+"frontend/js/app.js"
+],
+"@localhost:3306/{0}\n\nmysql -u {1} -p {2}": [
 "frontend/js/app.js"
 ],
 "@localhost:5432/{0}\n\nOn this server, and in the panel's Terminal:\npsql -h localhost -U {1} -d {2}\n\nFrom another computer, first turn on \"Allow connections from other computers\" in PostgreSQL's settings and choose who can connect, then:\npsql -h {3} -U {4} -d {5}": [
@@ -12618,6 +12651,9 @@
 "Quota saved": [
 "frontend/js/mail.js"
 ],
+"R2: https://": [
+"frontend/js/ops.js"
+],
 "RAM": [
 "frontend/js/ops.js"
 ],
@@ -18885,6 +18921,9 @@
 "and it's served at": [
 "frontend/js/app.js"
 ],
+"and that they belong": [
+"frontend/js/app.js"
+],
 "and the password was shown at the end of the install.\n        Lost it? On the server run": [
 "frontend/index.html"
 ],
@@ -18952,6 +18991,9 @@
 "at minute 0 of every hour": [
 "frontend/js/app.js"
 ],
+"at {0}": [
+"frontend/js/app.js"
+],
 "attacks": [
 "frontend/js/extras.js"
 ],
@@ -18999,6 +19041,9 @@
 "frontend/js/mail.js"
 ],
 "automatic off": [
+"frontend/js/app.js"
+],
+"automatically.": [
 "frontend/js/app.js"
 ],
 "average rate in the peak slot today": [
@@ -19144,9 +19189,6 @@
 "chpasswd not available": [
 "backend/users.py"
 ],
-"class=\"cw-macro\" data-e=\"{0}\"": [
-"frontend/js/app.js"
-],
 "clean": [
 "frontend/js/app.js",
 "frontend/js/mail.js"
@@ -19156,6 +19198,9 @@
 ],
 "clock": [
 "frontend/js/extras.js"
+],
+"collecting…": [
+"frontend/js/app.js"
 ],
 "common name (e.g. pi.local)": [
 "frontend/js/app.js"
@@ -19211,6 +19256,9 @@
 "frontend/js/ops.js"
 ],
 "cron is not available on this host.": [
+"frontend/js/app.js"
+],
+"cron treats": [
 "frontend/js/app.js"
 ],
 "crontab is not available on this host": [
@@ -19284,6 +19332,9 @@
 "deliverability": [
 "frontend/js/mail.js"
 ],
+"delivered normally": [
+"frontend/js/app.js"
+],
 "deny": [
 "frontend/js/app.js"
 ],
@@ -19353,6 +19404,9 @@
 ],
 "donut": [
 "frontend/js/extras.js"
+],
+"down": [
+"frontend/js/app.js"
 ],
 "dropped at the firewall": [
 "frontend/js/app.js"
@@ -19732,6 +19786,9 @@
 "frontend/js/app.js",
 "frontend/js/extras.js"
 ],
+"hour(s), at minute": [
+"frontend/js/app.js"
+],
 "hourly · drag to zoom": [
 "frontend/js/extras.js"
 ],
@@ -19745,6 +19802,9 @@
 "frontend/js/ops.js"
 ],
 "http · port 80": [
+"frontend/js/app.js"
+],
+"http(s)://{0}/": [
 "frontend/js/app.js"
 ],
 "http(s)://{0}/name, no domain needed": [
@@ -19960,6 +20020,9 @@
 "frontend/js/mail.js",
 "frontend/js/ops.js"
 ],
+"loaded": [
+"frontend/js/app.js"
+],
 "local": [
 "frontend/js/app.js",
 "frontend/js/mail.js"
@@ -20030,6 +20093,9 @@
 "minute": [
 "frontend/js/app.js"
 ],
+"minute(s)": [
+"frontend/js/app.js"
+],
 "missing": [
 "frontend/js/app.js"
 ],
@@ -20049,6 +20115,9 @@
 "frontend/js/app.js"
 ],
 "myblog.com  or  blog.test": [
+"frontend/js/app.js"
+],
+"mysite.test": [
 "frontend/js/app.js"
 ],
 "mysql": [
@@ -20190,6 +20259,9 @@
 "node app.js": [
 "frontend/js/app.js"
 ],
+"nominal": [
+"frontend/js/app.js"
+],
 "none": [
 "frontend/js/app.js",
 "frontend/js/mail.js",
@@ -20301,6 +20373,9 @@
 "nothing, safe to remove": [
 "frontend/js/ops.js"
 ],
+"now": [
+"frontend/js/app.js"
+],
 "ntfy": [
 "frontend/js/ops.js"
 ],
@@ -20316,6 +20391,9 @@
 ],
 "numeric": [
 "frontend/js/extras.js"
+],
+"of every": [
+"frontend/js/app.js"
 ],
 "of the data in the whole chart": [
 "frontend/js/extras.js"
@@ -20488,6 +20566,7 @@
 "frontend/js/ops.js"
 ],
 "paused": [
+"frontend/js/app.js",
 "frontend/js/ops.js"
 ],
 "paused, frozen in memory": [
@@ -20611,6 +20690,9 @@
 "psql: {0}": [
 "backend/backups.py"
 ],
+"public IP": [
+"frontend/js/app.js"
+],
 "public IP, can change": [
 "frontend/js/app.js"
 ],
@@ -20709,6 +20791,7 @@
 "frontend/js/ops.js"
 ],
 "root": [
+"frontend/js/app.js",
 "frontend/js/ops.js"
 ],
 "root@{0}:~#": [
@@ -21004,6 +21087,9 @@
 "this-device.local": [
 "frontend/js/mail.js"
 ],
+"throttled": [
+"frontend/js/app.js"
+],
 "time between first and last page": [
 "frontend/js/extras.js"
 ],
@@ -21023,6 +21109,9 @@
 "frontend/js/app.js"
 ],
 "tokens": [
+"frontend/js/app.js"
+],
+"total {0}": [
 "frontend/js/app.js"
 ],
 "trap": [
@@ -21251,6 +21340,9 @@
 "frontend/js/caddy.js",
 "frontend/js/nginx.js"
 ],
+"www.example.com": [
+"frontend/js/app.js"
+],
 "www.example.com, shop.example.com…": [
 "frontend/js/app.js"
 ],
@@ -21268,6 +21360,9 @@
 "frontend/js/ops.js"
 ],
 "you have {0}": [
+"frontend/js/app.js"
+],
+"your policy decides": [
 "frontend/js/app.js"
 ],
 "your public address": [
@@ -21320,6 +21415,9 @@
 "frontend/js/extras.js"
 ],
 "{0} All disks": [
+"frontend/js/app.js"
+],
+"{0} Cron wizard": [
 "frontend/js/app.js"
 ],
 "{0} DNS zones": [
@@ -21400,6 +21498,9 @@
 "frontend/js/app.js"
 ],
 "{0} attempts": [
+"frontend/js/app.js"
+],
+"{0} available": [
 "frontend/js/app.js"
 ],
 "{0} banned": [
@@ -21562,6 +21663,9 @@
 ],
 "{0} in the last 7 days": [
 "backend/abuse.py"
+],
+"{0} in use": [
+"frontend/js/app.js"
 ],
 "{0} infected": [
 "frontend/js/app.js"
@@ -21812,6 +21916,9 @@
 "{0} needs AuroraPanel 1.2.3 or newer for this. Update it first.": [
 "backend/servers.py"
 ],
+"{0} needs the host network (to find devices at home), so it's reached at http://": [
+"frontend/js/ops.js"
+],
 "{0} needs {1}": [
 "frontend/js/app.js"
 ],
@@ -21887,6 +21994,9 @@
 "{0} pruned": [
 "frontend/js/ops.js"
 ],
+"{0} random": [
+"frontend/js/app.js"
+],
 "{0} ready": [
 "frontend/js/mail.js"
 ],
@@ -21924,6 +22034,9 @@
 ],
 "{0} restarted on {1}": [
 "frontend/js/ops.js"
+],
+"{0} rule{1} · manage": [
+"frontend/js/app.js"
 ],
 "{0} running": [
 "frontend/js/app.js"
@@ -22057,6 +22170,9 @@
 "backend/cloudapps.py"
 ],
 "{0} {1}is ready 🎉": [
+"frontend/js/app.js"
+],
+"{0} · Python {1}": [
 "frontend/js/app.js"
 ],
 "{0} · answered by {1}": [
@@ -22228,6 +22344,9 @@
 "« First": [
 "frontend/js/extras.js"
 ],
+"· next {0} ({1})": [
+"frontend/js/app.js"
+],
 "“{0}” is recreated as {1}/{2}, files with the same name are replaced, other files are left alone.": [
 "frontend/js/app.js"
 ],
@@ -22266,6 +22385,9 @@
 "backend/mail.py"
 ],
 "” (already right), “badauth” (wrong key), “abuse” (too often, wait 30 s).": [
+"frontend/js/extras.js"
+],
+"” (changed), “nochg": [
 "frontend/js/extras.js"
 ],
 "…apps.googleusercontent.com": [
