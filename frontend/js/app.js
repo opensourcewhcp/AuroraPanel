@@ -3200,6 +3200,8 @@
       async run(jobId, label) {
         stop();
         panel.hidden = false;
+        // The panel sits under the page's content: on a long page the button that started the job is far above it.
+        try { panel.scrollIntoView({ behavior: "smooth", block: "nearest" }); } catch (e) {}
         title.textContent = label || "Working…";
         pre.textContent = "Starting…";
         prog.classList.remove("ok", "bad"); bar.classList.add("indet"); bar.firstChild.style.width = "";

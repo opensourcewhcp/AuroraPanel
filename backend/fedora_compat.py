@@ -186,10 +186,30 @@ def install_crs():
         run("restorecon", "-R", str(root))
 
 
+AMZN_MARIADB = {"mariadb-server": "-server", "default-mysql-server": "-server", "mysql-server": "-server", "mariadb-client": ""}
+
+
+def amzn_mariadb():
+    """Amazon Linux has no "mariadb-server": each release line is a package of its own (mariadb105-server,
+    mariadb1011-server, mariadb114-server). The line that is installed, else the newest one on offer, else None."""
+    def lines(text):
+        found = {m.group(1) for m in re.finditer(r"^mariadb(\d{3,4})-server$", text, re.M)}
+        return sorted(found, key=lambda v: (int(v[:2]), int(v[2:])))
+    have = lines(run("rpm", "-qa", "--qf", "%{NAME}\n", "mariadb*-server").stdout)
+    if have:
+        return have[-1]
+    offered = lines(run("dnf", "-q", "repoquery", "--qf", "%{name}\n", "mariadb*-server").stdout)
+    return offered[-1] if offered else None
+
+
 def rpms_for(pkg):
     m = re.fullmatch(r"php\d+\.\d+-(.+)", pkg)
     if m:
         pkg = f"php-{m.group(1)}"
+    if pkg in AMZN_MARIADB and os_release().get("ID") == "amzn":
+        line = amzn_mariadb()
+        if line:
+            return [f"mariadb{line}{AMZN_MARIADB[pkg]}"]
     if el_major():
         if pkg == "modsecurity-crs" and crs_is_bundled():
             return []
@@ -404,6 +424,12 @@ def a2_mod(name, enable):
         return 1
     load.write_text(f"LoadModule {name}_module modules/mod_{name}.so\n")
     return 0
+
+
+def apache_argv(args):
+    """The command behind "apache2ctl ...". This family's apachectl only knows words (configtest, graceful) and
+    answers 'The "-S" option is not supported' to anything else, so options go to httpd itself."""
+    return ["httpd", *args] if args and args[0].startswith("-") else ["apachectl", *args]
 
 
 def a2(cmd, args):
@@ -788,7 +814,7 @@ def main():
     if cmd.startswith(("a2en", "a2dis")):
         return a2(cmd, args)
     if cmd == "apache2ctl":
-        return subprocess.call(["apachectl", *args], env=ENV)
+        return subprocess.call(apache_argv(args), env=ENV)
     if cmd in ("systemctl", "journalctl"):
         mapped = [unit_name(a) if not a.startswith("-") else a for a in args]
         return subprocess.call([f"/usr/bin/{cmd}", *mapped], env=ENV)
