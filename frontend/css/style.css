@@ -4117,3 +4117,44 @@ textarea.cl-input { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 
 .srv-busy .spinner, .srv-busy-note .spinner { width: 12px; height: 12px; flex: none; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--sev-info) 30%, transparent); border-top-color: var(--sev-info); animation: srv-spin .8s linear infinite; }
 .srv-busy-note .spinner { width: 15px; height: 15px; }
 .srv-busy-note { border-color: color-mix(in srgb, var(--sev-info) 35%, transparent); background: color-mix(in srgb, var(--sev-info) 8%, transparent); }
+
+/* Email overview: every section sits on one 16px rhythm, and the two-card rows use the tiles' five columns
+   (three + two), so the card edges line up from the top of the page to the bottom. */
+.eo { display: flex; flex-direction: column; gap: 16px; }
+/* #view-root: the page-wide "a card after a card gets a top margin" rules are written with the id, and the gap does that job here */
+#view-root .eo > *, #view-root .eo .eo-split > .card, #view-root .eo .eo-guard > .card { margin: 0 !important; }
+.eo .eo-tiles { gap: 16px; }
+.eo .mx-tile { padding: 16px 18px; gap: 6px; border-radius: 20px; transition: border-color .15s, transform .15s, background .15s; }
+.eo button.mx-tile:hover { transform: translateY(-2px); background: var(--glass-2); }
+.eo .mx-tile-v { font-size: 28px; line-height: 1.1; }
+.eo .eo-split { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; align-items: stretch; }
+.eo .eo-split > :first-child { grid-column: span 3; }
+.eo .eo-split > :last-child { grid-column: span 2; }
+.eo .eo-guard { display: flex; min-width: 0; }
+.eo .eo-split > .card, .eo .eo-guard > .card { margin: 0; flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.eo .em-card-h { flex-wrap: nowrap; height: 40px; box-sizing: content-box; margin-bottom: 16px; padding-bottom: 14px; border-bottom: 1px solid var(--stroke); }
+.eo .em-card-h h3 { white-space: nowrap; }
+.eo .em-card-h .pill { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.eo .card > p.muted { margin: 0 0 14px; line-height: 1.55; }
+.eo .em-dom { padding: 12px 0; }
+.eo .em-dom:first-child { padding-top: 0; }
+.eo .em-dom:last-child { padding-bottom: 0; }
+.eo .em-guard { gap: 8px 10px; }
+.eo .em-guard-stats { margin-top: auto; padding-top: 16px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.eo .em-guard-stats span { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 1px solid var(--stroke); border-radius: 14px; font-size: 12px; color: var(--text-dim); min-width: 0; }
+.eo .em-guard-stats b { font-size: 20px; line-height: 1.2; color: var(--text); margin: 0; }
+.eo .eo-groups { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px 24px; }
+.eo .eo-group-h { padding: 0 10px 10px; margin-bottom: 6px; }
+.eo .eo-tool { padding: 9px 10px; }
+.eo .em-local-tips { margin: 0 0 16px; }
+.eo .em-local .toolbar { margin: auto 0 0; }
+.eo .em-toggle { padding-top: 0; }
+.eo .net-kv { margin-top: 14px; }
+.eo .eo-helo { margin-top: auto; padding-top: 16px; }
+@media (max-width: 1100px) { .eo .eo-groups { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 24px; } }
+@media (max-width: 1000px) {
+  .eo .eo-split { grid-template-columns: minmax(0, 1fr); }
+  .eo .eo-split > :first-child, .eo .eo-split > :last-child { grid-column: auto; }
+  .eo .em-card-h { flex-wrap: wrap; height: auto; min-height: 40px; }
+}
+@media (max-width: 640px) { .eo .eo-groups { grid-template-columns: minmax(0, 1fr); } .eo .em-guard-stats { grid-template-columns: minmax(0, 1fr); } }

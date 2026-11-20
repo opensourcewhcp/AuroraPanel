@@ -141,7 +141,7 @@ window.AuroraMail = (ui) => {
     ["Maintenance", "disk", [["addressimporter", "Address Importer", "upload", "Create many accounts from a file"], ["maildisk", "Email Disk Usage", "disk", "Space used by each mailbox"]]],
   ];
   async function viewOverview(root) {
-    const body = el("div", {}, el("div", { class: "loading", text: "Loading…" }));
+    const body = el("div", { class: "eo" }, el("div", { class: "loading", text: "Loading…" }));
     root.append(body);
     let st, doms;
     try { [st, doms] = await Promise.all([API.mailStatus(), domainsAll()]); }
@@ -255,7 +255,7 @@ window.AuroraMail = (ui) => {
       det.ptr !== undefined ? kv([["This server's IP", det.ip || "-"], ["Its reverse DNS (PTR)", det.ptr ? det.ptr : "none"],
         ["Matches the server name", ptrOk ? pill("yes", "good") : pill("no, ask your provider", "warn")]]) : null,
       el("div", { class: "eo-helo" }, [hostIn, useBtn])].filter(Boolean));
-    body.append(el("div", { class: "eo-split eo-split-even" }, [local, helo]));
+    body.append(el("div", { class: "eo-split" }, [local, helo]));
   }
   function testMail(prefill) {
     const to = el("input", { type: "email", placeholder: "you@gmail.com", value: prefill || "" });
