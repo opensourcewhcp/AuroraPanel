@@ -436,7 +436,7 @@
     let collapsed = [];
     try { collapsed = JSON.parse(localStorage.getItem("aurora-nav-collapsed") || "[]"); } catch (e) {}
     document.querySelectorAll("#nav .nav-group").forEach((g) => {
-      const name = g.dataset.group || g.textContent.trim();
+      const name = g.dataset.group || enText(g);  // the English name: it is a key (icons, saved state), not the text on screen
       g.dataset.group = name;
       if (!g.querySelector(".nav-group-chev")) {
         g.classList.add("nav-group-btn");
@@ -7126,8 +7126,8 @@
       ]);
       const seg = (key, opts, onChange, editable) => {
         const box = el("div", { class: "cw-seg cw-seg-sm" });
-        opts.forEach(([v, l]) => box.append(el("button", { type: "button", class: s[key] === v ? "active" : "", text: l, disabled: ro && !editable ? "" : null, onclick: () => {
-          s[key] = v; box.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.textContent === l)); onChange && onChange(v); dirty();
+        opts.forEach(([v, l]) => box.append(el("button", { type: "button", class: s[key] === v ? "active" : "", "data-opt": l, text: l, disabled: ro && !editable ? "" : null, onclick: () => {
+          s[key] = v; box.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.opt === l)); onChange && onChange(v); dirty();
         } })));
         return box;
       };

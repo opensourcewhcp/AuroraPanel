@@ -189,3 +189,11 @@ def test_the_page_translates_what_el_never_saw():
     for needle in ("function compilePatterns(dict)", "new MutationObserver(", "attributeFilter: TR_ATTRS", "watchTranslations();",
                    'if (k === "raw") { if (v) node.setAttribute("data-raw", ""); continue; }', "window.confirm(tr(host(msg)))"):
         assert needle in app_js, needle
+
+
+def test_text_on_screen_is_never_used_as_a_key():
+    """A translated label is not the English name: the rail icons and tab highlights are found by a fixed key."""
+    js = {f.name: f.read_text(encoding="utf-8") for f in (ROOT / "frontend" / "js").glob("*.js")}
+    assert "const name = g.dataset.group || enText(g);" in js["app.js"]
+    for name, text in js.items():
+        assert not re.search(r"textContent(\.trim\(\))? ===? [a-z]\w*\)", text), name

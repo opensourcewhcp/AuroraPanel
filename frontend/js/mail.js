@@ -574,8 +574,8 @@ window.AuroraMail = (ui) => {
             }, "btn-danger")])];
         },
       };
-      const show = (k) => { tabs.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.textContent === k)); pane.innerHTML = ""; pane.append(...T[k]().filter(Boolean)); };
-      Object.keys(T).forEach((k) => tabs.append(el("button", { type: "button", text: k, onclick: () => show(k) })));
+      const show = (k) => { tabs.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.tab === k)); pane.innerHTML = ""; pane.append(...T[k]().filter(Boolean)); };
+      Object.keys(T).forEach((k) => tabs.append(el("button", { type: "button", "data-tab": k, text: k, onclick: () => show(k) })));
       openModal(a.address, el("div", { class: "em-form" }, [tabs, pane]), [btn("Connect Devices", () => connectDevices(a.address), "btn-ghost")]);
       modalWide(); show("Overview");
     }
@@ -1236,8 +1236,8 @@ window.AuroraMail = (ui) => {
       },
     };
     let curTab = "Connect devices";
-    const show = (k) => { curTab = k; tabs.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.textContent === k)); pane.innerHTML = ""; pane.append(...T[k]()); };
-    Object.keys(T).forEach((k) => tabs.append(el("button", { type: "button", text: k, onclick: () => show(k) })));
+    const show = (k) => { curTab = k; tabs.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.tab === k)); pane.innerHTML = ""; pane.append(...T[k]()); };
+    Object.keys(T).forEach((k) => tabs.append(el("button", { type: "button", "data-tab": k, text: k, onclick: () => show(k) })));
     async function refresh() { if (await load()) show(curTab); }
     function renameCol(c) {
       const name = el("input", { type: "text", value: c.name });

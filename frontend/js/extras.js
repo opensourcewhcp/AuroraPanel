@@ -841,8 +841,8 @@ window.AuroraExtras = (ui) => {
       Windows: () => [el("p", { class: "muted", text: "Task Scheduler → Create Basic Task → every 5 minutes → Start a program:" }),
         row("Program", "powershell.exe"), row("Arguments", `-NoProfile -Command "Invoke-RestMethod '${u.url}'"`)],
     };
-    const show = (k) => { tabs.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.textContent === k)); pane.innerHTML = ""; pane.append(...T[k]()); };
-    Object.keys(T).forEach((k) => tabs.append(el("button", { type: "button", text: k, onclick: () => show(k) })));
+    const show = (k) => { tabs.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.tab === k)); pane.innerHTML = ""; pane.append(...T[k]()); };
+    Object.keys(T).forEach((k) => tabs.append(el("button", { type: "button", "data-tab": k, text: k, onclick: () => show(k) })));
     openModal(`Update ${h.host}`, el("div", { class: "em-form" }, [
       el("div", { class: "mx-note" }, [icon("key", 16), el("span", { text: "The key in this URL is the password for this name, anyone who has it can move the record. Regenerate it if it leaks." })]),
       tabs, pane]), []);
